@@ -53,3 +53,26 @@ Luego, accede a la documentación interactiva en:
 ## 4. Notas Importantes
 *   **Nombre de la Tabla**: El sistema usa directamente la tabla `hoja_de_c__lculo_sin_t__tulo` para evitar migraciones complejas de datos.
 *   **Logs**: El servidor mostrará en consola cualquier error de conexión o validación de datos.
+
+## 5. Historial de Refinamientos (Lógica de Negocio)
+
+### Refinamiento de Saldos y Pagos (Marzo 2024)
+Se implementó una lógica avanzada para la gestión de deudas y cobros recurrentes:
+
+1.  **Sincronización Automática (`sync_cliente_balances`)**: 
+    - El sistema calcula el `total_pago` mensual sumando `Plan Base + Plus + Adicional`.
+    - El `saldo` (pendiente) se calcula restando el `pago_mensual` acumulado al total anterior.
+    - Soporta deudas acumuladas y excedentes (créditos a favor).
+
+2.  **Lógica de Consumo de Cargos (`registrar_pago`)**:
+    - Al registrar un pago, los campos `plus` y `adicional` se **mueven internamente** a campos de respaldo (`plus_pagado`, `adicional_pagado`) y se limpian de la tabla principal.
+    - Esto permite que el usuario vea la tabla de administración "vaciada" tras el cobro sin generar errores de "excedente" (ya que el cargo sigue existiendo internamente para el balance del mes).
+    - El monto total pagado suma automáticamente el **Internet + Adicional** según lo ingresado en el modal.
+
+3.  **Filtrado y Optimización de Reportes**:
+    - El endpoint `/reportes/generar` ahora filtra automáticamente a los clientes: solo se incluyen aquellos con el campo **facturas** lleno (omitiendo vacíos o "NONE").
+    - El reporte Excel se ha simplificado a las columnas críticas: `ID`, `NOMBRE`, `CELULAR`, `CEDULA`, `CORREO`, `BANK` y `TOTAL`.
+
+4.  **Nuevos Campos y Estados**:
+    - Se añadió soporte para estados judiciales y en proceso (**Jurídico**, **En Proceso**).
+    - Se incorporó la columna **Observaciones** persistente en la base de datos para seguimiento de casos.

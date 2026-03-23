@@ -19,6 +19,9 @@ class Cliente(Base):
     nombre = Column("NOMBRE", String(255))
 
     cedula = Column("CEDULA", String(20))
+    cedula_tipo = Column("CEDULA_TIPO", String(50))
+    cedula_frontal = Column("CEDULA_FRONTAL", String(255))
+    cedula_posterior = Column("CEDULA_POSTERIOR", String(255))
 
     celular = Column("CELULAR", String(20))
 
@@ -67,6 +70,8 @@ class Cliente(Base):
     red = Column("RED", String(100))
 
     clave = Column("CLAVE", String(100))
+    instalation_date = Column("INSTALATION_DATE", String(50))
+
 
 
 
@@ -96,7 +101,16 @@ class Cliente(Base):
 
     bank_plus = Column("BANK_PLUS", String(50))
 
+    adicional = Column("ADICIONAL", String(255))
+
+    comentarios = Column("COMENTARIOS", String(500))
+    observaciones = Column("OBSERVACIONES", String(500))
+    pago_mensual = Column("PAGO_MENSUAL", Numeric(precision=10, scale=2), default=0.00)
+    total_pago = Column("TOTAL_PAGO", Numeric(precision=10, scale=2), default=0.00)
     saldo = Column("SALDO", Numeric(precision=10, scale=2), default=0.00)
+    # Campos técnicos para evitar bug de excedente al pagar plus/adicional
+    plus_pagado = Column("PLUS_PAGADO", Numeric(precision=10, scale=2), default=0.00)
+    adicional_pagado = Column("ADICIONAL_PAGADO", Numeric(precision=10, scale=2), default=0.00)
 
 
 
@@ -123,8 +137,51 @@ class Pago(Base):
     mes_correspondiente = Column(String(20))
 
     referencia = Column(String(100))
+    monto_internet = Column(Numeric(precision=10, scale=2), default=0.00)
+    monto_plus = Column(Numeric(precision=10, scale=2), default=0.00)
+
 
 
 
     cliente = relationship("Cliente", back_populates="pagos")
 
+
+
+class ReporteMensual(Base):
+    __tablename__ = 'reportes_mensuales'
+    id = Column(Integer, primary_key=True, index=True)
+    mes_anio = Column(String(20))
+    fecha_generacion = Column(DateTime, default=datetime.datetime.utcnow)
+    archivo_ruta_excel = Column(String(255))
+
+class Usuario(Base):
+    __tablename__ = "usuarios"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, index=True)
+    password_hash = Column(String(255))
+    rol = Column(String(20)) # administrador, secretario, tecnico
+
+class Parroquia(Base):
+    __tablename__ = "parroquias"
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(100), unique=True, index=True)
+    base_ip = Column(String(50), default="172.16")
+
+class PlanInternet(Base):
+    __tablename__ = "planes_internet"
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(100), unique=True, index=True) 
+    megas = Column(Integer, default=100)
+    precio = Column(Numeric(precision=10, scale=2), default=0.00) 
+
+class Banco(Base):
+    __tablename__ = "bancos"
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(100), unique=True, index=True)
+
+class Puerto(Base):
+    __tablename__ = "puertos"
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(100)) 
+    parroquia_id = Column(Integer, ForeignKey("parroquias.id"))
+    parroquia = relationship("Parroquia", backref="puertos")
