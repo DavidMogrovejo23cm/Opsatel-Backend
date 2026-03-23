@@ -76,3 +76,19 @@ Se implementó una lógica avanzada para la gestión de deudas y cobros recurren
 4.  **Nuevos Campos y Estados**:
     - Se añadió soporte para estados judiciales y en proceso (**Jurídico**, **En Proceso**).
     - Se incorporó la columna **Observaciones** persistente en la base de datos para seguimiento de casos.
+
+### Segunda Etapa: Dashboard y Seguridad (Marzo 2024)
+Se ampliaron las capacidades de análisis financiero y control de acceso:
+
+1.  **Segregación de Ingresos (`monto_internet` y `monto_plus`)**: 
+    - Se añadieron columnas específicas a la tabla `pagos` para diferenciar la recaudación del plan de internet de los servicios adicionales (IP TV).
+    - La lógica de `registrar_pago` ahora distribuye automáticamente los montos ingresados hacia estas columnas para auditoría detallada.
+
+2.  **Endpoint Estadístico (`/dashboard-stats`)**:
+    - Nuevo servicio que calcula la recaudación total del mes actual desglosada por método de pago (**Efectivo**, **Pichincha**, **JEP**) tanto para internet como para servicios extra.
+
+3.  **Sistema de Roles (Instalador)**:
+    - Se creó el rol **"instalador"**, diseñado para personal de campo. Este rol tiene acceso restringido exclusivamente al área técnica, permitiendo activar clientes y configurar potencias sin acceder a datos financieros o administrativos.
+
+4.  **Robustecimiento de Cálculos (`try_float`)**:
+    - Se implementó una función global de limpieza de datos numéricos para prevenir errores de servidor (Internal Server Error 500) cuando se ingresan valores con comas, espacios o campos vacíos.
