@@ -186,3 +186,11 @@ class Puerto(Base):
     nombre = Column(String(100)) 
     parroquia_id = Column(Integer, ForeignKey("parroquias.id"))
     parroquia = relationship("Parroquia", backref="puertos")
+
+class FinanzasBase(Base):
+    __tablename__ = "finanzas_base"
+    id = Column(Integer, primary_key=True, index=True)
+    caja_chica = Column(Numeric(precision=10, scale=2), default=0.00)
+    pichincha = Column(Numeric(precision=10, scale=2), default=0.00)
+    jep = Column(Numeric(precision=10, scale=2), default=0.00)
+

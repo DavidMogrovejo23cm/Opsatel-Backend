@@ -261,3 +261,18 @@ class UsuarioUpdate(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     rol: Optional[str] = None
+
+class FinanzasBaseResponse(BaseModel):
+    id: int
+    caja_chica: float
+    pichincha: float
+    jep: float
+
+    class Config:
+        from_attributes = True
+
+class FinanzasBaseUpdate(BaseModel):
+    caja_chica: Optional[float] = None
+    pichincha: Optional[float] = None
+    jep: Optional[float] = None
+

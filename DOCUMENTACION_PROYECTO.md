@@ -137,3 +137,10 @@ Se optimizó el modelo de creación de clientes para incluir métricas de perman
 *   **Esquema `ClienteCreate`:** Incorporación del campo `tiempo` (duración del contrato en meses).
 *   **Endpoint (`POST /clientes/`):** La ruta captura el tiempo estipulado desde la venta inicial.
 *   **Frontend (UX):** Se eliminó la edición manual del "Tiempo" en el panel administrativo, y se trasladó la captura de este valor al formulario inicial de Ventas, protegiendo los parámetros comerciales.
+
+### C. Configuración de Finanzas Base y Dashboard Global
+Se añadió un sistema para gestionar y visualizar la liquidez real de las cuentas principales:
+*   **Base de Datos (`FinanzasBase`):** Nueva tabla `finanzas_base` que centraliza los montos estáticos establecidos (Caja Chica, Pichincha, JEP).
+*   **Nuevos Endpoints (`/configuraciones/finanzas-base`):** Rutas integradas para permitir a los administradores fijar valores base de arranque de caja.
+*   **Cálculo Asíncrono en Dashboard (`GET /clientes/dashboard-stats`):** El backend suma automáticamente todos los ingresos registrados y los acumula a los valores preconfigurados, entregando el parámetro consolidado de `finanzas_globales`.
+*   **Representación Visual:** Implementación de un gráfico `BarChart` en el panel de control del cliente que grafica de manera interactiva el saldo total acumulado de cada institución bancaria en el momento, optimizando la visibilidad de cuentas.

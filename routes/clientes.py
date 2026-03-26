@@ -87,7 +87,19 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         elif "JEP" not in metodo:
             plus["Efectivo"] += m_plus
             
-    return {"internet": internet, "plus": plus}
+    # Calculate Finanzas Globales
+    fb = db.query(models.FinanzasBase).first()
+    b_caja = float(fb.caja_chica) if fb else 0.0
+    b_pich = float(fb.pichincha) if fb else 0.0
+    b_jep = float(fb.jep) if fb else 0.0
+    
+    finanzas_globales = {
+        "Caja Chica": b_caja + internet["Efectivo"] + plus["Efectivo"],
+        "Pichincha": b_pich + internet["Pichincha"] + plus["Pichincha"],
+        "JEP": b_jep + internet["JEP"]
+    }
+            
+    return {"internet": internet, "plus": plus, "finanzas_globales": finanzas_globales}
 
 
 @router.post("/", response_model=schemas.ClienteResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])

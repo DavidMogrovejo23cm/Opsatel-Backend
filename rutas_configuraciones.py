@@ -191,3 +191,35 @@ def update_puerto(puerto_id: int, puerto_data: schemas.PuertoUpdate, db: Session
         raise HTTPException(status_code=400, detail="Error al actualizar puerto")
     return db_puerto
 
+# --- Finanzas Base ---
+@router.get("/finanzas-base", response_model=schemas.FinanzasBaseResponse)
+def get_finanzas_base(db: Session = Depends(get_db)):
+    finanzas = db.query(models.FinanzasBase).first()
+    if not finanzas:
+        finanzas = models.FinanzasBase(caja_chica=0.00, pichincha=0.00, jep=0.00)
+        db.add(finanzas)
+        db.commit()
+        db.refresh(finanzas)
+    return finanzas
+
+@router.put("/finanzas-base", response_model=schemas.FinanzasBaseResponse)
+def update_finanzas_base(data: schemas.FinanzasBaseUpdate, db: Session = Depends(get_db)):
+    finanzas = db.query(models.FinanzasBase).first()
+    if not finanzas:
+        finanzas = models.FinanzasBase()
+        db.add(finanzas)
+        
+    if data.caja_chica is not None:
+        finanzas.caja_chica = data.caja_chica
+    if data.pichincha is not None:
+        finanzas.pichincha = data.pichincha
+    if data.jep is not None:
+        finanzas.jep = data.jep
+        
+    try:
+        db.commit()
+        db.refresh(finanzas)
+    except:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Error al actualizar finanzas base")
+    return finanzas
