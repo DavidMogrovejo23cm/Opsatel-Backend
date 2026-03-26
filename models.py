@@ -139,6 +139,7 @@ class Pago(Base):
     referencia = Column(String(100))
     monto_internet = Column(Numeric(precision=10, scale=2), default=0.00)
     monto_plus = Column(Numeric(precision=10, scale=2), default=0.00)
+    monto_adicional = Column(Numeric(precision=10, scale=2), default=0.00)
 
 
 

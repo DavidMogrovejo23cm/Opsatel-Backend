@@ -16,27 +16,29 @@ from config_manager import get_config, save_config
 
 def try_float(val):
     try:
-        return float(str(val or 0).replace(',', '.').strip()) if val else 0.0
+        # Limpieza robusta: eliminar '$' y corregir separadores decimales
+        clean_val = str(val or 0).replace('$', '').replace(',', '.').strip()
+        return float(clean_val) if clean_val else 0.0
     except:
         return 0.0
 
 
 def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
-    tarifa = 20.00 # Default fallback
+    # El total_pago representa el total real adeudado en tiempo real.
+    # Incluye Saldo (deuda histórica neta de pagos) + Tarifa (valor del plan actual) + IPTV + Adicional.
+    tarifa = 0.00
     if db:
         plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
         if plan_info:
             tarifa = float(plan_info.precio or 0)
-        
+            
     plus = try_float(cliente.plus)
     adicional = try_float(cliente.adicional)
-
-    plus_p = float(cliente.plus_pagado or 0)
-    adic_p = float(cliente.adicional_pagado or 0)
-        
-    cliente.total_pago = float(tarifa) + plus + adicional + plus_p + adic_p
-    pago_m = float(cliente.pago_mensual or 0.0)
-    cliente.saldo = float(cliente.total_pago) - pago_m
+    saldo = float(cliente.saldo or 0)
+    
+    # El Pendiente Principal (total_pago) SEPARA el cargo adicional según requerimiento v1.2.
+    # El adicional es un servicio aparte que NO afecta la deuda de internet/iptv en Pagos y Cobros.
+    cliente.total_pago = saldo + tarifa + plus
 
 # El sistema ahora utiliza exclusivamente la tabla 'planes_internet' de la base de datos 
 # para obtener los precios vigentes, permitiendo configurarlos desde el panel administrativo.
@@ -105,6 +107,11 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         estado="Pendiente"
     )
     db.add(db_cliente)
+    db.commit()
+    db.refresh(db_cliente)
+    
+    # Sincronizamos balances para que el total_pago se calcule (Costo Plan + Plus)
+    sync_cliente_balances(db_cliente, db)
     db.commit()
     db.refresh(db_cliente)
     return db_cliente
@@ -322,53 +329,69 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
+    # Validación QA P6: Bloquear montos negativos
+    if float(pago_data.monto) < 0:
+        raise HTTPException(status_code=400, detail="El monto del pago no puede ser negativo")
 
+    # Extraemos montos del pago
+    m_total = float(pago_data.monto)
+    m_adic_p = try_float(pago_data.adicional)
+    m_plus_p = try_float(pago_data.plus)
+    
+    # El m_internet_p fluye independiente del adicional según requerimiento v1.2.
+    # El monto total recibido se destina prioritariamente a cubrir el Pendiente de Internet+TV.
+    m_internet_p = m_total - m_plus_p
 
+    # Registrar en historial con el nuevo campo independiente
     nuevo_pago = models.Pago(
-
         cliente_id=id,
-        monto=pago_data.monto,
+        monto=m_total + m_adic_p, # Total cash in the receipt
         metodo_pago=pago_data.metodo_pago,
         mes_correspondiente=pago_data.mes_correspondiente,
         referencia=pago_data.referencia,
-        monto_internet=try_float(pago_data.internet_payment),
-        monto_plus=try_float(pago_data.plus) + try_float(pago_data.adicional)
+        monto_internet=m_internet_p, # Only internet
+        monto_plus=m_plus_p,         # Only plus
+        monto_adicional=m_adic_p     # Only adicional
     )
-
     db.add(nuevo_pago)
     
+    # 1. ACTUALIZAR ADICIONAL (Separado del pendiente principal)
+    if m_adic_p > 0:
+        curr_adic = try_float(cliente.adicional)
+        # Si pagamos más adicional del que hay, el resto NO genera excedente en saldo (según req)
+        # simplemente se limpia el campo adicional.
+        cliente.adicional = str(max(0, curr_adic - m_adic_p))
+        cliente.adicional_pagado = float(cliente.adicional_pagado or 0) + m_adic_p
+        if cliente.adicional == "0.0": cliente.adicional = ""
+
+    # 2. ACTUALIZAR PLUS (IPTV)
+    if m_plus_p > 0:
+        curr_plus = try_float(cliente.plus)
+        cliente.plus = str(max(0, curr_plus - m_plus_p))
+        cliente.plus_pagado = float(cliente.plus_pagado or 0) + m_plus_p
+        if cliente.plus == "0.0": cliente.plus = ""
+
+    # 3. ACTUALIZAR SALDO PRINCIPAL (Internet / Pendiente histórico)
+    # Solo el pago destinado a internet afecta al saldo
     saldo_anterior = float(cliente.saldo or 0)
-    pago_mensual_anterior = float(cliente.pago_mensual or 0)
+    cliente.saldo = saldo_anterior - m_internet_p
     
-    cliente.saldo = saldo_anterior - float(pago_data.monto)
-    cliente.pago_mensual = pago_mensual_anterior + float(pago_data.monto)
+    # Actualizar pago mensual (solo para control del mes)
+    cliente.pago_mensual = float(cliente.pago_mensual or 0) + m_total
 
-    # para poder vaciar los campos de entrada originales sin crear excedente
-
-
-    if pago_data.plus is not None: 
-        cliente.plus_pagado = float(cliente.plus_pagado or 0) + try_float(cliente.plus)
-        cliente.plus = ""
-    if pago_data.adicional is not None: 
-        cliente.adicional_pagado = float(cliente.adicional_pagado or 0) + try_float(cliente.adicional)
-        cliente.adicional = ""
-
+    # Actualizar campos informativos
     if pago_data.facturas is not None: cliente.facturas = pago_data.facturas
-    if pago_data.internet_payment is not None: cliente.internet_payment = pago_data.internet_payment
     if pago_data.app is not None: cliente.app = pago_data.app
     if pago_data.payment_date is not None: cliente.payment_date = pago_data.payment_date
-    if pago_data.client_payment_date is not None: cliente.client_payment_date = pago_data.client_payment_date
     if pago_data.bank is not None: cliente.bank = pago_data.bank
-    if pago_data.cod is not None: cliente.cod = pago_data.cod
-    if pago_data.bank_plus is not None: cliente.bank_plus = pago_data.bank_plus
     if pago_data.comentarios is not None: cliente.comentarios = pago_data.comentarios
 
     sync_cliente_balances(cliente, db)
     db.commit()
     
     if float(cliente.saldo) < 0:
-        return {"message": f"Pago registrado con éxito. Excedente en cuenta: ${abs(float(cliente.saldo)):.2f}", "nuevo_saldo": float(cliente.saldo)}
-    return {"message": f"Pago registrado con éxito. Saldo pendiente: ${float(cliente.saldo):.2f}", "nuevo_saldo": float(cliente.saldo)}
+        return {"message": f"Pago registrado. Excedente en internet: ${abs(float(cliente.saldo)):.2f}", "nuevo_saldo": float(cliente.saldo)}
+    return {"message": f"Pago registrado. Saldo pendiente: ${float(cliente.saldo):.2f}", "nuevo_saldo": float(cliente.saldo)}
 
 @router.post("/facturacion-mensual-global", dependencies=[Depends(require_role(["administrador"]))])
 def ejecutar_facturacion_mensual(db: Session = Depends(get_db)):
@@ -390,19 +413,8 @@ def ejecutar_facturacion_mensual(db: Session = Depends(get_db)):
     
     count = 0
     for cliente in clientes_activos:
-        tarifa = 0.00
-        plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
-        if plan_info:
-            tarifa = float(plan_info.precio or 0)
-        
-        try:
-            monto_plus = float(cliente.plus) if cliente.plus else 0.0
-        except (ValueError, TypeError):
-            monto_plus = 0.0
-            
-        total_a_cobrar = tarifa + monto_plus
-        
-        cliente.saldo = (float(cliente.saldo or 0) + total_a_cobrar)
+        # La tarifa ahora se refleja en tiempo real en 'Pendiente' gracias a sync_balances.
+        # Solo contabilizamos para el reporte de éxito de la operación.
         count += 1
         
     save_config({"ultima_facturacion": current_month})
@@ -501,6 +513,16 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     db.add(nuevo_reporte)
     
     for c in clientes:
+        # 1. Obtener la tarifa vigente para consolidar la deuda al cierre del mes
+        tarifa_cierre = 0.00
+        plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == c.plan).first()
+        if plan_info:
+            tarifa_cierre = float(plan_info.precio or 0)
+
+        # 2. Consolidar deudas del mes al saldo acumulado (Persistent Debt)
+        c.saldo = float(c.saldo or 0) + tarifa_cierre + try_float(c.plus) + try_float(c.adicional)
+        
+        # 3. Limpiar campos mensuales y resetear acumuladores
         c.facturas = ""
         c.internet_payment = ""
         c.app = ""
@@ -513,17 +535,52 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
         c.adicional = ""
         c.plus_pagado = 0.00
         c.adicional_pagado = 0.00
-        c.comentarios = ""
-        # Resetear campos mensuales
         c.pago_mensual = 0.00
-        c.total_pago = 0.00
-        # Saldo (deuda/excedente) se mantiene para el siguiente mes
-        # c.saldo = ... (sin cambios)
+        c.comentarios = ""
+        
+        # 4. Sincronizar balances (total_pago reflejará el nuevo saldo consolidado)
+        sync_cliente_balances(c, db)
         
     save_config({"ultimo_cierre": datetime.now().strftime("%Y-%m")})
     db.commit()
     
     return {"message": "Reporte generado. Campos de pago vaciados (saldos intactos).", "reporte_id": nuevo_reporte.id, "archivo": nuevo_reporte.archivo_ruta_excel}
+
+@router.delete("/{id}", dependencies=[Depends(require_role(["administrador"]))])
+def eliminar_cliente(id: int, db: Session = Depends(get_db)):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    
+    # Eliminar archivos de cédula si existen
+    if cliente.cedula_frontal:
+        path = cliente.cedula_frontal.lstrip("/")
+        if os.path.exists(path):
+            try: os.remove(path)
+            except: pass
+    if cliente.cedula_posterior:
+        path = cliente.cedula_posterior.lstrip("/")
+        if os.path.exists(path):
+            try: os.remove(path)
+            except: pass
+
+    # Eliminar pagos asociados (si los hubiera)
+    db.query(models.Pago).filter(models.Pago.cliente_id == id).delete()
+    
+    db.delete(cliente)
+    db.commit()
+
+    # Lógica para "liberar" el ID: Si eliminamos el último ID, reseteamos el contador de la DB
+    try:
+        from sqlalchemy import text
+        max_id_res = db.execute(text("SELECT MAX(NUMERO) FROM hoja_de_c__lculo_sin_t__tulo")).fetchone()
+        max_id = max_id_res[0] if max_id_res and max_id_res[0] is not None else 0
+        db.execute(text(f"ALTER TABLE hoja_de_c__lculo_sin_t__tulo AUTO_INCREMENT = {max_id + 1}"))
+        db.commit()
+    except Exception as e:
+        print(f"Error al resetear auto_increment: {e}")
+
+    return {"message": "Cliente eliminado correctamente y ID liberado para el siguiente registro."}
 @router.post("/{cliente_id}/upload-cedula")
 async def upload_cedula(
     cliente_id: int,

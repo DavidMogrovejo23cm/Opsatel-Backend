@@ -1,94 +1,123 @@
-# Documentación del Proyecto: Sistema de Gestión ISP Opsatel
+# 🚀 DOCUMENTACIÓN TÉCNICA - BACKEND OPSATEL
 
-Este documento detalla los pasos seguidos para la implementación del backend de gestión de clientes ISP, basado en una importación de Excel a MySQL.
+Este documento proporciona una visión detallada de la arquitectura, lógica de negocio y funcionamiento del backend del sistema de gestión ISP **Opsatel**.
 
-## 1. Tecnologías Utilizadas
-*   **Lenguaje**: Python 3.13
-*   **Framework API**: FastAPI
-*   **Servidor Web**: Uvicorn
-*   **ORM (Base de Datos)**: SQLAlchemy
-*   **Base de Datos**: MySQL (vía XAMPP / MariaDB)
+---
 
-## 2. Proceso de Implementación
+## 🛠️ 1. Arquitectura y Tecnologías
+La API está construida con un stack moderno y eficiente diseñado para manejar grandes volúmenes de datos de clientes y automatizar procesos técnicos.
 
-### Paso 1: Instalación de Dependencias
-Se instalaron los paquetes necesarios para el funcionamiento del servidor y la conexión a la base de datos:
-```powershell
-pip install fastapi uvicorn sqlalchemy pymysql
+*   **Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python) - Proporciona alto rendimiento y generación automática de documentación (Swagger).
+*   **Base de Datos:** [MySQL](https://www.mysql.com/) - Motor relacional para persistencia de datos complejos.
+*   **ORM:** [SQLAlchemy](https://www.sqlalchemy.org/) - Mapeo objeto-relacional para interactuar con la DB de forma segura.
+*   **Autenticación:** [JWT (JSON Web Tokens)](https://jwt.io/) - Seguridad basada en tokens con roles definidos.
+*   **Procesamiento de Datos:** [Pandas](https://pandas.pydata.org/) - Generación de reportes dinámicos en Excel.
+*   **Servidor:** [Uvicorn](https://www.uvicorn.org/) - Servidor ASGI para ejecución en tiempo real.
+
+---
+
+## 📂 2. Estructura del Proyecto
+El código está organizado de forma modular para facilitar su mantenimiento:
+
+```text
+opsatel/
+├── main.py                 # Punto de entrada de la aplicación y configuración de CORS.
+├── database.py             # Configuración de la conexión MySQL y sesión de SQLAlchemy.
+├── models.py               # Definición de las tablas de la base de datos (Entidades).
+├── schemas.py              # Definición de modelos Pydantic (Validación de datos API).
+├── auth_utils.py           # Utilidades para hashing de contraseñas y generación de JWT.
+├── routes/                 # Directorio de controladores de rutas
+│   ├── auth.py             # Gestión de login, registro y usuarios.
+│   └── clientes.py         # Lógica central: Clientes, pagos, scripts y reportes.
+├── rutas_configuraciones.py # CRUD de Parroquias, Planes, Bancos y Puertos.
+├── uploads/                # Directorio de almacenamiento de imágenes (Cédulas).
+├── rutas_reportes/         # Almacenamiento de reportes Excel generados.
+└── [scripts_varios].py     # Herramientas de mantenimiento, seeding y correcciones de DB.
 ```
 
-### Paso 2: Configuración de la Base de Datos
-Se configuró la conexión en el archivo `database.py` apuntando a la base de datos local `opsatel` en XAMPP.
-*   **URL de conexión**: `mysql+pymysql://root:@localhost/opsatel`
+---
 
-### Paso 3: Limpieza y Normalización de Datos (Crítico)
-Debido a que el Excel se importó con nombres genéricos (`COL 1`, `COL 2`, etc.) y los nombres de las columnas reales estaban en la primera fila de datos, se ejecutaron scripts de limpieza para:
-1.  **Renombrar Columnas**: Se mapearon todas las columnas (41 en total) a sus nombres reales: `NUMERO`, `NOMBRE`, `CELULAR`, `CEDULA`, `CORREO`, `DIRECCION`, `PARROQUIA`, `PLAN`, `CEDULA_TIPO`, `UBICACION`, `ESTADO`, `TIEMPO`, `ARRIENDA`, `CUENTA`, `FECHA_FIRMA`, `INSTALATION DATE`, `PUERTO`, `ONT`, `SERVICIO`, `BREACH`, `ID_PORT`, `SERVICE PORT`, `IP`, `DISPOSITIVO`, `POTENCIA`, `NAP`, `TECNICO`, `ACTIVADOR`, `RED`, `CLAVE`, `FACTURAS`, `INTERNET PAYMENT`, `APP`, `PAYMENT DATE`, `CLIENT PAYMENT DATE`, `BANK`, `COD`, `PLUS`, `BANK_PLUS`, `SALDO`.
-2.  **Eliminar Cabeceras**: Se borró la primera fila de la tabla que contenía los nombres como datos.
-3.  **Configurar IDs**: Se convirtió la columna `NUMERO` en llave primaria autoincremental, desplazando los valores originales para evitar conflictos con el valor 0 de MySQL.
+## 🗄️ 3. Modelo de Datos (DB Schema)
+El sistema utiliza un esquema relacional con las siguientes entidades principales:
 
-### Paso 4: Creación de Modelos y Esquemas
-*   **`models.py`**: Se definieron las clases `Cliente` (mapeada a la tabla de Excel) y `Pago` (historial de transacciones).
-*   **`schemas.py`**: Se crearon las validaciones de datos para las tres etapas de gestión (Creación, Técnica y Administración).
+*   **`Cliente` (`hoja_de_c__lculo_sin_t__tulo`):** Tabla central. Almacena datos personales, geográficos (Parroquia/Puerto), técnicos (IP, ONT, Scripts) y financieros (Saldo, Pagos).
+*   **`Usuario`:** Gestión de accesos con roles (`administrador`, `secretario`, `tecnico`, `instalador`).
+*   **`Pago`:** Historial detallado de transacciones financieras por cliente.
+*   **`Parroquia`:** Entidad geográfica que define el prefijo IP base (Ej: 172.16).
+*   **`Puerto`:** Subdivisiones físicas/lógicas dentro de una parroquia para organizar ONTs.
+*   **`PlanInternet`:** Catálogo de velocidades y precios mensuales.
+*   **`Banco`:** Lista de entidades financieras permitidas para pagos.
+*   **`ReporteMensual`:** Registro de archivos Excel generados históricamente.
 
-### Paso 5: Implementación de Endpoints (Rutas)
-Se desarrollaron las funciones en `routes/clientes.py` para manejar el ciclo de vida del cliente:
-*   `POST /clientes/`: Creación inicial (Etapa 1).
-*   `PATCH /clientes/{id}/configuracion-tecnica`: Activación técnica (Etapa 2).
-*   `PATCH /clientes/{id}/administracion`: Gestión de saldos (Etapa 3).
-*   `POST /clientes/{id}/pagar`: Registro de pagos y reset de saldo a 0.
-*   `POST /clientes/facturacion-mensual-global`: Simulación de cobro mensual masivo.
+---
 
-## 3. Guía de Ejecución
+## 🔐 4. Sistema de Seguridad y Roles (RBAC)
+El sistema implementa un control de acceso basado en roles para proteger la integridad de los datos:
 
-Para iniciar el servidor, ejecuta el siguiente comando desde la carpeta `opsatel`:
+| Rol | Permisos Principales |
+| :--- | :--- |
+| **Administrador** | Acceso total, gestión de usuarios, facturación global, eliminación de datos. |
+| **Secretario** | Gestión de clientes, registro de pagos, generación de reportes, edición de planes. |
+| **Técnico** | Configuración técnica de clientes, generación de scripts GPON, actualización de potencia (NAP). |
+| **Instalador** | Similar al técnico, enfocado en el despliegue inicial en campo. |
 
-```powershell
-python -m uvicorn main:app --reload
-```
+---
 
-Luego, accede a la documentación interactiva en:
-👉 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+## ⚙️ 5. Lógica de Negocio Crucial
 
-## 4. Notas Importantes
-*   **Nombre de la Tabla**: El sistema usa directamente la tabla `hoja_de_c__lculo_sin_t__tulo` para evitar migraciones complejas de datos.
-*   **Logs**: El servidor mostrará en consola cualquier error de conexión o validación de datos.
+### A. Flujo de Estados del Cliente
+1.  **Pendiente:** Cliente registrado pero sin instalación física.
+2.  **En Activación:** Etapa donde el equipo técnico asigna IP, ONT y genera scripts.
+3.  **Activo:** Cliente operando normalmente, genera deudas mensuales automáticas.
 
-## 5. Historial de Refinamientos (Lógica de Negocio)
+### B. Generación de Automatismos Técnicos (OLT Huawei)
+El backend calcula automáticamente los siguientes valores para evitar colisiones:
+*   **ID Port (ONT ID):** Se autoincrementa por cada Puerto específico.
+*   **Service Port:** Autoincremento global para asegurar unicidad en la OLT.
+*   **IP Dinámica:** Basada en la fórmula: `{Prefijo_Parroquia}.{Num_Puerto}.{ONT_ID + 1}`.
+*   **Scripts:** Generación de comandos `ont add`, `service-port` y `native-vlan` listos para copiar y pegar.
 
-### Refinamiento de Saldos y Pagos (Marzo 2024)
-Se implementó una lógica avanzada para la gestión de deudas y cobros recurrentes:
+### C. Ciclo Financiero y Facturación
+El sistema maneja un ciclo mensual riguroso para evitar errores contables:
+1.  **Facturación Mensual Global:** Suma el valor del Plan + Plus al saldo de todos los clientes "Activos". Requiere que el mes anterior esté "Cerrado".
+2.  **Cierre de Mes:** Resetea los contadores de `pago_mensual` para iniciar el nuevo ciclo desde cero, manteniendo la deuda/saldo pendiente.
+3.  **Generación de Reporte:** Exporta a Excel los cobros efectuados del mes y realiza el cierre automático.
 
-1.  **Sincronización Automática (`sync_cliente_balances`)**: 
-    - El sistema calcula el `total_pago` mensual sumando `Plan Base + Plus + Adicional`.
-    - El `saldo` (pendiente) se calcula restando el `pago_mensual` acumulado al total anterior.
-    - Soporta deudas acumuladas y excedentes (créditos a favor).
+---
 
-2.  **Lógica de Consumo de Cargos (`registrar_pago`)**:
-    - Al registrar un pago, los campos `plus` y `adicional` se **mueven internamente** a campos de respaldo (`plus_pagado`, `adicional_pagado`) y se limpian de la tabla principal.
-    - Esto permite que el usuario vea la tabla de administración "vaciada" tras el cobro sin generar errores de "excedente" (ya que el cargo sigue existiendo internamente para el balance del mes).
-    - El monto total pagado suma automáticamente el **Internet + Adicional** según lo ingresado en el modal.
+## 📡 6. Endpoints Principales (Resumen)
 
-3.  **Filtrado y Optimización de Reportes**:
-    - El endpoint `/reportes/generar` ahora filtra automáticamente a los clientes: solo se incluyen aquellos con el campo **facturas** lleno (omitiendo vacíos o "NONE").
-    - El reporte Excel se ha simplificado a las columnas críticas: `ID`, `NOMBRE`, `CELULAR`, `CEDULA`, `CORREO`, `BANK` y `TOTAL`.
+### Autenticación (`/auth`)
+*   `POST /login`: Retorna token JWT y datos del usuario.
+*   `POST /register`: (Solo Admin) Crea nuevos usuarios de sistema.
 
-4.  **Nuevos Campos y Estados**:
-    - Se añadió soporte para estados judiciales y en proceso (**Jurídico**, **En Proceso**).
-    - Se incorporó la columna **Observaciones** persistente en la base de datos para seguimiento de casos.
+### Gestión de Clientes (`/clientes`)
+*   `GET /`: Lista todos los clientes.
+*   `POST /`: Crea un nuevo prospecto de cliente.
+*   `GET /siguiente-valor-tecnico`: Calcula IP, ID Port y genera comandos OLT en tiempo real.
+*   `PATCH /{id}/configuracion-tecnica`: Finaliza la instalación y activa al cliente.
+*   `POST /{id}/pagar`: Registra un pago y liquida saldos/plus/adicionales.
+*   `POST /facturacion-mensual-global`: Ejecuta el cobro masivo del mes.
 
-### Segunda Etapa: Dashboard y Seguridad (Marzo 2024)
-Se ampliaron las capacidades de análisis financiero y control de acceso:
+### Configuración (`/configuraciones`)
+*   CRUD completo para `parroquias`, `planes`, `bancos` y `puertos`.
 
-1.  **Segregación de Ingresos (`monto_internet` y `monto_plus`)**: 
-    - Se añadieron columnas específicas a la tabla `pagos` para diferenciar la recaudación del plan de internet de los servicios adicionales (IP TV).
-    - La lógica de `registrar_pago` ahora distribuye automáticamente los montos ingresados hacia estas columnas para auditoría detallada.
+---
 
-2.  **Endpoint Estadístico (`/dashboard-stats`)**:
-    - Nuevo servicio que calcula la recaudación total del mes actual desglosada por método de pago (**Efectivo**, **Pichincha**, **JEP**) tanto para internet como para servicios extra.
+## 🛠️ 7. Herramientas de Mantenimiento
+Existen scripts especializados en la raíz del proyecto para tareas administrativas:
+*   `create_users.py`: Inicializa usuarios base (Admin: `admin123`).
+*   `seed_configuraciones.py`: Carga parroquias (Baños, Sayausí), planes y puertos iniciales.
+*   `sync_db.py`: Sincroniza automáticamente cambios en las columnas de `models.py` con MySQL.
+*   `cleanup_database.py`: Limpia registros de prueba o inconsistentes.
 
-3.  **Sistema de Roles (Instalador)**:
-    - Se creó el rol **"instalador"**, diseñado para personal de campo. Este rol tiene acceso restringido exclusivamente al área técnica, permitiendo activar clientes y configurar potencias sin acceder a datos financieros o administrativos.
+---
 
-4.  **Robustecimiento de Cálculos (`try_float`)**:
-    - Se implementó una función global de limpieza de datos numéricos para prevenir errores de servidor (Internal Server Error 500) cuando se ingresan valores con comas, espacios o campos vacíos.
+## 🚀 8. Instrucciones de Despliegue (Local)
+1. Instalar dependencias: `pip install -r requirements.txt`.
+2. Configurar DB en `database.py`: `SQLALCHEMY_DATABASE_URL`.
+3. Ejecutar inicialización: `python create_users.py` y `python seed_configuraciones.py`.
+4. Iniciar servidor: `uvicorn main:app --reload`.
+
+---
+**Nota:** Esta documentación refleja el estado actual del backend y debe actualizarse ante cambios significativos en los modelos o lógica financiera.
