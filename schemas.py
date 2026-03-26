@@ -16,6 +16,7 @@ class ClienteCreate(BaseModel):
     plus: Optional[str] = "0"
     fecha_firma: str
     ubicacion: Optional[str] = None
+    tiempo: Optional[str] = "0"
 
 class ClienteUpdateTecnico(BaseModel):
     puerto: str

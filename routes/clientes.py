@@ -104,6 +104,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         cedula_tipo=cliente.cedula_tipo,
         ubicacion=cliente.ubicacion,
         fecha_firma=cliente.fecha_firma,
+        tiempo=cliente.tiempo,
         estado="Pendiente"
     )
     db.add(db_cliente)
