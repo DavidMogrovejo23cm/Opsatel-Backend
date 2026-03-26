@@ -121,3 +121,19 @@ Existen scripts especializados en la raíz del proyecto para tareas administrati
 
 ---
 **Nota:** Esta documentación refleja el estado actual del backend y debe actualizarse ante cambios significativos en los modelos o lógica financiera.
+
+---
+
+## 🆕 9. Actualizaciones Recientes (v1.2)
+
+### A. Mejoras en Lógica Financiera (Independencia Contable)
+Se refactorizó el sistema de cobros para aislar el cargo "Adicional":
+*   **Base de Datos (`historial_pagos`):** Se implementó la columna `monto_adicional`.
+*   **Registro de Pagos (`POST /clientes/{id}/pagar`):** Los abonos ingresados como "Adicional" **no** disminuyen el saldo base de la deuda por internet/IPTV (`total_pago`). Esto garantiza que los cobros extraordinarios (instalaciones, ventas de routers) se mantengan independientes de la facturación recurrente.
+*   **Frontend Sincronizado:** El dashboard y el modal interactivo de pagos del UI reflejan ahora el cálculo aislado, acumulando el "TOTAL" recaudado en la "Vista General" sin contaminar la contabilidad de la deuda pendiente.
+
+### B. Gestión de Contratos (Campo `tiempo`)
+Se optimizó el modelo de creación de clientes para incluir métricas de permanencia:
+*   **Esquema `ClienteCreate`:** Incorporación del campo `tiempo` (duración del contrato en meses).
+*   **Endpoint (`POST /clientes/`):** La ruta captura el tiempo estipulado desde la venta inicial.
+*   **Frontend (UX):** Se eliminó la edición manual del "Tiempo" en el panel administrativo, y se trasladó la captura de este valor al formulario inicial de Ventas, protegiendo los parámetros comerciales.
