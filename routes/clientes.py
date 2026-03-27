@@ -13,6 +13,7 @@ router = APIRouter(prefix="/clientes", tags=["clientes"])
 import traceback
 from datetime import datetime
 from config_manager import get_config, save_config
+import calendar
 
 def try_float(val):
     try:
@@ -317,8 +318,41 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
 
     cliente.estado = "Activo"
     cliente.instalation_date = datetime.now().strftime("%Y-%m-%d")
+    
+    # ========================================================================
+    # LOGICA DE PRORRATEO (PRIMER MES PROPORCIONAL)
+    # ========================================================================
+    # Según requerimiento: Si se activa el 27 de un mes de 31 días, solo paga 5 días.
+    try:
+        now = datetime.now()
+        _, total_days_in_month = calendar.monthrange(now.year, now.month)
+        current_day = now.day
+        active_days = (total_days_in_month - current_day) + 1
+        
+        # 1. Obtener costos base del plan y servicios plus
+        plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+        tarifa_base = float(plan_info.precio or 0) if plan_info else 0.00
+        plus_base = try_float(cliente.plus)
+        
+        total_full_month = tarifa_base + plus_base
+        
+        # Evitamos división por cero y calculamos el proporcional
+        if total_days_in_month > 0 and total_full_month > 0:
+            prorated_amount = (total_full_month / total_days_in_month) * active_days
+            
+            # Ajustamos el saldo para que al sumarse con la tarifa en sync_balances, 
+            # el resultado sea exactamente el proporcional de los días restantes.
+            # Saldo = Proporcional - Tarifa_Mes_Completo
+            cliente.saldo = round(prorated_amount - total_full_month, 2)
+            
+            # Sincronizamos para que total_pago se actualice inmediatamente
+            sync_cliente_balances(cliente, db)
+            
+    except Exception as e:
+        print(f"Error calculando prorrateo: {e}")
+
     db.commit()
-    return {"message": "Configuración técnica guardada, cliente ahora Activo y con fecha de instalación registrada."}
+    return {"message": "Configuración técnica guardada, cliente ahora Activo (con pago prorrateado) y con fecha de instalación registrada."}
 
 
 
