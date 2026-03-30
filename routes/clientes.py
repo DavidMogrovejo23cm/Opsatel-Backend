@@ -111,7 +111,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         celular=cliente.celular,
         correo=cliente.correo,
         direccion=cliente.direccion,
-        parroquia=cliente.parroquia,
+        nodo=cliente.nodo,
         plan=cliente.plan,
         plus=cliente.plus,
         cedula_tipo=cliente.cedula_tipo,
@@ -133,7 +133,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
 
 @router.get("/siguiente-valor-tecnico")
 def obtener_siguiente_valor_tecnico(
-    parroquia: str = None, 
+    nodo: str = None, 
     puerto: str = None, 
     mac: str = "",
     nombre: str = "",
@@ -142,8 +142,8 @@ def obtener_siguiente_valor_tecnico(
 ):
     import re
     # 1. Obtracción de prefijos y parámetros de red
-    db_parroquia = db.query(models.Parroquia).filter(models.Parroquia.nombre == parroquia).first()
-    prefijo = db_parroquia.base_ip if db_parroquia and db_parroquia.base_ip else "172.16"
+    db_nodo = db.query(models.Nodo).filter(models.Nodo.nombre == nodo).first()
+    prefijo = db_nodo.base_ip if db_nodo and db_nodo.base_ip else "172.16"
     
     puerto_num_str = puerto if puerto else "0"
     match = re.search(r'\d+', puerto_num_str)
@@ -153,11 +153,11 @@ def obtener_siguiente_valor_tecnico(
     # 2. Búsqueda de valores según requerimiento (ONT ID por Puerto, Service Port Global)
     
     # --- ID PORT (ONT ID) por PUERTO ---
-    # Se busca el máximo dentro del mismo puerto y parroquia
+    # Se busca el máximo dentro del mismo puerto y nodo
     id_ports_en_puerto = db.query(models.Cliente.id_port).filter(
         models.Cliente.id_port.isnot(None), 
         models.Cliente.id_port != "",
-        models.Cliente.parroquia == parroquia,
+        models.Cliente.nodo == nodo,
         models.Cliente.puerto == puerto
     ).all()
     
@@ -244,19 +244,19 @@ def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: 
     # 1. Validar ID_PORT (per-port)
     p_id_port = data.id_port if data.id_port is not None else cliente.id_port
     if p_id_port:
-        p_parroquia = data.parroquia if data.parroquia is not None else cliente.parroquia
+        p_nodo = data.nodo if data.nodo is not None else cliente.nodo
         p_puerto = data.puerto if data.puerto is not None else cliente.puerto
         
         # Solo validamos si alguno de los 3 está cambiando o si se envió explícitamente el id_port
-        if data.id_port is not None or data.parroquia is not None or data.puerto is not None:
+        if data.id_port is not None or data.nodo is not None or data.puerto is not None:
             existente_id = db.query(models.Cliente).filter(
                 models.Cliente.id_port == p_id_port,
-                models.Cliente.parroquia == p_parroquia,
+                models.Cliente.nodo == p_nodo,
                 models.Cliente.puerto == p_puerto,
                 models.Cliente.id != id
             ).first()
             if existente_id:
-                raise HTTPException(status_code=400, detail=f"El ID Port '{p_id_port}' ya existe en el puerto '{p_puerto}' ({p_parroquia}).")
+                raise HTTPException(status_code=400, detail=f"El ID Port '{p_id_port}' ya existe en el puerto '{p_puerto}' ({p_nodo}).")
 
     # 2. Validar Globales
     campos_globales = ["ont", "servicio", "breach", "service_port", "ip"]
@@ -287,12 +287,12 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
     if data.id_port:
         existente_id = db.query(models.Cliente).filter(
             models.Cliente.id_port == data.id_port,
-            models.Cliente.parroquia == cliente.parroquia, 
+            models.Cliente.nodo == cliente.nodo, 
             models.Cliente.puerto == data.puerto,
             models.Cliente.id != id
         ).first()
         if existente_id:
-            raise HTTPException(status_code=400, detail=f"El ID Port '{data.id_port}' ya existe en el puerto '{data.puerto}' ({cliente.parroquia}).")
+            raise HTTPException(status_code=400, detail=f"El ID Port '{data.id_port}' ya existe en el puerto '{data.puerto}' ({cliente.nodo}).")
 
     # 2. Validar Globales
     campos_globales = ["ont", "servicio", "breach", "service_port", "ip"]

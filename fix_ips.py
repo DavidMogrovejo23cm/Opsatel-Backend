@@ -4,11 +4,11 @@ import models
 def fix_ips():
     db = SessionLocal()
     try:
-        sayausi = db.query(models.Parroquia).filter(models.Parroquia.nombre == "SAYAUSÍ").first()
+        sayausi = db.query(models.Nodo).filter(models.Nodo.nombre == "SAYAUSÍ").first()
         if sayausi:
             sayausi.base_ip = "172.18"
             
-        banos = db.query(models.Parroquia).filter(models.Parroquia.nombre == "BAÑOS").first()
+        banos = db.query(models.Nodo).filter(models.Nodo.nombre == "BAÑOS").first()
         if banos:
             banos.base_ip = "172.16"
             

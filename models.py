@@ -29,7 +29,7 @@ class Cliente(Base):
 
     direccion = Column("DIRECCION", String(255))
 
-    parroquia = Column("PARROQUIA", String(100))
+    nodo = Column("NODO", String(100))
 
     plan = Column("PLAN", String(100))
 
@@ -162,8 +162,8 @@ class Usuario(Base):
     password_hash = Column(String(255))
     rol = Column(String(20)) # administrador, secretario, tecnico
 
-class Parroquia(Base):
-    __tablename__ = "parroquias"
+class Nodo(Base):
+    __tablename__ = "nodos"
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String(100), unique=True, index=True)
     base_ip = Column(String(50), default="172.16")
@@ -184,8 +184,8 @@ class Puerto(Base):
     __tablename__ = "puertos"
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String(100)) 
-    parroquia_id = Column(Integer, ForeignKey("parroquias.id"))
-    parroquia = relationship("Parroquia", backref="puertos")
+    nodo_id = Column(Integer, ForeignKey("nodos.id"))
+    nodo = relationship("Nodo", backref="puertos")
 
 class FinanzasBase(Base):
     __tablename__ = "finanzas_base"

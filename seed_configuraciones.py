@@ -4,35 +4,35 @@ import models
 def seed_data():
     db = SessionLocal()
     try:
-        # Parroquia BAÑOS
-        banos = db.query(models.Parroquia).filter(models.Parroquia.nombre == "BAÑOS").first()
+        # Nodo BAÑOS
+        banos = db.query(models.Nodo).filter(models.Nodo.nombre == "BAÑOS").first()
         if not banos:
-            banos = models.Parroquia(nombre="BAÑOS")
+            banos = models.Nodo(nombre="BAÑOS")
             db.add(banos)
             db.commit()
             db.refresh(banos)
-            print("Parroquia BAÑOS creada.")
+            print("Nodo BAÑOS creado.")
         else:
-            print("Parroquia BAÑOS ya existia.")
+            print("Nodo BAÑOS ya existia.")
         
-        # Parroquia SAYAUSÍ
-        sayausi = db.query(models.Parroquia).filter(models.Parroquia.nombre == "SAYAUSÍ").first()
+        # Nodo SAYAUSÍ
+        sayausi = db.query(models.Nodo).filter(models.Nodo.nombre == "SAYAUSÍ").first()
         if not sayausi:
-            sayausi = models.Parroquia(nombre="SAYAUSÍ")
+            sayausi = models.Nodo(nombre="SAYAUSÍ")
             db.add(sayausi)
             db.commit()
             db.refresh(sayausi)
-            print("Parroquia SAYAUSÍ creada.")
+            print("Nodo SAYAUSÍ creado.")
         else:
-            print("Parroquia SAYAUSÍ ya existia.")
+            print("Nodo SAYAUSÍ ya existia.")
             
         # Puertos para SAYAUSÍ (11 puertos)
         puertos_sayausi_agregados = 0
         for i in range(1, 12):
             puerto_nombre = f"Puerto {i}"
-            puerto = db.query(models.Puerto).filter(models.Puerto.nombre == puerto_nombre, models.Puerto.parroquia_id == sayausi.id).first()
+            puerto = db.query(models.Puerto).filter(models.Puerto.nombre == puerto_nombre, models.Puerto.nodo_id == sayausi.id).first()
             if not puerto:
-                db.add(models.Puerto(nombre=puerto_nombre, parroquia_id=sayausi.id))
+                db.add(models.Puerto(nombre=puerto_nombre, nodo_id=sayausi.id))
                 puertos_sayausi_agregados += 1
         print(f"Se agregaron {puertos_sayausi_agregados} puertos nuevos a SAYAUSÍ.")
         
@@ -40,9 +40,9 @@ def seed_data():
         puertos_banos_agregados = 0
         for i in range(1, 16):
             puerto_nombre = f"Puerto {i}"
-            puerto = db.query(models.Puerto).filter(models.Puerto.nombre == puerto_nombre, models.Puerto.parroquia_id == banos.id).first()
+            puerto = db.query(models.Puerto).filter(models.Puerto.nombre == puerto_nombre, models.Puerto.nodo_id == banos.id).first()
             if not puerto:
-                db.add(models.Puerto(nombre=puerto_nombre, parroquia_id=banos.id))
+                db.add(models.Puerto(nombre=puerto_nombre, nodo_id=banos.id))
                 puertos_banos_agregados += 1
         print(f"Se agregaron {puertos_banos_agregados} puertos nuevos a BAÑOS.")
                 

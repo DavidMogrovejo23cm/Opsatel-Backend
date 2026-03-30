@@ -29,7 +29,7 @@ opsatel/
 ├── routes/                 # Directorio de controladores de rutas
 │   ├── auth.py             # Gestión de login, registro y usuarios.
 │   └── clientes.py         # Lógica central: Clientes, pagos, scripts y reportes.
-├── rutas_configuraciones.py # CRUD de Parroquias, Planes, Bancos y Puertos.
+├── rutas_configuraciones.py # CRUD de Nodos, Planes, Bancos y Puertos.
 ├── uploads/                # Directorio de almacenamiento de imágenes (Cédulas).
 ├── rutas_reportes/         # Almacenamiento de reportes Excel generados.
 └── [scripts_varios].py     # Herramientas de mantenimiento, seeding y correcciones de DB.
@@ -40,11 +40,11 @@ opsatel/
 ## 🗄️ 3. Modelo de Datos (DB Schema)
 El sistema utiliza un esquema relacional con las siguientes entidades principales:
 
-*   **`Cliente` (`hoja_de_c__lculo_sin_t__tulo`):** Tabla central. Almacena datos personales, geográficos (Parroquia/Puerto), técnicos (IP, ONT, Scripts) y financieros (Saldo, Pagos).
+*   **`Cliente` (`hoja_de_c__lculo_sin_t__tulo`):** Tabla central. Almacena datos personales, geográficos (Nodo/Puerto), técnicos (IP, ONT, Scripts) y financieros (Saldo, Pagos).
 *   **`Usuario`:** Gestión de accesos con roles (`administrador`, `secretario`, `tecnico`, `instalador`).
 *   **`Pago`:** Historial detallado de transacciones financieras por cliente.
-*   **`Parroquia`:** Entidad geográfica que define el prefijo IP base (Ej: 172.16).
-*   **`Puerto`:** Subdivisiones físicas/lógicas dentro de una parroquia para organizar ONTs.
+*   **`Nodo`:** Entidad geográfica que define el prefijo IP base (Ej: 172.16).
+*   **`Puerto`:** Subdivisiones físicas/lógicas dentro de un nodo para organizar ONTs.
 *   **`PlanInternet`:** Catálogo de velocidades y precios mensuales.
 *   **`Banco`:** Lista de entidades financieras permitidas para pagos.
 *   **`ReporteMensual`:** Registro de archivos Excel generados históricamente.
@@ -74,7 +74,7 @@ El sistema implementa un control de acceso basado en roles para proteger la inte
 El backend calcula automáticamente los siguientes valores para evitar colisiones:
 *   **ID Port (ONT ID):** Se autoincrementa por cada Puerto específico.
 *   **Service Port:** Autoincremento global para asegurar unicidad en la OLT.
-*   **IP Dinámica:** Basada en la fórmula: `{Prefijo_Parroquia}.{Num_Puerto}.{ONT_ID + 1}`.
+*   **IP Dinámica:** Basada en la fórmula: `{Prefijo_Nodo}.{Num_Puerto}.{ONT_ID + 1}`.
 *   **Scripts:** Generación de comandos `ont add`, `service-port` y `native-vlan` listos para copiar y pegar.
 
 ### C. Ciclo Financiero y Facturación
@@ -100,14 +100,14 @@ El sistema maneja un ciclo mensual riguroso para evitar errores contables:
 *   `POST /facturacion-mensual-global`: Ejecuta el cobro masivo del mes.
 
 ### Configuración (`/configuraciones`)
-*   CRUD completo para `parroquias`, `planes`, `bancos` y `puertos`.
+*   CRUD completo para `nodos`, `planes`, `bancos` y `puertos`.
 
 ---
 
 ## 🛠️ 7. Herramientas de Mantenimiento
 Existen scripts especializados en la raíz del proyecto para tareas administrativas:
 *   `create_users.py`: Inicializa usuarios base (Admin: `admin123`).
-*   `seed_configuraciones.py`: Carga parroquias (Baños, Sayausí), planes y puertos iniciales.
+*   `seed_configuraciones.py`: Carga nodos (Baños, Sayausí), planes y puertos iniciales.
 *   `sync_db.py`: Sincroniza automáticamente cambios en las columnas de `models.py` con MySQL.
 *   `cleanup_database.py`: Limpia registros de prueba o inconsistentes.
 

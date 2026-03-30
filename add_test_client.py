@@ -11,7 +11,7 @@ def add_test_client():
             celular="0999999999",
             correo="test@example.com",
             direccion="Test Address",
-            parroquia="Test Parroquia",
+            nodo="Test Nodo",
             plan="Test Plan",
             fecha_firma=str(datetime.datetime.now()),
             estado="Pendiente"

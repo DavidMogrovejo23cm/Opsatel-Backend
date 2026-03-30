@@ -12,52 +12,52 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-# --- Parroquias ---
-@router.post("/parroquias", response_model=schemas.ParroquiaResponse)
-def create_parroquia(parroquia: schemas.ParroquiaBase, db: Session = Depends(get_db)):
-    db_parroquia = models.Parroquia(nombre=parroquia.nombre, base_ip=parroquia.base_ip)
-    db.add(db_parroquia)
+# --- Nodos ---
+@router.post("/nodos", response_model=schemas.NodoResponse)
+def create_nodo(nodo: schemas.NodoBase, db: Session = Depends(get_db)):
+    db_nodo = models.Nodo(nombre=nodo.nombre, base_ip=nodo.base_ip)
+    db.add(db_nodo)
     try:
         db.commit()
-        db.refresh(db_parroquia)
+        db.refresh(db_nodo)
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=400, detail="Error o parroquia duplicada")
-    return db_parroquia
+        raise HTTPException(status_code=400, detail="Error o nodo duplicado")
+    return db_nodo
 
-@router.get("/parroquias", response_model=List[schemas.ParroquiaResponse])
-def get_parroquias(db: Session = Depends(get_db)):
-    return db.query(models.Parroquia).all()
+@router.get("/nodos", response_model=List[schemas.NodoResponse])
+def get_nodos(db: Session = Depends(get_db)):
+    return db.query(models.Nodo).all()
 
-@router.delete("/parroquias/{parroquia_id}")
-def delete_parroquia(parroquia_id: int, db: Session = Depends(get_db)):
-    parroquia = db.query(models.Parroquia).filter(models.Parroquia.id == parroquia_id).first()
-    if not parroquia:
-        raise HTTPException(status_code=404, detail="Parroquia no encontrada")
+@router.delete("/nodos/{nodo_id}")
+def delete_nodo(nodo_id: int, db: Session = Depends(get_db)):
+    nodo = db.query(models.Nodo).filter(models.Nodo.id == nodo_id).first()
+    if not nodo:
+        raise HTTPException(status_code=404, detail="Nodo no encontrado")
     
     # Cascade delete puertos
-    db.query(models.Puerto).filter(models.Puerto.parroquia_id == parroquia_id).delete()
+    db.query(models.Puerto).filter(models.Puerto.nodo_id == nodo_id).delete()
     
-    db.delete(parroquia)
+    db.delete(nodo)
     db.commit()
-    return {"message": "Parroquia eliminada exitosamente"}
+    return {"message": "Nodo eliminado exitosamente"}
 
-@router.patch("/parroquias/{parroquia_id}", response_model=schemas.ParroquiaResponse)
-def update_parroquia(parroquia_id: int, parroquia_data: schemas.ParroquiaUpdate, db: Session = Depends(get_db)):
-    db_parroquia = db.query(models.Parroquia).filter(models.Parroquia.id == parroquia_id).first()
-    if not db_parroquia:
-        raise HTTPException(status_code=404, detail="Parroquia no encontrada")
+@router.patch("/nodos/{nodo_id}", response_model=schemas.NodoResponse)
+def update_nodo(nodo_id: int, nodo_data: schemas.NodoUpdate, db: Session = Depends(get_db)):
+    db_nodo = db.query(models.Nodo).filter(models.Nodo.id == nodo_id).first()
+    if not db_nodo:
+        raise HTTPException(status_code=404, detail="Nodo no encontrado")
     
-    for key, value in parroquia_data.dict(exclude_unset=True).items():
-        setattr(db_parroquia, key, value)
+    for key, value in nodo_data.dict(exclude_unset=True).items():
+        setattr(db_nodo, key, value)
     
     try:
         db.commit()
-        db.refresh(db_parroquia)
+        db.refresh(db_nodo)
     except:
         db.rollback()
-        raise HTTPException(status_code=400, detail="Error al actualizar parroquia")
-    return db_parroquia
+        raise HTTPException(status_code=400, detail="Error al actualizar nodo")
+    return db_nodo
 
 # --- Planes ---
 @router.post("/planes", response_model=schemas.PlanInternetResponse)
@@ -148,7 +148,7 @@ def update_banco(banco_id: int, banco_data: schemas.BancoUpdate, db: Session = D
 # --- Puertos ---
 @router.post("/puertos", response_model=schemas.PuertoResponse)
 def create_puerto(puerto: schemas.PuertoBase, db: Session = Depends(get_db)):
-    db_puerto = models.Puerto(nombre=puerto.nombre, parroquia_id=puerto.parroquia_id)
+    db_puerto = models.Puerto(nombre=puerto.nombre, nodo_id=puerto.nodo_id)
     db.add(db_puerto)
     try:
         db.commit()
@@ -159,10 +159,10 @@ def create_puerto(puerto: schemas.PuertoBase, db: Session = Depends(get_db)):
     return db_puerto
 
 @router.get("/puertos", response_model=List[schemas.PuertoResponse])
-def get_puertos(parroquia_id: Optional[int] = None, db: Session = Depends(get_db)):
+def get_puertos(nodo_id: Optional[int] = None, db: Session = Depends(get_db)):
     query = db.query(models.Puerto)
-    if parroquia_id:
-        query = query.filter(models.Puerto.parroquia_id == parroquia_id)
+    if nodo_id:
+        query = query.filter(models.Puerto.nodo_id == nodo_id)
     return query.all()
 
 @router.delete("/puertos/{puerto_id}")

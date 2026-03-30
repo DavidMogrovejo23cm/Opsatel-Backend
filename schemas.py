@@ -11,7 +11,7 @@ class ClienteCreate(BaseModel):
     celular: str
     correo: Optional[EmailStr] = None
     direccion: str
-    parroquia: str
+    nodo: str
     plan: str
     plus: Optional[str] = "0"
     fecha_firma: str
@@ -76,7 +76,7 @@ class ClienteUpdateGeneral(BaseModel):
     celular: Optional[str] = None
     correo: Optional[str] = None
     direccion: Optional[str] = None
-    parroquia: Optional[str] = None
+    nodo: Optional[str] = None
     plan: Optional[str] = None
     estado: Optional[str] = None
     puerto: Optional[str] = None
@@ -154,7 +154,7 @@ class ClienteResponse(BaseModel):
     celular: Optional[str] = None
     correo: Optional[str] = None
     direccion: Optional[str] = None
-    parroquia: Optional[str] = None
+    nodo: Optional[str] = None
     plan: Optional[str] = None
     cedula_tipo: Optional[str] = None
     cedula_frontal: Optional[str] = None
@@ -233,16 +233,16 @@ class Token(BaseModel):
     username: str
     rol: str
 
-class ParroquiaBase(BaseModel):
+class NodoBase(BaseModel):
     nombre: str
     base_ip: Optional[str] = "172.16"
 
-class ParroquiaResponse(ParroquiaBase):
+class NodoResponse(NodoBase):
     id: int
     class Config:
         from_attributes = True
 
-class ParroquiaUpdate(BaseModel):
+class NodoUpdate(BaseModel):
     nombre: Optional[str] = None
     base_ip: Optional[str] = None
 
@@ -274,7 +274,7 @@ class BancoUpdate(BaseModel):
 
 class PuertoBase(BaseModel):
     nombre: str
-    parroquia_id: Optional[int] = None
+    nodo_id: Optional[int] = None
 
 class PuertoResponse(PuertoBase):
     id: int
@@ -283,7 +283,7 @@ class PuertoResponse(PuertoBase):
 
 class PuertoUpdate(BaseModel):
     nombre: Optional[str] = None
-    parroquia_id: Optional[int] = None
+    nodo_id: Optional[int] = None
 
 class UsuarioUpdate(BaseModel):
     username: Optional[str] = None
