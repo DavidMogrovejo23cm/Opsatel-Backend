@@ -223,3 +223,46 @@ def update_finanzas_base(data: schemas.FinanzasBaseUpdate, db: Session = Depends
         db.rollback()
         raise HTTPException(status_code=400, detail="Error al actualizar finanzas base")
     return finanzas
+
+# --- Parroquias ---
+@router.post("/parroquias", response_model=schemas.ParroquiaResponse)
+def create_parroquia(parroquia: schemas.ParroquiaBase, db: Session = Depends(get_db)):
+    db_parr = models.Parroquia(nombre=parroquia.nombre)
+    db.add(db_parr)
+    try:
+        db.commit()
+        db.refresh(db_parr)
+    except:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Error o parroquia duplicada")
+    return db_parr
+
+@router.get("/parroquias", response_model=List[schemas.ParroquiaResponse])
+def get_parroquias(db: Session = Depends(get_db)):
+    return db.query(models.Parroquia).all()
+
+@router.delete("/parroquias/{parr_id}")
+def delete_parroquia(parr_id: int, db: Session = Depends(get_db)):
+    parr = db.query(models.Parroquia).filter(models.Parroquia.id == parr_id).first()
+    if not parr:
+        raise HTTPException(status_code=404, detail="Parroquia no encontrada")
+    db.delete(parr)
+    db.commit()
+    return {"message": "Parroquia eliminada"}
+
+@router.patch("/parroquias/{parr_id}", response_model=schemas.ParroquiaResponse)
+def update_parroquia(parr_id: int, parr_data: schemas.ParroquiaUpdate, db: Session = Depends(get_db)):
+    db_parr = db.query(models.Parroquia).filter(models.Parroquia.id == parr_id).first()
+    if not db_parr:
+        raise HTTPException(status_code=404, detail="Parroquia no encontrada")
+    
+    for key, value in parr_data.dict(exclude_unset=True).items():
+        setattr(db_parr, key, value)
+        
+    try:
+        db.commit()
+        db.refresh(db_parr)
+    except:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Error al actualizar parroquia")
+    return db_parr

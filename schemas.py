@@ -12,6 +12,7 @@ class ClienteCreate(BaseModel):
     correo: Optional[EmailStr] = None
     direccion: str
     nodo: str
+    parroquia: Optional[str] = None
     plan: str
     plus: Optional[str] = "0"
     fecha_firma: str
@@ -77,6 +78,7 @@ class ClienteUpdateGeneral(BaseModel):
     correo: Optional[str] = None
     direccion: Optional[str] = None
     nodo: Optional[str] = None
+    parroquia: Optional[str] = None
     plan: Optional[str] = None
     estado: Optional[str] = None
     puerto: Optional[str] = None
@@ -155,6 +157,7 @@ class ClienteResponse(BaseModel):
     correo: Optional[str] = None
     direccion: Optional[str] = None
     nodo: Optional[str] = None
+    parroquia: Optional[str] = None
     plan: Optional[str] = None
     cedula_tipo: Optional[str] = None
     cedula_frontal: Optional[str] = None
@@ -303,3 +306,14 @@ class FinanzasBaseUpdate(BaseModel):
     caja_chica: Optional[float] = None
     pichincha: Optional[float] = None
     jep: Optional[float] = None
+
+class ParroquiaBase(BaseModel):
+    nombre: str
+
+class ParroquiaResponse(ParroquiaBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class ParroquiaUpdate(BaseModel):
+    nombre: Optional[str] = None

@@ -30,6 +30,7 @@ class Cliente(Base):
     direccion = Column("DIRECCION", String(255))
 
     nodo = Column("NODO", String(100))
+    parroquia = Column("PARROQUIA", String(100))
 
     plan = Column("PLAN", String(100))
 
@@ -193,4 +194,9 @@ class FinanzasBase(Base):
     caja_chica = Column(Numeric(precision=10, scale=2), default=0.00)
     pichincha = Column(Numeric(precision=10, scale=2), default=0.00)
     jep = Column(Numeric(precision=10, scale=2), default=0.00)
+
+class Parroquia(Base):
+    __tablename__ = "parroquias"
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(100), unique=True, index=True)
 
