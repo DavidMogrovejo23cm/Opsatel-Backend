@@ -313,6 +313,8 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
             p_val = float(str(cliente.potencia).replace(',', '.').strip())
             if p_val < -26.0:
                 raise HTTPException(status_code=400, detail=f"La potencia de {p_val} dBm es demasiado baja. El límite es -26.0 dBm.")
+
+                
         except ValueError:
             pass # Si no es un número válido (ej: "S/N"), saltamos la validación numérica
 

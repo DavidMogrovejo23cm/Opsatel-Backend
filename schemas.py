@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -34,6 +34,19 @@ class ClienteUpdateTecnico(BaseModel):
     activador: str
     red: str
     clave: str
+
+    @field_validator('potencia')
+    @classmethod
+    def validate_potencia(cls, v: str) -> str:
+        try:
+            val = float(v.replace(',', '.'))
+            if val < -27 or val > -6:
+                raise ValueError('La potencia debe estar entre -6 y -27')
+        except ValueError as e:
+            if 'La potencia debe estar' in str(e):
+                raise e
+            pass
+        return v
 
 class ClienteUpdateAdmin(BaseModel):
     plan: Optional[str] = None
@@ -101,6 +114,21 @@ class ClienteUpdateGeneral(BaseModel):
     pago_mensual: Optional[float] = None
     total_pago: Optional[float] = None
     saldo: Optional[float] = None
+
+    @field_validator('potencia')
+    @classmethod
+    def validate_potencia(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        try:
+            val = float(v.replace(',', '.'))
+            if val < -27 or val > -6:
+                raise ValueError('La potencia debe estar entre -6 y -27')
+        except ValueError as e:
+            if 'La potencia debe estar' in str(e):
+                raise e
+            pass
+        return v
 
 class PagoCreate(BaseModel):
     monto: float
@@ -275,4 +303,3 @@ class FinanzasBaseUpdate(BaseModel):
     caja_chica: Optional[float] = None
     pichincha: Optional[float] = None
     jep: Optional[float] = None
-
