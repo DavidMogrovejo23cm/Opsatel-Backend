@@ -28,7 +28,9 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
     # El total_pago representa el total real adeudado en tiempo real.
     # Incluye Saldo (deuda histórica neta de pagos) + Tarifa (valor del plan actual) + IPTV + Adicional.
     tarifa = 0.00
-    if db:
+    if cliente.tercera_edad and cliente.precio_plan_especial:
+        tarifa = float(cliente.precio_plan_especial)
+    elif db:
         plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
         if plan_info:
             tarifa = float(plan_info.precio or 0)
@@ -118,6 +120,8 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         ubicacion=cliente.ubicacion,
         fecha_firma=cliente.fecha_firma,
         tiempo=cliente.tiempo,
+        tercera_edad=cliente.tercera_edad,
+        precio_plan_especial=cliente.precio_plan_especial,
         estado="Pendiente"
     )
     db.add(db_cliente)
@@ -332,8 +336,12 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
         active_days = (total_days_in_month - current_day) + 1
         
         # 1. Obtener costos base del plan y servicios plus
-        plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
-        tarifa_base = float(plan_info.precio or 0) if plan_info else 0.00
+        if cliente.tercera_edad and cliente.precio_plan_especial:
+            tarifa_base = float(cliente.precio_plan_especial)
+        else:
+            plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+            tarifa_base = float(plan_info.precio or 0) if plan_info else 0.00
+        
         plus_base = try_float(cliente.plus)
         
         total_full_month = tarifa_base + plus_base

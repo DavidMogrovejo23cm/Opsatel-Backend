@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Numeric
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Numeric, Boolean
 
 from sqlalchemy.orm import relationship
 
@@ -106,6 +106,8 @@ class Cliente(Base):
 
     comentarios = Column("COMENTARIOS", String(500))
     observaciones = Column("OBSERVACIONES", String(500))
+    tercera_edad = Column("TERCERA_EDAD", Boolean, default=False)
+    precio_plan_especial = Column("PRECIO_PLAN_ESPECIAL", Numeric(precision=10, scale=2), default=0.00)
     pago_mensual = Column("PAGO_MENSUAL", Numeric(precision=10, scale=2), default=0.00)
     total_pago = Column("TOTAL_PAGO", Numeric(precision=10, scale=2), default=0.00)
     saldo = Column("SALDO", Numeric(precision=10, scale=2), default=0.00)

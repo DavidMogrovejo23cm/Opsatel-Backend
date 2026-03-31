@@ -18,6 +18,8 @@ class ClienteCreate(BaseModel):
     fecha_firma: str
     ubicacion: Optional[str] = None
     tiempo: Optional[str] = "0"
+    tercera_edad: Optional[bool] = False
+    precio_plan_especial: Optional[float] = 0.0
 
 class ClienteUpdateTecnico(BaseModel):
     puerto: str
@@ -70,6 +72,8 @@ class ClienteUpdateAdmin(BaseModel):
     pago_mensual: Optional[float] = None
     total_pago: Optional[float] = None
     saldo: Optional[float] = None
+    tercera_edad: Optional[bool] = None
+    precio_plan_especial: Optional[float] = None
 
 class ClienteUpdateGeneral(BaseModel):
     nombre: Optional[str] = None
@@ -116,6 +120,8 @@ class ClienteUpdateGeneral(BaseModel):
     pago_mensual: Optional[float] = None
     total_pago: Optional[float] = None
     saldo: Optional[float] = None
+    tercera_edad: Optional[bool] = None
+    precio_plan_especial: Optional[float] = None
 
     @field_validator('potencia')
     @classmethod
@@ -201,6 +207,8 @@ class ClienteResponse(BaseModel):
     saldo: Optional[float] = 0.0
     plus_pagado: Optional[float] = 0.0
     adicional_pagado: Optional[float] = 0.0
+    tercera_edad: Optional[bool] = False
+    precio_plan_especial: Optional[float] = 0.0
 
     class Config:
         from_attributes = True
