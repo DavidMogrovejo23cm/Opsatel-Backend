@@ -71,6 +71,7 @@ class Cliente(Base):
     red = Column("RED", String(100))
 
     clave = Column("CLAVE", String(100))
+    mac = Column("MAC", String(50))
     instalation_date = Column("INSTALATION_DATE", String(50))
 
 

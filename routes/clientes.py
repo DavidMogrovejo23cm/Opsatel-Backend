@@ -175,41 +175,31 @@ def obtener_siguiente_valor_tecnico(
     id_port_val = max_id_port + 1 if max_id_port >= 0 else 0
     id_port = str(id_port_val)
 
-    # --- SERVICE PORT GLOBAL (Tabla General) ---
-    # Sigue siendo global como se solicitó para evitar colisiones en la OLT
-    todos_service_ports = db.query(models.Cliente.service_port).filter(
-        models.Cliente.service_port.isnot(None), 
-        models.Cliente.service_port != ""
-    ).all()
-    
-    max_service_port = 127 # Empezar en 128 si no hay nada
-    for (val,) in todos_service_ports:
-        try:
-            num = int(val)
-            if num > max_service_port: max_service_port = num
-        except: continue
-        
-    service_port_val = max_service_port + 1
+    # --- SERVICE PORT (Fórmula determinista: puerto_num × 128 + id_port) ---
+    # Puerto 0 → SP 0-127, Puerto 1 → SP 128-255, Puerto 2 → SP 256-383, etc.
+    service_port_val = p_num * 128 + id_port_val
     service_port = str(service_port_val)
 
-    # --- IP (Fórmula basada en el ID y el Puerto para evitar colisiones) ---
-    ip_sugerida = f"{prefijo}.{p_num}.{id_port_val + 1}"
+    # --- IP (base_ip.puerto_num.id_port+2 → Gateway es .1, primer cliente .2) ---
+    ip_sugerida = f"{prefijo}.{p_num}.{id_port_val + 2}"
     
-    # 3. Limpieza y Cálculos de Perfil
+    # 3. Cálculos de Perfil OLT (todos dependen del número de puerto)
     mac_clean = re.sub(r'[^a-zA-Z0-9]', '', mac).upper()
+    
+    # Puerto 0 → 100/300, Puerto 1 → 101/301, Puerto 2 → 102/302, Puerto 3 → 103/303...
+    profile_id = 100 + p_num
     vlan_transport = 300 + p_num
     vlan_user = 100 + p_num
-    profile_id = 100 + p_num
     gemport = 100 + p_num
 
-    # 4. Fórmulas de generación de OLT Maestro Pro
-    # Comando 1: ONT add
+    # 4. Generación de Comandos OLT
+    # ONT: ont add {puerto} {id} sn-auth "{MAC}" omci ont-lineprofile-id {100+p} ont-srvprofile-id {100+p} desc "{nombre}"
     cmd_ont = f'ont add {p_num} {id_port} sn-auth "{mac_clean}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {profile_id} desc "{nombre}"'
     
-    # Comando 2: Service Port
+    # Servicio: service-port {sp} vlan {300+p} gpon 0/0/{p} ont {id} gemport {100+p} multi-service user-vlan {100+p} tag-transform translate
     cmd_servicio = f'service-port {service_port} vlan {vlan_transport} gpon 0/0/{p_num} ont {id_port} gemport {gemport} multi-service user-vlan {vlan_user} tag-transform translate'
     
-    # Comando 3: ONT Port (Native VLAN / Bridge)
+    # Bridge: ont port native-vlan {puerto} {id} eth 1 vlan {100+p} priority 0
     cmd_breach = f'ont port native-vlan {p_num} {id_port} eth 1 vlan {vlan_user} priority 0'
     
     return {
@@ -262,8 +252,8 @@ def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: 
             if existente_id:
                 raise HTTPException(status_code=400, detail=f"El ID Port '{p_id_port}' ya existe en el puerto '{p_puerto}' ({p_nodo}).")
 
-    # 2. Validar Globales
-    campos_globales = ["ont", "servicio", "breach", "service_port", "ip"]
+    # 2. Validar Globales (Campos de red críticos)
+    campos_globales = ["service_port", "ip", "mac"]
     for campo in campos_globales:
         nuevo_valor = getattr(data, campo)
         if nuevo_valor:
@@ -298,8 +288,8 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
         if existente_id:
             raise HTTPException(status_code=400, detail=f"El ID Port '{data.id_port}' ya existe en el puerto '{data.puerto}' ({cliente.nodo}).")
 
-    # 2. Validar Globales
-    campos_globales = ["ont", "servicio", "breach", "service_port", "ip"]
+    # 2. Validar Globales (Campos que NO deben repetirse en ningún lugar del sistema)
+    campos_globales = ["service_port", "ip", "mac"]
     for campo in campos_globales:
         nuevo_valor = getattr(data, campo)
         if nuevo_valor:
@@ -315,8 +305,8 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
     if cliente.potencia:
         try:
             p_val = float(str(cliente.potencia).replace(',', '.').strip())
-            if p_val < -26.0:
-                raise HTTPException(status_code=400, detail=f"La potencia de {p_val} dBm es demasiado baja. El límite es -26.0 dBm.")
+            if p_val < -27.0:
+                raise HTTPException(status_code=400, detail=f"La potencia de {p_val} dBm es demasiado baja. El límite es -27.0 dBm.")
 
                 
         except ValueError:

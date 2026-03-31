@@ -22,6 +22,7 @@ class ClienteCreate(BaseModel):
     precio_plan_especial: Optional[float] = 0.0
 
 class ClienteUpdateTecnico(BaseModel):
+    mac: str
     puerto: str
     ont: str
     servicio: str
@@ -97,6 +98,7 @@ class ClienteUpdateGeneral(BaseModel):
     nap: Optional[str] = None
     red: Optional[str] = None
     clave: Optional[str] = None
+    mac: Optional[str] = None
     instalation_date: Optional[str] = None
     ubicacion: Optional[str] = None
     cedula_tipo: Optional[str] = None
@@ -189,6 +191,7 @@ class ClienteResponse(BaseModel):
     activador: Optional[str] = None
     red: Optional[str] = None
     clave: Optional[str] = None
+    mac: Optional[str] = None
     facturas: Optional[str] = None
     internet_payment: Optional[str] = None
     app: Optional[str] = None
