@@ -385,12 +385,13 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
     
     # El m_internet_p fluye independiente del adicional según requerimiento v1.2.
     # El monto total recibido se destina prioritariamente a cubrir el Pendiente de Internet+TV.
-    m_internet_p = m_total - m_plus_p
+    # Restamos tanto m_plus como m_adic para que no afecten el saldo de internet.
+    m_internet_p = m_total - m_plus_p - m_adic_p
 
-    # Registrar en historial con el nuevo campo independiente
+    # Registrar en historial con el monto total real recibido (m_total ya lo incluye todo)
     nuevo_pago = models.Pago(
         cliente_id=id,
-        monto=m_total + m_adic_p, # Total cash in the receipt
+        monto=m_total,
         metodo_pago=pago_data.metodo_pago,
         mes_correspondiente=pago_data.mes_correspondiente,
         referencia=pago_data.referencia,
