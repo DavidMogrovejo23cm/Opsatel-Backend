@@ -142,12 +142,21 @@ def obtener_siguiente_valor_tecnico(
     mac: str = "",
     nombre: str = "",
     has_breach: bool = False,
+    cliente_id: str = "",
     db: Session = Depends(get_db)
 ):
     import re
     # 1. Obtracción de prefijos y parámetros de red
     db_nodo = db.query(models.Nodo).filter(models.Nodo.nombre == nodo).first()
-    prefijo = db_nodo.base_ip if db_nodo and db_nodo.base_ip else "172.16"
+    
+    # Lógica SAYAUSI vs Normal
+    is_sayausi = str(nodo or "").upper() == "SAYAUSI"
+    
+    # El prefijo cambia para SAYAUSI a 172.18 si no se especifica otra cosa en el nodo
+    if is_sayausi:
+        prefijo = "172.18"
+    else:
+        prefijo = db_nodo.base_ip if db_nodo and db_nodo.base_ip else "172.16"
     
     puerto_num_str = puerto if puerto else "0"
     match = re.search(r'\d+', puerto_num_str)
@@ -155,38 +164,29 @@ def obtener_siguiente_valor_tecnico(
     p_num = int(puerto_num_clean)
 
     # 2. Búsqueda Recursiva de Valores Libres
-    # Buscamos el siguiente ID_PORT disponible para este PUERTO y NODO
-    # Y que además NO cause colisión en el SERVICE_PORT global
-    
     id_port_val = 0
     while True:
-        # Calcular SERVICE_PORT basado en el ID_PORT propuesto
         service_port_val = p_num * 128 + id_port_val
         
-        # Verificar si el ID_PORT está libre en este puerto/nodo
         id_port_ocupado = db.query(models.Cliente).filter(
             models.Cliente.id_port == str(id_port_val),
             models.Cliente.nodo == nodo,
             models.Cliente.puerto == puerto
         ).first()
 
-        # Verificar si el SERVICE_PORT está libre globalmente
         sp_ocupado = db.query(models.Cliente).filter(
             models.Cliente.service_port == str(service_port_val)
         ).first()
 
         if not id_port_ocupado and not sp_ocupado:
-            # Encontramos un par ID_PORT / SERVICE_PORT libre
             break
-        
         id_port_val += 1
-        if id_port_val > 127: # Por seguridad de la OLT
-            break
+        if id_port_val > 127: break
 
     id_port = str(id_port_val)
     service_port = str(service_port_val)
 
-    # 3. IP (base_ip.puerto_num.id_port+2) - Verificar redundancia
+    # 3. IP Verification
     ip_sugerida = ""
     ip_offset = 2
     while True:
@@ -197,17 +197,39 @@ def obtener_siguiente_valor_tecnico(
             break
         ip_offset += 1
 
-    # 4. Perfiles OLT
+    # 4. Parámetros Técnicos Diferenciados
     mac_clean = re.sub(r'[^a-zA-Z0-9]', '', mac).upper()
-    profile_id = 100 + p_num
-    vlan_transport = 300 + p_num
-    vlan_user = 100 + p_num
-    gemport = 100 + p_num
+    
+    if is_sayausi:
+        # SAYAUSI: Perfiles 400+, VLAN 400+, GPON 0/1/x
+        profile_id = 400 + p_num
+        vlan_val = 400 + p_num
+        gpon_path = f"0/1/{p_num}"
+        # Descripción incluye el CODIGO (cliente_id) formateado a 3 dígitos si es numérico
+        try:
+            cid_clean = str(cliente_id).zfill(3)
+        except:
+            cid_clean = str(cliente_id)
+        description = f"{cid_clean} {nombre}"
+    else:
+        # NORMAL (Baños/Otros): Perfiles 100+, VLAN 100/300, GPON 0/0/x
+        profile_id = 100 + p_num
+        vlan_val = 100 + p_num # User vlan
+        vlan_transport = 300 + p_num
+        gpon_path = f"0/0/{p_num}"
+        description = nombre
 
-    # 5. Comandos OLT
-    cmd_ont = f'ont add {p_num} {id_port} sn-auth "{mac_clean}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {profile_id} desc "{nombre}"'
-    cmd_servicio = f'service-port {service_port} vlan {vlan_transport} gpon 0/0/{p_num} ont {id_port} gemport {gemport} multi-service user-vlan {vlan_user} tag-transform translate'
-    cmd_breach = f'ont port native-vlan {p_num} {id_port} eth 1 vlan {vlan_user} priority 0'
+    # 5. Generación de Comandos OLT
+    cmd_ont = f'ont add {p_num} {id_port} sn-auth "{mac_clean}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {profile_id} desc "{description}"'
+    
+    if is_sayausi:
+        # Service port Sayausi: vlan 40X, gpon 0/1/X
+        cmd_servicio = f'service-port {service_port} vlan {vlan_val} gpon {gpon_path} ont {id_port} gemport {vlan_val} multi-service user-vlan {vlan_val} tag-transform translate'
+        cmd_breach = f'ont port native-vlan {p_num} {id_port} eth 1 vlan {vlan_val} priority 0'
+    else:
+        # Service port Normal: vlan 30X, gpon 0/0/X
+        cmd_servicio = f'service-port {service_port} vlan {vlan_transport} gpon {gpon_path} ont {id_port} gemport {profile_id} multi-service user-vlan {vlan_val} tag-transform translate'
+        cmd_breach = f'ont port native-vlan {p_num} {id_port} eth 1 vlan {vlan_val} priority 0'
     
     return {
         "id_port": id_port,
