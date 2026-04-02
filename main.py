@@ -6,7 +6,7 @@ from database import engine, Base
 
 import models
 
-from routes import clientes
+from routes import auth, clientes, extras
 
 
 
@@ -52,6 +52,7 @@ import rutas_configuraciones
 
 app.include_router(auth.router)
 app.include_router(clientes.router)
+app.include_router(extras.router)
 app.include_router(rutas_configuraciones.router)
 
 from fastapi.staticfiles import StaticFiles

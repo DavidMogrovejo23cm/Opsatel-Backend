@@ -328,3 +328,136 @@ class ParroquiaResponse(ParroquiaBase):
 
 class ParroquiaUpdate(BaseModel):
     nombre: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+class ClienteExtraBase(BaseModel):
+    cod: Optional[str] = None
+    nombre_cliente: Optional[str] = None
+    contacto: Optional[str] = None
+    proveedor: Optional[str] = None
+    usuario: Optional[str] = None
+    contrasena: Optional[str] = None
+    cuentas: Optional[str] = None
+    mac_smart_one: Optional[str] = None
+    observaciones: Optional[str] = None
+    estado: Optional[str] = None
+    valor: Optional[float] = 0.0
+    activo: Optional[str] = "SI"
+    saldo_pendiente: Optional[float] = 0.0
+    total_pagado: Optional[float] = 0.0
+
+    # Campos mensuales (Opcionales todos)
+    enero_factura: Optional[str] = None
+    enero_fecha_a_pagar: Optional[str] = None
+    enero_fecha_pago: Optional[str] = None
+    enero_pago: Optional[float] = 0.0
+    enero_banco: Optional[str] = None
+    enero_cod: Optional[str] = None
+    enero_saldo: Optional[float] = 0.0
+
+    febrero_factura: Optional[str] = None
+    febrero_fecha_a_pagar: Optional[str] = None
+    febrero_fecha_pago: Optional[str] = None
+    febrero_pago: Optional[float] = 0.0
+    febrero_banco: Optional[str] = None
+    febrero_cod: Optional[str] = None
+    febrero_saldo: Optional[float] = 0.0
+
+    marzo_factura: Optional[str] = None
+    marzo_fecha_a_pagar: Optional[str] = None
+    marzo_fecha_pago: Optional[str] = None
+    marzo_pago: Optional[float] = 0.0
+    marzo_banco: Optional[str] = None
+    marzo_cod: Optional[str] = None
+    marzo_saldo: Optional[float] = 0.0
+
+    abril_factura: Optional[str] = None
+    abril_fecha_a_pagar: Optional[str] = None
+    abril_fecha_pago: Optional[str] = None
+    abril_pago: Optional[float] = 0.0
+    abril_banco: Optional[str] = None
+    abril_cod: Optional[str] = None
+    abril_saldo: Optional[float] = 0.0
+
+    mayo_factura: Optional[str] = None
+    mayo_fecha_a_pagar: Optional[str] = None
+    mayo_fecha_pago: Optional[str] = None
+    mayo_pago: Optional[float] = 0.0
+    mayo_banco: Optional[str] = None
+    mayo_cod: Optional[str] = None
+    mayo_saldo: Optional[float] = 0.0
+
+    junio_factura: Optional[str] = None
+    junio_fecha_a_pagar: Optional[str] = None
+    junio_fecha_pago: Optional[str] = None
+    junio_pago: Optional[float] = 0.0
+    junio_banco: Optional[str] = None
+    junio_cod: Optional[str] = None
+    junio_saldo: Optional[float] = 0.0
+
+    julio_factura: Optional[str] = None
+    julio_fecha_a_pagar: Optional[str] = None
+    julio_fecha_pago: Optional[str] = None
+    julio_pago: Optional[float] = 0.0
+    julio_banco: Optional[str] = None
+    julio_cod: Optional[str] = None
+    julio_saldo: Optional[float] = 0.0
+
+    agosto_factura: Optional[str] = None
+    agosto_fecha_a_pagar: Optional[str] = None
+    agosto_fecha_pago: Optional[str] = None
+    agosto_pago: Optional[float] = 0.0
+    agosto_banco: Optional[str] = None
+    agosto_cod: Optional[str] = None
+    agosto_saldo: Optional[float] = 0.0
+
+    septiembre_factura: Optional[str] = None
+    septiembre_fecha_a_pagar: Optional[str] = None
+    septiembre_fecha_pago: Optional[str] = None
+    septiembre_pago: Optional[float] = 0.0
+    septiembre_banco: Optional[str] = None
+    septiembre_cod: Optional[str] = None
+    septiembre_saldo: Optional[float] = 0.0
+
+    octubre_factura: Optional[str] = None
+    octubre_fecha_a_pagar: Optional[str] = None
+    octubre_fecha_pago: Optional[str] = None
+    octubre_pago: Optional[float] = 0.0
+    octubre_banco: Optional[str] = None
+    octubre_cod: Optional[str] = None
+    octubre_saldo: Optional[float] = 0.0
+
+    noviembre_factura: Optional[str] = None
+    noviembre_fecha_a_pagar: Optional[str] = None
+    noviembre_fecha_pago: Optional[str] = None
+    noviembre_pago: Optional[float] = 0.0
+    noviembre_banco: Optional[str] = None
+    noviembre_cod: Optional[str] = None
+    noviembre_saldo: Optional[float] = 0.0
+
+    diciembre_factura: Optional[str] = None
+    diciembre_fecha_a_pagar: Optional[str] = None
+    diciembre_fecha_pago: Optional[str] = None
+    diciembre_pago: Optional[float] = 0.0
+    diciembre_banco: Optional[str] = None
+    diciembre_cod: Optional[str] = None
+    diciembre_saldo: Optional[float] = 0.0
+
+class ClienteExtraCreate(ClienteExtraBase):
+    pass
+
+class ClienteExtraUpdate(ClienteExtraBase):
+    pass
+
+class ClienteExtraResponse(ClienteExtraBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class PagoExtraCreate(BaseModel):
+    monto: float
+    metodo_pago: str
+    mes_correspondiente: str
+    referencia: Optional[str] = None
+    factura: Optional[str] = None

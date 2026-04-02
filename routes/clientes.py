@@ -154,52 +154,59 @@ def obtener_siguiente_valor_tecnico(
     puerto_num_clean = match.group() if match else "0"
     p_num = int(puerto_num_clean)
 
-    # 2. Búsqueda de valores según requerimiento (ONT ID por Puerto, Service Port Global)
+    # 2. Búsqueda Recursiva de Valores Libres
+    # Buscamos el siguiente ID_PORT disponible para este PUERTO y NODO
+    # Y que además NO cause colisión en el SERVICE_PORT global
     
-    # --- ID PORT (ONT ID) por PUERTO ---
-    # Se busca el máximo dentro del mismo puerto y nodo
-    id_ports_en_puerto = db.query(models.Cliente.id_port).filter(
-        models.Cliente.id_port.isnot(None), 
-        models.Cliente.id_port != "",
-        models.Cliente.nodo == nodo,
-        models.Cliente.puerto == puerto
-    ).all()
-    
-    max_id_port = -1
-    for (val,) in id_ports_en_puerto:
-        try:
-            num = int(val)
-            if num > max_id_port: max_id_port = num
-        except: continue
-    
-    id_port_val = max_id_port + 1 if max_id_port >= 0 else 0
-    id_port = str(id_port_val)
+    id_port_val = 0
+    while True:
+        # Calcular SERVICE_PORT basado en el ID_PORT propuesto
+        service_port_val = p_num * 128 + id_port_val
+        
+        # Verificar si el ID_PORT está libre en este puerto/nodo
+        id_port_ocupado = db.query(models.Cliente).filter(
+            models.Cliente.id_port == str(id_port_val),
+            models.Cliente.nodo == nodo,
+            models.Cliente.puerto == puerto
+        ).first()
 
-    # --- SERVICE PORT (Fórmula determinista: puerto_num × 128 + id_port) ---
-    # Puerto 0 → SP 0-127, Puerto 1 → SP 128-255, Puerto 2 → SP 256-383, etc.
-    service_port_val = p_num * 128 + id_port_val
+        # Verificar si el SERVICE_PORT está libre globalmente
+        sp_ocupado = db.query(models.Cliente).filter(
+            models.Cliente.service_port == str(service_port_val)
+        ).first()
+
+        if not id_port_ocupado and not sp_ocupado:
+            # Encontramos un par ID_PORT / SERVICE_PORT libre
+            break
+        
+        id_port_val += 1
+        if id_port_val > 127: # Por seguridad de la OLT
+            break
+
+    id_port = str(id_port_val)
     service_port = str(service_port_val)
 
-    # --- IP (base_ip.puerto_num.id_port+2 → Gateway es .1, primer cliente .2) ---
-    ip_sugerida = f"{prefijo}.{p_num}.{id_port_val + 2}"
-    
-    # 3. Cálculos de Perfil OLT (todos dependen del número de puerto)
+    # 3. IP (base_ip.puerto_num.id_port+2) - Verificar redundancia
+    ip_sugerida = ""
+    ip_offset = 2
+    while True:
+        ip_temp = f"{prefijo}.{p_num}.{id_port_val + ip_offset}"
+        ip_ocupada = db.query(models.Cliente).filter(models.Cliente.ip == ip_temp).first()
+        if not ip_ocupada:
+            ip_sugerida = ip_temp
+            break
+        ip_offset += 1
+
+    # 4. Perfiles OLT
     mac_clean = re.sub(r'[^a-zA-Z0-9]', '', mac).upper()
-    
-    # Puerto 0 → 100/300, Puerto 1 → 101/301, Puerto 2 → 102/302, Puerto 3 → 103/303...
     profile_id = 100 + p_num
     vlan_transport = 300 + p_num
     vlan_user = 100 + p_num
     gemport = 100 + p_num
 
-    # 4. Generación de Comandos OLT
-    # ONT: ont add {puerto} {id} sn-auth "{MAC}" omci ont-lineprofile-id {100+p} ont-srvprofile-id {100+p} desc "{nombre}"
+    # 5. Comandos OLT
     cmd_ont = f'ont add {p_num} {id_port} sn-auth "{mac_clean}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {profile_id} desc "{nombre}"'
-    
-    # Servicio: service-port {sp} vlan {300+p} gpon 0/0/{p} ont {id} gemport {100+p} multi-service user-vlan {100+p} tag-transform translate
     cmd_servicio = f'service-port {service_port} vlan {vlan_transport} gpon 0/0/{p_num} ont {id_port} gemport {gemport} multi-service user-vlan {vlan_user} tag-transform translate'
-    
-    # Bridge: ont port native-vlan {puerto} {id} eth 1 vlan {100+p} priority 0
     cmd_breach = f'ont port native-vlan {p_num} {id_port} eth 1 vlan {vlan_user} priority 0'
     
     return {
@@ -271,88 +278,82 @@ def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: 
     return {"message": "Cliente actualizado correctamente"}
 
 @router.patch("/{id}/configuracion-tecnica", dependencies=[Depends(require_role(["administrador", "tecnico", "instalador"]))])
-
 def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: Session = Depends(get_db)):
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
-    if not cliente:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    
-    # 1. Validar ID_PORT (per-port)
-    if data.id_port:
-        existente_id = db.query(models.Cliente).filter(
-            models.Cliente.id_port == data.id_port,
-            models.Cliente.nodo == cliente.nodo, 
-            models.Cliente.puerto == data.puerto,
-            models.Cliente.id != id
-        ).first()
-        if existente_id:
-            raise HTTPException(status_code=400, detail=f"El ID Port '{data.id_port}' ya existe en el puerto '{data.puerto}' ({cliente.nodo}).")
-
-    # 2. Validar Globales (Campos que NO deben repetirse en ningún lugar del sistema)
-    campos_globales = ["service_port", "ip", "mac"]
-    for campo in campos_globales:
-        nuevo_valor = getattr(data, campo)
-        if nuevo_valor:
-            columna = getattr(models.Cliente, campo)
-            existente = db.query(models.Cliente).filter(columna == nuevo_valor, models.Cliente.id != id).first()
-            if existente:
-                raise HTTPException(status_code=400, detail=f"El campo '{campo}' con valor '{nuevo_valor}' ya está en uso globalmente.")
-
-    for var, value in vars(data).items():
-        setattr(cliente, var, value)
-    
-    # 3. Validar Potencia (No puede ser inferior a -26.0 dBm)
-    if cliente.potencia:
-        try:
-            p_val = float(str(cliente.potencia).replace(',', '.').strip())
-            if p_val < -27.0:
-                raise HTTPException(status_code=400, detail=f"La potencia de {p_val} dBm es demasiado baja. El límite es -27.0 dBm.")
-
-                
-        except ValueError:
-            pass # Si no es un número válido (ej: "S/N"), saltamos la validación numérica
-
-    cliente.estado = "Activo"
-    cliente.instalation_date = datetime.now().strftime("%Y-%m-%d")
-    
-    # ========================================================================
-    # LOGICA DE PRORRATEO (PRIMER MES PROPORCIONAL)
-    # ========================================================================
-    # Según requerimiento: Si se activa el 27 de un mes de 31 días, solo paga 5 días.
     try:
-        now = datetime.now()
-        _, total_days_in_month = calendar.monthrange(now.year, now.month)
-        current_day = now.day
-        active_days = (total_days_in_month - current_day) + 1
+        cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
         
-        # 1. Obtener costos base del plan y servicios plus
-        if cliente.tercera_edad and cliente.precio_plan_especial:
-            tarifa_base = float(cliente.precio_plan_especial)
-        else:
-            plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
-            tarifa_base = float(plan_info.precio or 0) if plan_info else 0.00
-        
-        plus_base = try_float(cliente.plus)
-        
-        total_full_month = tarifa_base + plus_base
-        
-        # Evitamos división por cero y calculamos el proporcional
-        if total_days_in_month > 0 and total_full_month > 0:
-            prorated_amount = (total_full_month / total_days_in_month) * active_days
-            
-            # Ajustamos el saldo para que al sumarse con la tarifa en sync_balances, 
-            # el resultado sea exactamente el proporcional de los días restantes.
-            # Saldo = Proporcional - Tarifa_Mes_Completo
-            cliente.saldo = round(prorated_amount - total_full_month, 2)
-            
-            # Sincronizamos para que total_pago se actualice inmediatamente
-            sync_cliente_balances(cliente, db)
-            
-    except Exception as e:
-        print(f"Error calculando prorrateo: {e}")
+        # Log para depuración
+        print(f"DEBUG: Activando cliente {id}. MAC: {data.mac}, IP: {data.ip}, Puerto: {data.puerto}")
+    
+        # 1. Validar ID_PORT (per-port)
+        if data.id_port:
+            existente_id = db.query(models.Cliente).filter(
+                models.Cliente.id_port == data.id_port,
+                models.Cliente.nodo == cliente.nodo, 
+                models.Cliente.puerto == data.puerto,
+                models.Cliente.id != id
+            ).first()
+            if existente_id:
+                raise HTTPException(status_code=400, detail=f"El ID Port '{data.id_port}' ya existe en el puerto '{data.puerto}' ({cliente.nodo}).")
 
-    db.commit()
-    return {"message": "Configuración técnica guardada, cliente ahora Activo (con pago prorrateado) y con fecha de instalación registrada."}
+        # 2. Validar Globales (Campos que NO deben repetirse en ningún lugar del sistema)
+        campos_globales = ["service_port", "ip", "mac"]
+        for campo in campos_globales:
+            nuevo_valor = getattr(data, campo)
+            if nuevo_valor:
+                columna = getattr(models.Cliente, campo)
+                existente = db.query(models.Cliente).filter(columna == nuevo_valor, models.Cliente.id != id).first()
+                if existente:
+                    raise HTTPException(status_code=400, detail=f"El campo '{campo}' con valor '{nuevo_valor}' ya está en uso globalmente.")
+
+        for var, value in vars(data).items():
+            setattr(cliente, var, value)
+        
+        # 3. Validar Potencia (No puede ser inferior a -26.0 dBm)
+        if cliente.potencia:
+            try:
+                p_val = float(str(cliente.potencia).replace(',', '.').strip())
+                if p_val < -27.0:
+                    raise HTTPException(status_code=400, detail=f"La potencia de {p_val} dBm es demasiado baja. El límite es -27.0 dBm.")
+            except ValueError:
+                pass # Si no es un número válido (ej: "S/N"), saltamos la validación numérica
+
+        cliente.estado = "Activo"
+        cliente.instalation_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # Lógica de Prorrateo
+        try:
+            now = datetime.now()
+            _, total_days_in_month = calendar.monthrange(now.year, now.month)
+            current_day = now.day
+            active_days = (total_days_in_month - current_day) + 1
+            
+            if cliente.tercera_edad and cliente.precio_plan_especial:
+                tarifa_base = float(cliente.precio_plan_especial)
+            else:
+                plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+                tarifa_base = float(plan_info.precio or 0) if plan_info else 0.00
+            
+            plus_base = try_float(cliente.plus)
+            total_full_month = tarifa_base + plus_base
+            
+            if total_days_in_month > 0 and total_full_month > 0:
+                prorated_amount = (total_full_month / total_days_in_month) * active_days
+                cliente.saldo = round(prorated_amount - total_full_month, 2)
+                sync_cliente_balances(cliente, db)
+        except Exception as e:
+            print(f"Error calculando prorrateo: {e}")
+
+        db.commit()
+        return {"message": "Configuración técnica guardada, cliente ahora Activo (con pago prorrateado) y con fecha de instalación registrada."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
 
 
 

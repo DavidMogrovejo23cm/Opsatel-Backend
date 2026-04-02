@@ -203,3 +203,151 @@ class Parroquia(Base):
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String(100), unique=True, index=True)
 
+    class Config:
+        from_attributes = True
+
+class ClienteExtra(Base):
+    __tablename__ = "clientes_extras"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cod = Column(String(50))
+    nombre_cliente = Column(String(255))
+    contacto = Column(String(255))
+    proveedor = Column(String(255))
+    usuario = Column(String(255))
+    contrasena = Column(String(255))
+    cuentas = Column(String(50))
+    mac_smart_one = Column(String(100))
+    observaciones = Column(String(500))
+    estado = Column(String(50)) # FIJO, IRREGULAR, SEMIFIJO, EXTERNO
+    valor = Column(Numeric(precision=10, scale=2), default=0.00)
+    activo = Column(String(10), default="SI")
+    
+    # Pendientes y saldos globales para el apartado de pagos
+    saldo_pendiente = Column(Numeric(precision=10, scale=2), default=0.00)
+    total_pagado = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Definir columnas para los 12 meses
+    # Enero
+    enero_factura = Column(String(100))
+    enero_fecha_a_pagar = Column(String(50))
+    enero_fecha_pago = Column(String(50))
+    enero_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    enero_banco = Column(String(100))
+    enero_cod = Column(String(100))
+    enero_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Febrero
+    febrero_factura = Column(String(100))
+    febrero_fecha_a_pagar = Column(String(50))
+    febrero_fecha_pago = Column(String(50))
+    febrero_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    febrero_banco = Column(String(100))
+    febrero_cod = Column(String(100))
+    febrero_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Marzo
+    marzo_factura = Column(String(100))
+    marzo_fecha_a_pagar = Column(String(50))
+    marzo_fecha_pago = Column(String(50))
+    marzo_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    marzo_banco = Column(String(100))
+    marzo_cod = Column(String(100))
+    marzo_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Abril
+    abril_factura = Column(String(100))
+    abril_fecha_a_pagar = Column(String(50))
+    abril_fecha_pago = Column(String(50))
+    abril_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    abril_banco = Column(String(100))
+    abril_cod = Column(String(100))
+    abril_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Mayo
+    mayo_factura = Column(String(100))
+    mayo_fecha_a_pagar = Column(String(50))
+    mayo_fecha_pago = Column(String(50))
+    mayo_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    mayo_banco = Column(String(100))
+    mayo_cod = Column(String(100))
+    mayo_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Junio
+    junio_factura = Column(String(100))
+    junio_fecha_a_pagar = Column(String(50))
+    junio_fecha_pago = Column(String(50))
+    junio_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    junio_banco = Column(String(100))
+    junio_cod = Column(String(100))
+    junio_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Julio
+    julio_factura = Column(String(100))
+    julio_fecha_a_pagar = Column(String(50))
+    julio_fecha_pago = Column(String(50))
+    julio_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    julio_banco = Column(String(100))
+    julio_cod = Column(String(100))
+    julio_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Agosto
+    agosto_factura = Column(String(100))
+    agosto_fecha_a_pagar = Column(String(50))
+    agosto_fecha_pago = Column(String(50))
+    agosto_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    agosto_banco = Column(String(100))
+    agosto_cod = Column(String(100))
+    agosto_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Septiembre
+    septiembre_factura = Column(String(100))
+    septiembre_fecha_a_pagar = Column(String(50))
+    septiembre_fecha_pago = Column(String(50))
+    septiembre_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    septiembre_banco = Column(String(100))
+    septiembre_cod = Column(String(100))
+    septiembre_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Octubre
+    octubre_factura = Column(String(100))
+    octubre_fecha_a_pagar = Column(String(50))
+    octubre_fecha_pago = Column(String(50))
+    octubre_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    octubre_banco = Column(String(100))
+    octubre_cod = Column(String(100))
+    octubre_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Noviembre
+    noviembre_factura = Column(String(100))
+    noviembre_fecha_a_pagar = Column(String(50))
+    noviembre_fecha_pago = Column(String(50))
+    noviembre_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    noviembre_banco = Column(String(100))
+    noviembre_cod = Column(String(100))
+    noviembre_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    # Diciembre
+    diciembre_factura = Column(String(100))
+    diciembre_fecha_a_pagar = Column(String(50))
+    diciembre_fecha_pago = Column(String(50))
+    diciembre_pago = Column(Numeric(precision=10, scale=2), default=0.00)
+    diciembre_banco = Column(String(100))
+    diciembre_cod = Column(String(100))
+    diciembre_saldo = Column(Numeric(precision=10, scale=2), default=0.00)
+
+    pagos = relationship("PagoExtra", back_populates="cliente")
+
+class PagoExtra(Base):
+    __tablename__ = "historial_pagos_extras"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cliente_id = Column(Integer, ForeignKey("clientes_extras.id"))
+    monto = Column(Numeric(precision=10, scale=2))
+    fecha_pago = Column(DateTime, default=datetime.datetime.utcnow)
+    metodo_pago = Column(String(50))
+    mes_correspondiente = Column(String(20)) # Enero, Febrero, etc.
+    referencia = Column(String(100))
+    factura = Column(String(100))
+    
+    cliente = relationship("ClienteExtra", back_populates="pagos")
