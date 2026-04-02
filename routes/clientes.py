@@ -376,9 +376,7 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
-    # Validación QA P6: Bloquear montos negativos
-    if float(pago_data.monto) < 0:
-        raise HTTPException(status_code=400, detail="El monto del pago no puede ser negativo")
+
 
     # Extraemos montos del pago
     m_total = float(pago_data.monto)
