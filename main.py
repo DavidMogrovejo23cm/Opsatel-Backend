@@ -40,9 +40,9 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"], # Permitir todos los orígenes para facilitar ngrok/demo
     allow_credentials=True,
-    allow_methods=["*"], # Permite GET, POST, PATCH, DELETE, etc.
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 

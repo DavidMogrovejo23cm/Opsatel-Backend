@@ -69,15 +69,35 @@ def registrar_pago_extra(id: int, pago_data: schemas.PagoExtraCreate, db: Sessio
     ]
     
     if mes in meses_validos:
-        setattr(cliente, f"{mes}_pago", float(getattr(cliente, f"{mes}_pago") or 0) + monto)
-        setattr(cliente, f"{mes}_fecha_pago", datetime.now().strftime("%d/%m/%Y"))
-        setattr(cliente, f"{mes}_banco", pago_data.metodo_pago)
-        setattr(cliente, f"{mes}_factura", pago_data.factura)
+        monto_restante = monto
+        indice_inicio = meses_validos.index(mes)
         
-        # Recalcular saldo del mes
-        valor_base = float(cliente.valor or 0)
-        pago_mes = float(getattr(cliente, f"{mes}_pago") or 0)
-        setattr(cliente, f"{mes}_saldo", max(0, valor_base - pago_mes))
+        # Iterar desde el mes seleccionado hacia adelante
+        for i in range(indice_inicio, len(meses_validos)):
+            if monto_restante <= 0:
+                break
+            
+            mes_actual = meses_validos[i]
+            valor_mensual = float(cliente.valor or 0)
+            pago_actual = float(getattr(cliente, f"{mes_actual}_pago") or 0)
+            saldo_pendiente_mes = max(0, valor_mensual - pago_actual)
+            
+            if saldo_pendiente_mes > 0:
+                # Aplicamos lo que falte para este mes o lo que nos quede de dinero
+                pago_a_aplicar = min(monto_restante, saldo_pendiente_mes)
+                
+                nuevo_pago = pago_actual + pago_a_aplicar
+                setattr(cliente, f"{mes_actual}_pago", nuevo_pago)
+                setattr(cliente, f"{mes_actual}_saldo", max(0, valor_mensual - nuevo_pago))
+                setattr(cliente, f"{mes_actual}_fecha_pago", datetime.now().strftime("%d/%m/%Y"))
+                setattr(cliente, f"{mes_actual}_banco", pago_data.metodo_pago)
+                setattr(cliente, f"{mes_actual}_factura", pago_data.factura)
+                
+                monto_restante -= pago_a_aplicar
+            else:
+                # Si este mes ya está pagado, el monto_restante pasa íntegro al siguiente mes
+                continue
+
 
     # Actualizar totales globales
     cliente.total_pagado = float(cliente.total_pagado or 0) + monto
