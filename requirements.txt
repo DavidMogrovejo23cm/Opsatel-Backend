@@ -12,3 +12,4 @@ jinja2
 python-dotenv
 email-validator
 psycopg2-binary
+bcrypt==3.2.0
