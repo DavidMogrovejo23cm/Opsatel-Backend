@@ -344,7 +344,14 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
 
         cliente.estado = "Activo"
         cliente.instalation_date = datetime.now().strftime("%Y-%m-%d")
-        
+
+        # --- SINCRONIZACIÓN CON HOJA DE RUTA ---
+        # Al activar técnicamente, marcamos como 'Realizado' cualquier registro pendiente en Hoja de Ruta
+        db.query(models.HojaRuta).filter(
+            models.HojaRuta.cliente_id == id,
+            models.HojaRuta.estado == "Pendiente"
+        ).update({"estado": "Realizado"})
+
         # Lógica de Prorrateo
         try:
             now = datetime.now()

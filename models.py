@@ -351,3 +351,24 @@ class PagoExtra(Base):
     factura = Column(String(100))
     
     cliente = relationship("ClienteExtra", back_populates="pagos")
+
+class HojaRuta(Base):
+    __tablename__ = "hoja_ruta"
+
+    id = Column(Integer, primary_key=True, index=True)
+    fecha = Column(String(50))
+    tecnico = Column(String(100))
+    hora = Column(String(50))
+    cliente_id = Column(Integer, ForeignKey("hoja_de_c__lculo_sin_t__tulo.NUMERO"))
+    nombre_cliente = Column(String(255))
+    ubicacion_cliente = Column(String(255))
+    celular_cliente = Column(String(255))
+    ubicacion_caja = Column(String(255))
+    actividad = Column(String(255))
+    observacion = Column(String(500))
+    parroquia = Column(String(100))
+    estado = Column(String(50), default="Pendiente") # Pendiente, Realizado, Cancelado
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    cliente_ref = relationship("Cliente")
+

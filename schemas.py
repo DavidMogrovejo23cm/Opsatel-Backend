@@ -461,3 +461,31 @@ class PagoExtraCreate(BaseModel):
     mes_correspondiente: str
     referencia: Optional[str] = None
     factura: Optional[str] = None
+
+class HojaRutaBase(BaseModel):
+    fecha: Optional[str] = None
+    tecnico: Optional[str] = None
+    hora: Optional[str] = None
+    cliente_id: Optional[int] = None
+    nombre_cliente: Optional[str] = None
+    ubicacion_cliente: Optional[str] = None
+    celular_cliente: Optional[str] = None
+    ubicacion_caja: Optional[str] = None
+    actividad: Optional[str] = None
+    observacion: Optional[str] = None
+    parroquia: Optional[str] = None
+    estado: Optional[str] = "Pendiente"
+
+class HojaRutaCreate(HojaRutaBase):
+    pass
+
+class HojaRutaUpdate(HojaRutaBase):
+    pass
+
+class HojaRutaResponse(HojaRutaBase):
+    id: int
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
