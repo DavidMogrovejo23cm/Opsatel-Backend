@@ -47,3 +47,31 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 @app.get("/")
 def read_root():
     return {"message": "Bienvenido a la API de Gestión de ISP Opsatel"}
+
+# ========================================================================
+# AUTO-CREAR ADMIN AL INICIAR (SEEDING)
+# ========================================================================
+from database import SessionLocal
+from auth_utils import get_password_hash
+
+def seed_admin():
+    db = SessionLocal()
+    try:
+        admin = db.query(models.Usuario).filter(models.Usuario.username == "david").first()
+        if not admin:
+            print("Seeding: Creando usuario admin por defecto...")
+            nuevo_admin = models.Usuario(
+                username="david",
+                password_hash=get_password_hash("admin123"),
+                rol="administrador"
+            )
+            db.add(nuevo_admin)
+            db.commit()
+            print("Seeding: Usuario 'david' creado exitosamente.")
+    except Exception as e:
+        print(f"Error en seeding: {e}")
+    finally:
+        db.close()
+
+# Ejecutar el seeding
+seed_admin()
