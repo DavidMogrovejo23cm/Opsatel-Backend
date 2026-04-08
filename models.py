@@ -44,15 +44,15 @@ class Cliente(Base):
 
     puerto = Column("PUERTO", String(100))
 
-    ont = Column("ONT", String(1000))
+    ont = Column("ONT", String(2000))
 
-    servicio = Column("SERVICIO", String(1000))
+    servicio = Column("SERVICIO", String(2000))
 
-    breach = Column("BREACH", String(1000))
+    breach = Column("BREACH", String(2000))
 
     id_port = Column("ID_PORT", String(200))
 
-    service_port = Column("SERVICE PORT", String(1000))
+    service_port = Column("SERVICE PORT", String(2000))
 
     ip = Column("IP", String(50))
 
@@ -119,7 +119,7 @@ class Cliente(Base):
     iptv_bouquets = Column("IPTV_BOUQUETS", String(255))
     iptv_exp_date = Column("IPTV_EXP_DATE", String(100))
     iptv_max_conn = Column("IPTV_MAX_CONN", Integer, default=0)
-    iptv_outputs = Column("IPTV_OUTPUTS", String(255))
+    iptv_outputs = Column("IPTV_OUTPUTS", String(1255))
     iptv_notes = Column("IPTV_NOTES", String(500))
     iptv_member_id = Column("IPTV_MEMBER_ID", Integer, default=1)
 
