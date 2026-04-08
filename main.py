@@ -6,9 +6,11 @@ import os
 from routes import auth, clientes, extras, hoja_ruta
 import rutas_configuraciones
 from sync_db import sync_schema
+from force_fix import force_fix_columns
 
 # Sincroniza las columnas e inicializa tablas
-sync_schema() # Sincroniza las columnas e inicializa tablas
+sync_schema() 
+force_fix_columns() # Fuerza la ampliación de campos críticos
 Base.metadata.create_all(bind=engine)
 
 # Iniciar App
