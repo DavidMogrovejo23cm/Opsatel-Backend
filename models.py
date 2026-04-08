@@ -112,11 +112,16 @@ class Cliente(Base):
     pago_mensual = Column("PAGO_MENSUAL", Numeric(precision=10, scale=2), default=0.00)
     total_pago = Column("TOTAL_PAGO", Numeric(precision=10, scale=2), default=0.00)
     saldo = Column("SALDO", Numeric(precision=10, scale=2), default=0.00)
-    # Campos técnicos para evitar bug de excedente al pagar plus/adicional
-    plus_pagado = Column("PLUS_PAGADO", Numeric(precision=10, scale=2), default=0.00)
-    adicional_pagado = Column("ADICIONAL_PAGADO", Numeric(precision=10, scale=2), default=0.00)
-
-
+    # Campos IPTV (Nuevo req v1.3)
+    iptv_activar = Column("IPTV_ACTIVAR", Boolean, default=False)
+    iptv_user = Column("IPTV_USER", String(255))
+    iptv_pass = Column("IPTV_PASS", String(255))
+    iptv_bouquets = Column("IPTV_BOUQUETS", String(255))
+    iptv_exp_date = Column("IPTV_EXP_DATE", String(100))
+    iptv_max_conn = Column("IPTV_MAX_CONN", Integer, default=1)
+    iptv_outputs = Column("IPTV_OUTPUTS", String(255))
+    iptv_notes = Column("IPTV_NOTES", String(500))
+    iptv_member_id = Column("IPTV_MEMBER_ID", Integer, default=1)
 
     pagos = relationship("Pago", back_populates="cliente")
 

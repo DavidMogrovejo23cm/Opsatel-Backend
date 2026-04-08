@@ -8,7 +8,7 @@ import rutas_configuraciones
 from sync_db import sync_schema
 
 # Sincroniza las columnas e inicializa tablas
-sync_schema()
+# sync_schema() # Comentado para compatibilidad con PostgreSQL en Railway (sintaxis MySQL)
 Base.metadata.create_all(bind=engine)
 
 # Iniciar App

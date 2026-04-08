@@ -38,6 +38,16 @@ class ClienteUpdateTecnico(BaseModel):
     activador: str
     red: str
     clave: str
+    # IPTV (Nuevo req v1.3)
+    iptv_activar: Optional[bool] = False
+    iptv_user: Optional[str] = None
+    iptv_pass: Optional[str] = None
+    iptv_bouquets: Optional[str] = None
+    iptv_exp_date: Optional[str] = None
+    iptv_max_conn: Optional[int] = 1
+    iptv_outputs: Optional[str] = None
+    iptv_notes: Optional[str] = None
+    iptv_member_id: Optional[int] = 1
 
     @field_validator('potencia')
     @classmethod
@@ -124,6 +134,16 @@ class ClienteUpdateGeneral(BaseModel):
     saldo: Optional[float] = None
     tercera_edad: Optional[bool] = None
     precio_plan_especial: Optional[float] = None
+    # IPTV (Nuevo req v1.3)
+    iptv_activar: Optional[bool] = None
+    iptv_user: Optional[str] = None
+    iptv_pass: Optional[str] = None
+    iptv_bouquets: Optional[str] = None
+    iptv_exp_date: Optional[str] = None
+    iptv_max_conn: Optional[int] = None
+    iptv_outputs: Optional[str] = None
+    iptv_notes: Optional[str] = None
+    iptv_member_id: Optional[int] = None
 
     @field_validator('potencia')
     @classmethod
@@ -212,6 +232,17 @@ class ClienteResponse(BaseModel):
     adicional_pagado: Optional[float] = 0.0
     tercera_edad: Optional[bool] = False
     precio_plan_especial: Optional[float] = 0.0
+    # IPTV (Nuevo req v1.3)
+    iptv_activar: Optional[bool] = False
+    iptv_user: Optional[str] = None
+    iptv_pass: Optional[str] = None
+    iptv_bouquets: Optional[str] = None
+    iptv_exp_date: Optional[str] = None
+    iptv_max_conn: Optional[int] = 1
+    iptv_outputs: Optional[str] = None
+    iptv_notes: Optional[str] = None
+    iptv_member_id: Optional[int] = 1
+    
 
     class Config:
         from_attributes = True

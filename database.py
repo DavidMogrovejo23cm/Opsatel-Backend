@@ -1,21 +1,21 @@
+import os
 from sqlalchemy import create_engine
-
 from sqlalchemy.ext.declarative import declarative_base
-
 from sqlalchemy.orm import sessionmaker
 
 # ========================================================================
-# CONEXIÓN BACKEND -> BASE DE DATOS (MySQL)
+# CONEXIÓN BACKEND -> BASE DE DATOS (MySQL Local o PostgreSQL Railway)
 # ========================================================================
-# Este string configura cómo SQLAlchemy "habla" con el motor de base de datos local.
-# Si cambias la base a un servidor online (AWS, HostGator), modifica esta credencial:
-# FORMATO: "mysql+pymysql://<usuario>:<contraseña>@<host>/<nombre_base_datos>"
-SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:@localhost/opsatel"
+# DATABASE_URL es inyectada automáticamente por Railway.
+# Si estás local, se usa la de XAMPP por defecto.
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:@localhost/opsatel")
 
-# engine es el "motor" literal que mantiene la conexión viva con MySQL.
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL
-)
+# Corrección para PostgreSQL: SQLAlchemy requiere 'postgresql://' en lugar de 'postgres://'
+if SQLALCHEMY_DATABASE_URL and SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# engine es el "motor" literal que mantiene la conexión viva.
+engine = create_engine(SQLALCHEMY_DATABASE_URL)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

@@ -10,3 +10,5 @@ openpyxl
 python-multipart
 jinja2
 python-dotenv
+email-validator
+psycopg2-binary
