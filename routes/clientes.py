@@ -340,7 +340,8 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
         for var, value in vars(data).items():
             setattr(cliente, var, value)
             if var == 'iptv_max_conn' and value is not None:
-                cliente.plus = str(value * 2)
+                # La primera pantalla es gratis, las extras valen $2
+                cliente.plus = str(max(0, (value - 1) * 2))
         
         sync_cliente_balances(cliente, db)
         # 3. Validar Potencia (No puede ser inferior a -26.0 dBm)
