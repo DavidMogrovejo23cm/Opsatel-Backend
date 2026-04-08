@@ -43,6 +43,11 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
     # El adicional es un servicio aparte que NO afecta la deuda de internet/iptv en Pagos y Cobros.
     cliente.total_pago = saldo + tarifa + plus
 
+@router.get("/pendientes-count")
+def get_pendientes_count(db: Session = Depends(get_db)):
+    count = db.query(models.Cliente).filter(models.Cliente.estado == "Pendiente").count()
+    return {"count": count}
+
 # El sistema ahora utiliza exclusivamente la tabla 'planes_internet' de la base de datos 
 # para obtener los precios vigentes, permitiendo configurarlos desde el panel administrativo.
 
@@ -334,7 +339,10 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
 
         for var, value in vars(data).items():
             setattr(cliente, var, value)
+            if var == 'iptv_max_conn' and value is not None:
+                cliente.plus = str(value * 2)
         
+        sync_cliente_balances(cliente, db)
         # 3. Validar Potencia (No puede ser inferior a -26.0 dBm)
         if cliente.potencia:
             try:
