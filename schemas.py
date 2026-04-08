@@ -20,6 +20,7 @@ class ClienteCreate(BaseModel):
     tiempo: Optional[str] = "0"
     tercera_edad: Optional[bool] = False
     precio_plan_especial: Optional[float] = 0.0
+    iptv_max_conn: Optional[int] = 0
 
 class ClienteUpdateTecnico(BaseModel):
     mac: str
@@ -38,13 +39,14 @@ class ClienteUpdateTecnico(BaseModel):
     activador: str
     red: str
     clave: str
+    plus: Optional[str] = None
     # IPTV (Nuevo req v1.3)
     iptv_activar: Optional[bool] = False
     iptv_user: Optional[str] = None
     iptv_pass: Optional[str] = None
     iptv_bouquets: Optional[str] = None
     iptv_exp_date: Optional[str] = None
-    iptv_max_conn: Optional[int] = 1
+    iptv_max_conn: Optional[int] = 0
     iptv_outputs: Optional[str] = None
     iptv_notes: Optional[str] = None
     iptv_member_id: Optional[int] = 1
@@ -80,6 +82,7 @@ class ClienteUpdateAdmin(BaseModel):
     adicional: Optional[str] = None
     comentarios: Optional[str] = None
     observaciones: Optional[str] = None
+    iptv_max_conn: Optional[int] = None
     pago_mensual: Optional[float] = None
     total_pago: Optional[float] = None
     saldo: Optional[float] = None
@@ -238,7 +241,7 @@ class ClienteResponse(BaseModel):
     iptv_pass: Optional[str] = None
     iptv_bouquets: Optional[str] = None
     iptv_exp_date: Optional[str] = None
-    iptv_max_conn: Optional[int] = 1
+    iptv_max_conn: Optional[int] = 0
     iptv_outputs: Optional[str] = None
     iptv_notes: Optional[str] = None
     iptv_member_id: Optional[int] = 1

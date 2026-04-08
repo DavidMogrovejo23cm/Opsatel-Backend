@@ -39,13 +39,25 @@ def sync_schema():
                     if "INTEGER" in col_type.upper():
                         col_type = "INT"
 
-                    # Ejecutar el ALTER TABLE
+                    # Ejecutar el ALTER TABLE con sintaxis compatible (sin backticks para Postgres)
+                    is_postgres = "postgresql" in str(engine.url)
+                    quote = '"' if is_postgres else '`'
+                    
                     try:
-                        query = f"ALTER TABLE `{table_name}` ADD COLUMN `{column.name}` {col_type}"
+                        query = f"ALTER TABLE {quote}{table_name}{quote} ADD COLUMN {quote}{column.name}{quote} {col_type}"
                         conn.execute(text(query))
                         print(f"Columna {table_name}.{column.name} añadida exitosamente.")
                     except Exception as e:
-                        print(f"Error al añadir columna {table_name}.{column.name}: {e}")
+                        # Si ya existe, intentamos actualizar el tipo/longitud
+                        try:
+                            if is_postgres:
+                                alter_query = f"ALTER TABLE {quote}{table_name}{quote} ALTER COLUMN {quote}{column.name}{quote} TYPE {col_type}"
+                            else:
+                                alter_query = f"ALTER TABLE {quote}{table_name}{quote} MODIFY COLUMN {quote}{column.name}{quote} {col_type}"
+                            conn.execute(text(alter_query))
+                            print(f"Columna {table_name}.{column.name} actualizada a {col_type}.")
+                        except Exception as e2:
+                            print(f"Aviso: {table_name}.{column.name} ya existe y no se pudo alterar: {e2}")
         
         conn.commit()
 
