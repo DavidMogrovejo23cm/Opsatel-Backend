@@ -44,15 +44,15 @@ class Cliente(Base):
 
     puerto = Column("PUERTO", String(100))
 
-    ont = Column("ONT", String(500))
+    ont = Column("ONT", String(1000))
 
-    servicio = Column("SERVICIO", String(500))
+    servicio = Column("SERVICIO", String(1000))
 
-    breach = Column("BREACH", String(500))
+    breach = Column("BREACH", String(1000))
 
     id_port = Column("ID_PORT", String(200))
 
-    service_port = Column("SERVICE PORT", String(500))
+    service_port = Column("SERVICE PORT", String(1000))
 
     ip = Column("IP", String(50))
 
