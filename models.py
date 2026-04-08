@@ -377,3 +377,11 @@ class HojaRuta(Base):
 
     cliente_ref = relationship("Cliente")
 
+class Ticket(Base):
+    __tablename__ = "tickets_desarrollo"
+    id = Column(Integer, primary_key=True, index=True)
+    titulo = Column(String(255), nullable=False)
+    contenido = Column(Text, nullable=False) # Soporta texto largo y fotos base64
+    estado = Column(String(50), default="Pendiente")
+    autor = Column(String(100), nullable=False)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow)

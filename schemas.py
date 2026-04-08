@@ -523,3 +523,22 @@ class HojaRutaResponse(HojaRutaBase):
     class Config:
         from_attributes = True
 
+class TicketBase(BaseModel):
+    titulo: str
+    contenido: str
+    estado: Optional[str] = "Pendiente"
+    autor: Optional[str] = None
+
+class TicketCreate(TicketBase):
+    pass
+
+class TicketUpdate(BaseModel):
+    estado: Optional[str] = None
+    contenido: Optional[str] = None
+
+class TicketResponse(TicketBase):
+    id: int
+    fecha_creacion: datetime
+
+    class Config:
+        from_attributes = True
