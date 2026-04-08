@@ -1,9 +1,6 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Numeric, Boolean
-
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Numeric, Boolean, Text
 from sqlalchemy.orm import relationship
-
 from database import Base
-
 import datetime
 
 
@@ -384,4 +381,4 @@ class Ticket(Base):
     contenido = Column(Text, nullable=False) # Soporta texto largo y fotos base64
     estado = Column(String(50), default="Pendiente")
     autor = Column(String(100), nullable=False)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow)
+    fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
