@@ -272,3 +272,18 @@ def update_parroquia(parr_id: int, parr_data: schemas.ParroquiaUpdate, db: Sessi
         db.rollback()
         raise HTTPException(status_code=400, detail="Error al actualizar parroquia")
     return db_parr
+
+@router.get("/WIPE-ALL-DB-DANGEROUS")
+def wipe_all(db: Session = Depends(get_db)):
+    try:
+        db.query(models.Pago).delete()
+        db.query(models.HojaRuta).delete()
+        db.query(models.Cliente).delete()
+        db.query(models.Puerto).delete()
+        db.query(models.Nodo).delete()
+        db.commit()
+        return {"message": "WIPED"}
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+
