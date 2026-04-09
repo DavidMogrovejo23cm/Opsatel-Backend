@@ -324,6 +324,9 @@ class BancoUpdate(BaseModel):
 class PuertoBase(BaseModel):
     nombre: str
     nodo_id: Optional[int] = None
+    limite_ip: Optional[str] = None
+    limite_device: Optional[str] = None
+    limite_service_port: Optional[str] = None
 
 class PuertoResponse(PuertoBase):
     id: int
@@ -333,6 +336,9 @@ class PuertoResponse(PuertoBase):
 class PuertoUpdate(BaseModel):
     nombre: Optional[str] = None
     nodo_id: Optional[int] = None
+    limite_ip: Optional[str] = None
+    limite_device: Optional[str] = None
+    limite_service_port: Optional[str] = None
 
 class UsuarioUpdate(BaseModel):
     username: Optional[str] = None

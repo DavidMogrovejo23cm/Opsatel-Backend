@@ -192,6 +192,9 @@ class Puerto(Base):
     nombre = Column(String(100)) 
     nodo_id = Column(Integer, ForeignKey("nodos.id"))
     nodo = relationship("Nodo", backref="puertos")
+    limite_ip = Column(String(100), default="2 al 129")
+    limite_device = Column(String(100), default="0 al 127")
+    limite_service_port = Column(String(100), default="0 al 127")
 
 class FinanzasBase(Base):
     __tablename__ = "finanzas_base"

@@ -148,7 +148,13 @@ def update_banco(banco_id: int, banco_data: schemas.BancoUpdate, db: Session = D
 # --- Puertos ---
 @router.post("/puertos", response_model=schemas.PuertoResponse)
 def create_puerto(puerto: schemas.PuertoBase, db: Session = Depends(get_db)):
-    db_puerto = models.Puerto(nombre=puerto.nombre, nodo_id=puerto.nodo_id)
+    db_puerto = models.Puerto(
+        nombre=puerto.nombre, 
+        nodo_id=puerto.nodo_id,
+        limite_ip=puerto.limite_ip,
+        limite_device=puerto.limite_device,
+        limite_service_port=puerto.limite_service_port
+    )
     db.add(db_puerto)
     try:
         db.commit()
