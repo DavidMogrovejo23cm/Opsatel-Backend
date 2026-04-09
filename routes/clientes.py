@@ -129,6 +129,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         tiempo=cliente.tiempo,
         tercera_edad=cliente.tercera_edad,
         precio_plan_especial=cliente.precio_plan_especial,
+        comentarios=cliente.comentarios,
         estado="Pendiente"
     )
     db.add(db_cliente)

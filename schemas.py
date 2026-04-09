@@ -21,6 +21,7 @@ class ClienteCreate(BaseModel):
     tercera_edad: Optional[bool] = False
     precio_plan_especial: Optional[float] = 0.0
     iptv_max_conn: Optional[int] = 0
+    comentarios: Optional[str] = None
 
 class ClienteUpdateTecnico(BaseModel):
     mac: str
