@@ -299,6 +299,7 @@ class PlanInternetBase(BaseModel):
     nombre: str
     megas: Optional[int] = 100
     precio: Optional[float] = 0.0
+    pantallas: Optional[int] = 1
 
 class PlanInternetResponse(PlanInternetBase):
     id: int
@@ -309,6 +310,7 @@ class PlanInternetUpdate(BaseModel):
     nombre: Optional[str] = None
     megas: Optional[int] = None
     precio: Optional[float] = None
+    pantallas: Optional[int] = None
 
 class BancoBase(BaseModel):
     nombre: str
@@ -504,6 +506,24 @@ class PagoExtraCreate(BaseModel):
     factura: Optional[str] = None
 
 class HojaRutaBase(BaseModel):
+    fecha: str
+    tecnico: str
+    hora: str
+    cliente_id: int
+    nombre_cliente: str
+    ubicacion_cliente: str
+    celular_cliente: str
+    ubicacion_caja: str
+    actividad: str
+    observacion: Optional[str] = None
+    observacion_tecnico: Optional[str] = None
+    parroquia: str
+    estado: str = "Pendiente"
+
+class HojaRutaCreate(HojaRutaBase):
+    pass
+
+class HojaRutaUpdate(BaseModel):
     fecha: Optional[str] = None
     tecnico: Optional[str] = None
     hora: Optional[str] = None
@@ -514,13 +534,8 @@ class HojaRutaBase(BaseModel):
     ubicacion_caja: Optional[str] = None
     actividad: Optional[str] = None
     observacion: Optional[str] = None
+    observacion_tecnico: Optional[str] = None
     parroquia: Optional[str] = None
-    estado: Optional[str] = "Pendiente"
-
-class HojaRutaCreate(HojaRutaBase):
-    pass
-
-class HojaRutaUpdate(HojaRutaBase):
     pass
 
 class HojaRutaResponse(HojaRutaBase):

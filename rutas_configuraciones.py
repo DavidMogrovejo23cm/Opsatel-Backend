@@ -62,7 +62,12 @@ def update_nodo(nodo_id: int, nodo_data: schemas.NodoUpdate, db: Session = Depen
 # --- Planes ---
 @router.post("/planes", response_model=schemas.PlanInternetResponse)
 def create_plan(plan: schemas.PlanInternetBase, db: Session = Depends(get_db)):
-    db_plan = models.PlanInternet(nombre=plan.nombre, precio=plan.precio)
+    db_plan = models.PlanInternet(
+        nombre=plan.nombre, 
+        precio=plan.precio,
+        megas=plan.megas,
+        pantallas=plan.pantallas
+    )
     db.add(db_plan)
     try:
         db.commit()

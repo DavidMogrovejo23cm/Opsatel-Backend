@@ -180,6 +180,7 @@ class PlanInternet(Base):
     nombre = Column(String(100), unique=True, index=True) 
     megas = Column(Integer, default=100)
     precio = Column(Numeric(precision=10, scale=2), default=0.00) 
+    pantallas = Column(Integer, default=1) 
 
 class Banco(Base):
     __tablename__ = "bancos"
@@ -371,6 +372,7 @@ class HojaRuta(Base):
     ubicacion_caja = Column(String(255))
     actividad = Column(String(255))
     observacion = Column(String(500))
+    observacion_tecnico = Column(String(500))
     parroquia = Column(String(100))
     estado = Column(String(50), default="Pendiente") # Pendiente, Realizado, Cancelado
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
