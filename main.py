@@ -8,11 +8,6 @@ import rutas_configuraciones
 from sync_db import sync_schema
 from force_fix import force_fix_columns
 
-# Sincroniza las columnas e inicializa tablas
-sync_schema() 
-force_fix_columns() # Fuerza la ampliación de campos críticos
-Base.metadata.create_all(bind=engine)
-
 # Iniciar App
 app = FastAPI(title="ISP Management API")
 
@@ -21,14 +16,32 @@ app = FastAPI(title="ISP Management API")
 async def favicon():
     return Response(status_code=204)
 
+# Función para inicializar la base de datos de forma segura
+def init_db():
+    try:
+        print("Sincronizando esquema...")
+        sync_schema() 
+        print("Aplicando parches de columnas...")
+        force_fix_columns() 
+        print("Creando tablas si no existen...")
+        Base.metadata.create_all(bind=engine)
+        print("Base de datos lista.")
+    except Exception as e:
+        print(f"Error inicializando base de datos: {e}")
+
+# Ejecutar inicialización
+init_db()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://opsatel-frontend.vercel.app",
+        "https://opsatel-frontend-production.up.railway.app",
         "http://localhost:5173",
         "http://localhost:3000",
+        "*", # Permitir temporalmente todos para diagnosticar el 500
     ],
-    allow_credentials=True,
+    allow_credentials=False, # Cambiado a False para permitir '*' en origins
     allow_methods=["*"],
     allow_headers=["*"],
 )

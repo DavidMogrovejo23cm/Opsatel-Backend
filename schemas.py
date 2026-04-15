@@ -506,19 +506,19 @@ class PagoExtraCreate(BaseModel):
     factura: Optional[str] = None
 
 class HojaRutaBase(BaseModel):
-    fecha: str
-    tecnico: str
-    hora: str
-    cliente_id: int
-    nombre_cliente: str
-    ubicacion_cliente: str
-    celular_cliente: str
-    ubicacion_caja: str
-    actividad: str
+    fecha: Optional[str] = None
+    tecnico: Optional[str] = None
+    hora: Optional[str] = None
+    cliente_id: Optional[int] = None
+    nombre_cliente: Optional[str] = None
+    ubicacion_cliente: Optional[str] = None
+    celular_cliente: Optional[str] = None
+    ubicacion_caja: Optional[str] = None
+    actividad: Optional[str] = None
     observacion: Optional[str] = None
     observacion_tecnico: Optional[str] = None
-    parroquia: str
-    estado: str = "Pendiente"
+    parroquia: Optional[str] = None
+    estado: Optional[str] = "Pendiente"
 
 class HojaRutaCreate(HojaRutaBase):
     pass

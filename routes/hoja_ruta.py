@@ -10,8 +10,12 @@ router = APIRouter(prefix="/hoja-ruta", tags=["hoja-ruta"])
 
 @router.get("/", response_model=List[schemas.HojaRutaResponse])
 def listar_hoja_ruta(db: Session = Depends(get_db)):
-    # Ordenar por fecha (desc) y luego por hora (desc)
-    return db.query(models.HojaRuta).order_by(models.HojaRuta.fecha.asc(), models.HojaRuta.hora.asc()).all()
+    try:
+        # Ordenar por fecha (desc) y luego por hora (desc)
+        return db.query(models.HojaRuta).order_by(models.HojaRuta.fecha.asc(), models.HojaRuta.hora.asc()).all()
+    except Exception as e:
+        print(f"Error en listar_hoja_ruta: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al obtener hoja de ruta: {str(e)}")
 
 @router.post("/", response_model=schemas.HojaRutaResponse, dependencies=[Depends(require_role(["administrador", "tecnico", "secretario"]))])
 def crear_hoja_ruta(hoja: schemas.HojaRutaCreate, db: Session = Depends(get_db)):
