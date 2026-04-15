@@ -180,6 +180,7 @@ class PlanInternet(Base):
     nombre = Column(String(100), unique=True, index=True) 
     megas = Column(Integer, default=100)
     precio = Column(Numeric(precision=10, scale=2), default=0.00) 
+    pantallas = Column(Integer, default=1) 
 
 class Banco(Base):
     __tablename__ = "bancos"

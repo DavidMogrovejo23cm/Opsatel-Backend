@@ -20,12 +20,21 @@ def crear_hoja_ruta(hoja: schemas.HojaRutaCreate, db: Session = Depends(get_db))
     db.refresh(db_hoja)
     return db_hoja
 
-@router.patch("/{id}", response_model=schemas.HojaRutaResponse, dependencies=[Depends(require_role(["administrador", "tecnico"]))])
-def actualizar_hoja_ruta(id: int, data: schemas.HojaRutaUpdate, db: Session = Depends(get_db)):
+@router.patch("/{id}", response_model=schemas.HojaRutaResponse)
+def actualizar_hoja_ruta(id: int, data: schemas.HojaRutaUpdate, db: Session = Depends(get_db), current_user: models.Usuario = Depends(get_current_user)):
     db_hoja = db.query(models.HojaRuta).filter(models.HojaRuta.id == id).first()
     if not db_hoja:
         raise HTTPException(status_code=404, detail="Hoja de ruta no encontrada")
     
+    # Restringir cambio de estado solo a administradores
+    if data.estado is not None and data.estado != db_hoja.estado:
+        if current_user.rol not in ["administrador", "admin"]:
+            raise HTTPException(status_code=403, detail="Solo el administrador puede cambiar el estado de la hoja de ruta")
+    
+    # Técnicos solo pueden editar si son administradores o técnicos (require_role logic manual)
+    if current_user.rol not in ["administrador", "admin", "tecnico"]:
+        raise HTTPException(status_code=403, detail="No tienes permisos para editar hojas de ruta")
+
     for var, value in data.dict(exclude_unset=True).items():
         setattr(db_hoja, var, value)
     

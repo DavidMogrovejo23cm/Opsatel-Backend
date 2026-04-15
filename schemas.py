@@ -299,6 +299,7 @@ class PlanInternetBase(BaseModel):
     nombre: str
     megas: Optional[int] = 100
     precio: Optional[float] = 0.0
+    pantallas: Optional[int] = 1
 
 class PlanInternetResponse(PlanInternetBase):
     id: int
@@ -309,6 +310,7 @@ class PlanInternetUpdate(BaseModel):
     nombre: Optional[str] = None
     megas: Optional[int] = None
     precio: Optional[float] = None
+    pantallas: Optional[int] = None
 
 class BancoBase(BaseModel):
     nombre: str
