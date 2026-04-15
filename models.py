@@ -102,6 +102,9 @@ class Cliente(Base):
 
     adicional = Column("ADICIONAL", String(255))
 
+    plus_pagado = Column("PLUS_PAGADO", Numeric(precision=10, scale=2), default=0.00)
+    adicional_pagado = Column("ADICIONAL_PAGADO", Numeric(precision=10, scale=2), default=0.00)
+
     comentarios = Column("COMENTARIOS", String(500))
     observaciones = Column("OBSERVACIONES", String(500))
     tercera_edad = Column("TERCERA_EDAD", Boolean, default=False)
