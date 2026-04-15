@@ -62,7 +62,12 @@ def update_nodo(nodo_id: int, nodo_data: schemas.NodoUpdate, db: Session = Depen
 # --- Planes ---
 @router.post("/planes", response_model=schemas.PlanInternetResponse)
 def create_plan(plan: schemas.PlanInternetBase, db: Session = Depends(get_db)):
-    db_plan = models.PlanInternet(nombre=plan.nombre, precio=plan.precio)
+    db_plan = models.PlanInternet(
+        nombre=plan.nombre,
+        megas=plan.megas or 0,
+        precio=plan.precio,
+        pantallas=plan.pantallas if hasattr(plan, 'pantallas') and plan.pantallas is not None else 1
+    )
     db.add(db_plan)
     try:
         db.commit()

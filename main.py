@@ -1,5 +1,8 @@
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import engine, Base
 import models
 import os
@@ -16,6 +19,41 @@ Base.metadata.create_all(bind=engine)
 # Iniciar App
 app = FastAPI(title="ISP Management API")
 
+# ========================================================================
+# CORS HEADERS - Aplicar en TODAS las respuestas incluyendo errores 500
+# ========================================================================
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "*",
+    "Access-Control-Allow-Headers": "*",
+}
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=CORS_HEADERS
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+        headers=CORS_HEADERS
+    )
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    import traceback
+    print(f"Error no controlado: {traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Error interno del servidor: {str(exc)}"},
+        headers=CORS_HEADERS
+    )
+
 # Silenciar favicon.ico 404
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
@@ -23,14 +61,7 @@ async def favicon():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://opsatel-frontend.vercel.app",
-        "https://opsatel-frontend-production.up.railway.app",
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:3000",
-        "*",
-    ],
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
