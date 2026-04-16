@@ -511,7 +511,7 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
         if pago_data.app is not None: cliente.app = pago_data.app
         if pago_data.payment_date is not None: cliente.payment_date = pago_data.payment_date
         if pago_data.bank is not None: cliente.bank = pago_data.bank
-        if pago_data.comentarios is not None: cliente.comentarios = pago_data.comentarios
+        if pago_data.comentarios is not None: cliente.observaciones = pago_data.comentarios
 
         sync_cliente_balances(cliente, db)
         db.commit()
