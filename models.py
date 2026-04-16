@@ -107,6 +107,7 @@ class Cliente(Base):
 
     comentarios = Column("COMENTARIOS", String(2000))
     observaciones = Column("OBSERVACIONES", String(2000))
+    notas_pago = Column("NOTAS_PAGO", String(2000))
     tercera_edad = Column("TERCERA_EDAD", Boolean, default=False)
     precio_plan_especial = Column("PRECIO_PLAN_ESPECIAL", Numeric(precision=10, scale=2), default=0.00)
     pago_mensual = Column("PAGO_MENSUAL", Numeric(precision=10, scale=2), default=0.00)

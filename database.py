@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 # DATABASE_URL es inyectada automáticamente por Railway.
 # Si estás local, se usa la de XAMPP por defecto.
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:@localhost/opsatel")
+print(f"DATABASE_URL en uso: {SQLALCHEMY_DATABASE_URL}")
 
 # Corrección para PostgreSQL: SQLAlchemy requiere 'postgresql://' en lugar de 'postgres://'
 if SQLALCHEMY_DATABASE_URL and SQLALCHEMY_DATABASE_URL.startswith("postgres://"):

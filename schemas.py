@@ -83,6 +83,7 @@ class ClienteUpdateAdmin(BaseModel):
     adicional: Optional[str] = None
     comentarios: Optional[str] = None
     observaciones: Optional[str] = None
+    notas_pago: Optional[str] = None
     iptv_max_conn: Optional[int] = None
     pago_mensual: Optional[float] = None
     total_pago: Optional[float] = None
@@ -133,6 +134,7 @@ class ClienteUpdateGeneral(BaseModel):
     adicional: Optional[str] = None
     comentarios: Optional[str] = None
     observaciones: Optional[str] = None
+    notas_pago: Optional[str] = None
     pago_mensual: Optional[float] = None
     total_pago: Optional[float] = None
     saldo: Optional[float] = None
@@ -180,6 +182,7 @@ class PagoCreate(BaseModel):
     bank_plus: Optional[str] = None
     adicional: Optional[str] = None
     comentarios: Optional[str] = None
+    notas_pago: Optional[str] = None
 
 class ClienteResponse(BaseModel):
     id: int
@@ -229,6 +232,7 @@ class ClienteResponse(BaseModel):
     adicional: Optional[str] = None
     comentarios: Optional[str] = None
     observaciones: Optional[str] = None
+    notas_pago: Optional[str] = None
     pago_mensual: Optional[float] = 0.0
     total_pago: Optional[float] = 0.0
     saldo: Optional[float] = 0.0

@@ -511,7 +511,7 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
         if pago_data.app is not None: cliente.app = pago_data.app
         if pago_data.payment_date is not None: cliente.payment_date = pago_data.payment_date
         if pago_data.bank is not None: cliente.bank = pago_data.bank
-        if pago_data.comentarios is not None: cliente.observaciones = pago_data.comentarios
+        if pago_data.notas_pago is not None: cliente.notas_pago = pago_data.notas_pago
 
         sync_cliente_balances(cliente, db)
         db.commit()
@@ -679,6 +679,7 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
         c.adicional_pagado = 0.00
         c.pago_mensual = 0.00
         c.comentarios = ""
+        c.notas_pago = ""
         
         # 4. Sincronizar balances (total_pago reflejará el nuevo saldo consolidado)
         sync_cliente_balances(c, db)
