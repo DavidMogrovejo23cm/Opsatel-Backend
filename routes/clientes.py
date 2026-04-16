@@ -112,7 +112,19 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 
 @router.post("/", response_model=schemas.ClienteResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db)):
+    # Lógica para reutilizar IDs (Encontrar el primer hueco disponible)
+    ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
+    ids = [i[0] for i in ids_query]
+    
+    nuevo_id = 1
+    for current_id in ids:
+        if current_id == nuevo_id:
+            nuevo_id += 1
+        elif current_id > nuevo_id:
+            break # Encontramos un hueco
+            
     db_cliente = models.Cliente(
+        id=nuevo_id, # Asignamos el ID manualmente para llenar el hueco
         nombre=cliente.nombre,
         cedula=cliente.cedula,
         celular=cliente.celular,
@@ -141,6 +153,33 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
     db.commit()
     db.refresh(db_cliente)
     return db_cliente
+
+
+@router.post("/{id}/upload-cedula", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
+async def upload_cedula(id: int, frontal: UploadFile = File(None), posterior: UploadFile = File(None), db: Session = Depends(get_db)):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    
+    upload_dir = "uploads/cedulas"
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    if frontal:
+        ext = os.path.splitext(frontal.filename)[1]
+        file_path = f"{upload_dir}/frontal_{id}_{int(datetime.now().timestamp())}{ext}"
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(frontal.file, buffer)
+        cliente.cedula_frontal = f"/{file_path}"
+        
+    if posterior:
+        ext = os.path.splitext(posterior.filename)[1]
+        file_path = f"{upload_dir}/posterior_{id}_{int(datetime.now().timestamp())}{ext}"
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(posterior.file, buffer)
+        cliente.cedula_posterior = f"/{file_path}"
+    
+    db.commit()
+    return {"message": "Imágenes subidas exitosamente"}
 
 
 @router.get("/siguiente-valor-tecnico")
@@ -341,8 +380,11 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
         for var, value in vars(data).items():
             setattr(cliente, var, value)
             if var == 'iptv_max_conn' and value is not None:
-                # La primera pantalla es gratis, las extras valen $2
-                cliente.plus = str(max(0, (value - 1) * 2))
+                # Obtener pantallas base desde la configuración del plan
+                plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+                base_screens = plan_info.pantallas if plan_info else 1
+                # Las pantallas incluidas en el plan son gratis, las extras valen $2
+                cliente.plus = str(max(0, (value - base_screens) * 2))
         
         sync_cliente_balances(cliente, db)
         # 3. Validar Potencia (No puede ser inferior a -26.0 dBm)
@@ -407,6 +449,11 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
     for var, value in vars(data).items():
         if value is not None:
             setattr(cliente, var, value)
+            # Sincronizar 'plus' si se cambia 'iptv_max_conn'
+            if var == 'iptv_max_conn':
+                plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+                base_screens = plan_info.pantallas if plan_info else 1
+                cliente.plus = str(max(0, (value - base_screens) * 2))
             
     sync_cliente_balances(cliente, db)
     db.commit()
@@ -414,72 +461,71 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
 
 @router.post("/{id}/pagar", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends(get_db)):
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
-    if not cliente:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    
+    try:
+        cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
+        # Extraemos montos del pago
+        m_total = float(pago_data.monto)
+        m_adic_p = try_float(pago_data.adicional)
+        m_plus_p = try_float(pago_data.plus)
+        m_internet_p = m_total - m_plus_p - m_adic_p
 
-    # Extraemos montos del pago
-    m_total = float(pago_data.monto)
-    m_adic_p = try_float(pago_data.adicional)
-    m_plus_p = try_float(pago_data.plus)
-    
-    # El m_internet_p fluye independiente del adicional según requerimiento v1.2.
-    # El monto total recibido se destina prioritariamente a cubrir el Pendiente de Internet+TV.
-    # Restamos tanto m_plus como m_adic para que no afecten el saldo de internet.
-    m_internet_p = m_total - m_plus_p - m_adic_p
+        # Validar que no haya NaN
+        import math
+        if math.isnan(m_total) or math.isnan(m_internet_p):
+            raise HTTPException(status_code=400, detail="Monto inválido (NaN)")
 
-    # Registrar en historial con el monto total real recibido (m_total ya lo incluye todo)
-    nuevo_pago = models.Pago(
-        cliente_id=id,
-        monto=m_total,
-        metodo_pago=pago_data.metodo_pago,
-        mes_correspondiente=pago_data.mes_correspondiente,
-        referencia=pago_data.referencia,
-        monto_internet=m_internet_p, # Only internet
-        monto_plus=m_plus_p,         # Only plus
-        monto_adicional=m_adic_p     # Only adicional
-    )
-    db.add(nuevo_pago)
-    
-    # 1. ACTUALIZAR ADICIONAL (Separado del pendiente principal)
-    if m_adic_p > 0:
-        curr_adic = try_float(cliente.adicional)
-        # Si pagamos más adicional del que hay, el resto NO genera excedente en saldo (según req)
-        # simplemente se limpia el campo adicional.
-        cliente.adicional = str(max(0, curr_adic - m_adic_p))
-        cliente.adicional_pagado = float(cliente.adicional_pagado or 0) + m_adic_p
-        if cliente.adicional == "0.0": cliente.adicional = ""
+        nuevo_pago = models.Pago(
+            cliente_id=id,
+            monto=m_total,
+            metodo_pago=pago_data.metodo_pago,
+            mes_correspondiente=pago_data.mes_correspondiente,
+            referencia=pago_data.referencia,
+            monto_internet=m_internet_p,
+            monto_plus=m_plus_p,
+            monto_adicional=m_adic_p
+        )
+        db.add(nuevo_pago)
 
-    # 2. ACTUALIZAR PLUS (IPTV)
-    if m_plus_p > 0:
-        curr_plus = try_float(cliente.plus)
-        cliente.plus = str(max(0, curr_plus - m_plus_p))
-        cliente.plus_pagado = float(cliente.plus_pagado or 0) + m_plus_p
-        if cliente.plus == "0.0": cliente.plus = ""
+        # 1. ACTUALIZAR ADICIONAL
+        if m_adic_p > 0:
+            curr_adic = try_float(cliente.adicional)
+            cliente.adicional = str(max(0, curr_adic - m_adic_p))
+            cliente.adicional_pagado = float(cliente.adicional_pagado or 0) + m_adic_p
+            if cliente.adicional == "0.0": cliente.adicional = ""
 
-    # 3. ACTUALIZAR SALDO PRINCIPAL (Internet / Pendiente histórico)
-    # Solo el pago destinado a internet afecta al saldo
-    saldo_anterior = float(cliente.saldo or 0)
-    cliente.saldo = saldo_anterior - m_internet_p
-    
-    # Actualizar pago mensual (solo para control del mes)
-    cliente.pago_mensual = float(cliente.pago_mensual or 0) + m_total
+        # 2. ACTUALIZAR PLUS (IPTV)
+        if m_plus_p > 0:
+            curr_plus = try_float(cliente.plus)
+            cliente.plus = str(max(0, curr_plus - m_plus_p))
+            cliente.plus_pagado = float(cliente.plus_pagado or 0) + m_plus_p
+            if cliente.plus == "0.0": cliente.plus = ""
 
-    # Actualizar campos informativos
-    if pago_data.facturas is not None: cliente.facturas = pago_data.facturas
-    if pago_data.app is not None: cliente.app = pago_data.app
-    if pago_data.payment_date is not None: cliente.payment_date = pago_data.payment_date
-    if pago_data.bank is not None: cliente.bank = pago_data.bank
-    if pago_data.comentarios is not None: cliente.comentarios = pago_data.comentarios
+        # 3. ACTUALIZAR SALDO PRINCIPAL
+        cliente.saldo = float(cliente.saldo or 0) - m_internet_p
+        cliente.pago_mensual = float(cliente.pago_mensual or 0) + m_total
 
-    sync_cliente_balances(cliente, db)
-    db.commit()
-    
-    if float(cliente.saldo) < 0:
-        return {"message": f"Pago registrado. Excedente en internet: ${abs(float(cliente.saldo)):.2f}", "nuevo_saldo": float(cliente.saldo)}
-    return {"message": f"Pago registrado. Saldo pendiente: ${float(cliente.saldo):.2f}", "nuevo_saldo": float(cliente.saldo)}
+        if pago_data.facturas is not None: cliente.facturas = pago_data.facturas
+        if pago_data.app is not None: cliente.app = pago_data.app
+        if pago_data.payment_date is not None: cliente.payment_date = pago_data.payment_date
+        if pago_data.bank is not None: cliente.bank = pago_data.bank
+        if pago_data.comentarios is not None: cliente.observaciones = pago_data.comentarios
+
+        sync_cliente_balances(cliente, db)
+        db.commit()
+
+        nuevo_saldo = float(cliente.saldo or 0)
+        if nuevo_saldo < 0:
+            return {"message": f"Pago registrado. Excedente: ${abs(nuevo_saldo):.2f}", "nuevo_saldo": nuevo_saldo}
+        return {"message": f"Pago registrado. Saldo pendiente: ${nuevo_saldo:.2f}", "nuevo_saldo": nuevo_saldo}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error al procesar pago: {str(e)}")
 
 @router.post("/facturacion-mensual-global", dependencies=[Depends(require_role(["administrador"]))])
 def ejecutar_facturacion_mensual(db: Session = Depends(get_db)):
@@ -501,8 +547,16 @@ def ejecutar_facturacion_mensual(db: Session = Depends(get_db)):
     
     count = 0
     for cliente in clientes_activos:
-        # La tarifa ahora se refleja en tiempo real en 'Pendiente' gracias a sync_balances.
-        # Solo contabilizamos para el reporte de éxito de la operación.
+        # 1. Recargo mensual de IPTV PLUS ($2 por pantalla adicional contratada)
+        # Obtenemos pantallas base del plan
+        plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+        base_screens = plan_info.pantallas if plan_info else 1
+        
+        if (cliente.iptv_max_conn or 0) > base_screens:
+            cargo_plus = (cliente.iptv_max_conn - base_screens) * 2
+            cliente.plus = str(try_float(cliente.plus) + cargo_plus)
+            
+        # 2. La tarifa de internet se refleja en Pendiente vía sync_balances
         count += 1
         
     save_config({"ultima_facturacion": current_month})
@@ -634,6 +688,19 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     
     return {"message": "Reporte generado. Campos de pago vaciados (saldos intactos).", "reporte_id": nuevo_reporte.id, "archivo": nuevo_reporte.archivo_ruta_excel}
 
+@router.patch("/{id}", response_model=schemas.ClienteResponse, dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: Session = Depends(get_db)):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    for var, value in vars(data).items():
+        if value is not None:
+            setattr(cliente, var, value)
+    db.commit()
+    db.refresh(cliente)
+    return cliente
+
+
 @router.delete("/{id}", dependencies=[Depends(require_role(["administrador"]))])
 def eliminar_cliente(id: int, db: Session = Depends(get_db)):
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
@@ -658,44 +725,16 @@ def eliminar_cliente(id: int, db: Session = Depends(get_db)):
     db.delete(cliente)
     db.commit()
 
-    # Lógica para "liberar" el ID: Si eliminamos el último ID, reseteamos el contador de la DB
+    # Resetear AUTO_INCREMENT solo en MySQL/MariaDB
     try:
         from sqlalchemy import text
-        max_id_res = db.execute(text("SELECT MAX(NUMERO) FROM hoja_de_c__lculo_sin_t__tulo")).fetchone()
-        max_id = max_id_res[0] if max_id_res and max_id_res[0] is not None else 0
-        db.execute(text(f"ALTER TABLE hoja_de_c__lculo_sin_t__tulo AUTO_INCREMENT = {max_id + 1}"))
-        db.commit()
+        is_mysql = "mysql" in str(engine.url).lower() if 'engine' in dir() else False
+        if is_mysql:
+            max_id_res = db.execute(text("SELECT MAX(NUMERO) FROM hoja_de_c__lculo_sin_t__tulo")).fetchone()
+            max_id = max_id_res[0] if max_id_res and max_id_res[0] is not None else 0
+            db.execute(text(f"ALTER TABLE hoja_de_c__lculo_sin_t__tulo AUTO_INCREMENT = {max_id + 1}"))
+            db.commit()
     except Exception as e:
-        print(f"Error al resetear auto_increment: {e}")
+        print(f"Aviso: No se pudo resetear AUTO_INCREMENT: {e}")
 
     return {"message": "Cliente eliminado correctamente y ID liberado para el siguiente registro."}
-@router.post("/{cliente_id}/upload-cedula")
-async def upload_cedula(
-    cliente_id: int,
-    frontal: UploadFile = File(None),
-    posterior: UploadFile = File(None),
-    db: Session = Depends(get_db)
-):
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
-    if not cliente:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    
-    upload_dir = "uploads/cedulas"
-    os.makedirs(upload_dir, exist_ok=True)
-    
-    if frontal:
-        file_ext = os.path.splitext(frontal.filename)[1]
-        file_path = f"{upload_dir}/{cliente_id}_frontal{file_ext}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(frontal.file, buffer)
-        cliente.cedula_frontal = f"/uploads/cedulas/{cliente_id}_frontal{file_ext}"
-        
-    if posterior:
-        file_ext = os.path.splitext(posterior.filename)[1]
-        file_path = f"{upload_dir}/{cliente_id}_posterior{file_ext}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(posterior.file, buffer)
-        cliente.cedula_posterior = f"/uploads/cedulas/{cliente_id}_posterior{file_ext}"
-        
-    db.commit()
-    return {"message": "Fotos subidas con éxito", "frontal": cliente.cedula_frontal, "posterior": cliente.cedula_posterior}

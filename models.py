@@ -102,8 +102,11 @@ class Cliente(Base):
 
     adicional = Column("ADICIONAL", String(255))
 
-    comentarios = Column("COMENTARIOS", String(500))
-    observaciones = Column("OBSERVACIONES", String(500))
+    plus_pagado = Column("PLUS_PAGADO", Numeric(precision=10, scale=2), default=0.00)
+    adicional_pagado = Column("ADICIONAL_PAGADO", Numeric(precision=10, scale=2), default=0.00)
+
+    comentarios = Column("COMENTARIOS", String(2000))
+    observaciones = Column("OBSERVACIONES", String(2000))
     tercera_edad = Column("TERCERA_EDAD", Boolean, default=False)
     precio_plan_especial = Column("PRECIO_PLAN_ESPECIAL", Numeric(precision=10, scale=2), default=0.00)
     pago_mensual = Column("PAGO_MENSUAL", Numeric(precision=10, scale=2), default=0.00)
@@ -117,7 +120,7 @@ class Cliente(Base):
     iptv_exp_date = Column("IPTV_EXP_DATE", String(100))
     iptv_max_conn = Column("IPTV_MAX_CONN", Integer, default=0)
     iptv_outputs = Column("IPTV_OUTPUTS", String(1255))
-    iptv_notes = Column("IPTV_NOTES", String(500))
+    iptv_notes = Column("IPTV_NOTES", String(2000))
     iptv_member_id = Column("IPTV_MEMBER_ID", Integer, default=1)
 
     pagos = relationship("Pago", back_populates="cliente")
@@ -224,7 +227,7 @@ class ClienteExtra(Base):
     contrasena = Column(String(255))
     cuentas = Column(String(50))
     mac_smart_one = Column(String(100))
-    observaciones = Column(String(500))
+    observaciones = Column(Text)
     estado = Column(String(50)) # FIJO, IRREGULAR, SEMIFIJO, EXTERNO
     valor = Column(Numeric(precision=10, scale=2), default=0.00)
     activo = Column(String(10), default="SI")
@@ -371,8 +374,8 @@ class HojaRuta(Base):
     celular_cliente = Column(String(255))
     ubicacion_caja = Column(String(255))
     actividad = Column(String(255))
-    observacion = Column(String(500))
-    observacion_tecnico = Column(String(500))
+    observacion = Column(String(2000))
+    observacion_tecnico = Column(String(2000))
     parroquia = Column(String(100))
     estado = Column(String(50), default="Pendiente") # Pendiente, Realizado, Cancelado
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
