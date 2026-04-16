@@ -375,6 +375,7 @@ class HojaRuta(Base):
     ubicacion_caja = Column(String(255))
     actividad = Column(String(255))
     observacion = Column(String(500))
+    observacion_tecnico = Column(String(500))
     parroquia = Column(String(100))
     estado = Column(String(50), default="Pendiente") # Pendiente, Realizado, Cancelado
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

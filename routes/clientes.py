@@ -112,7 +112,19 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 
 @router.post("/", response_model=schemas.ClienteResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db)):
+    # Lógica para reutilizar IDs (Encontrar el primer hueco disponible)
+    ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
+    ids = [i[0] for i in ids_query]
+    
+    nuevo_id = 1
+    for current_id in ids:
+        if current_id == nuevo_id:
+            nuevo_id += 1
+        elif current_id > nuevo_id:
+            break # Encontramos un hueco
+            
     db_cliente = models.Cliente(
+        id=nuevo_id, # Asignamos el ID manualmente para llenar el hueco
         nombre=cliente.nombre,
         cedula=cliente.cedula,
         celular=cliente.celular,

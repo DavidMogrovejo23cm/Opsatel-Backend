@@ -516,6 +516,7 @@ class HojaRutaBase(BaseModel):
     ubicacion_caja: Optional[str] = None
     actividad: Optional[str] = None
     observacion: Optional[str] = None
+    observacion_tecnico: Optional[str] = None
     parroquia: Optional[str] = None
     estado: Optional[str] = "Pendiente"
 
