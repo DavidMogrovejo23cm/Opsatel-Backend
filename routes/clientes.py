@@ -380,8 +380,11 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
         for var, value in vars(data).items():
             setattr(cliente, var, value)
             if var == 'iptv_max_conn' and value is not None:
-                # La primera pantalla es gratis, las extras valen $2
-                cliente.plus = str(max(0, (value - 1) * 2))
+                # Obtener pantallas base desde la configuración del plan
+                plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+                base_screens = plan_info.pantallas if plan_info else 1
+                # Las pantallas incluidas en el plan son gratis, las extras valen $2
+                cliente.plus = str(max(0, (value - base_screens) * 2))
         
         sync_cliente_balances(cliente, db)
         # 3. Validar Potencia (No puede ser inferior a -26.0 dBm)
@@ -446,6 +449,11 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
     for var, value in vars(data).items():
         if value is not None:
             setattr(cliente, var, value)
+            # Sincronizar 'plus' si se cambia 'iptv_max_conn'
+            if var == 'iptv_max_conn':
+                plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+                base_screens = plan_info.pantallas if plan_info else 1
+                cliente.plus = str(max(0, (value - base_screens) * 2))
             
     sync_cliente_balances(cliente, db)
     db.commit()
@@ -539,8 +547,16 @@ def ejecutar_facturacion_mensual(db: Session = Depends(get_db)):
     
     count = 0
     for cliente in clientes_activos:
-        # La tarifa ahora se refleja en tiempo real en 'Pendiente' gracias a sync_balances.
-        # Solo contabilizamos para el reporte de éxito de la operación.
+        # 1. Recargo mensual de IPTV PLUS ($2 por pantalla adicional contratada)
+        # Obtenemos pantallas base del plan
+        plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+        base_screens = plan_info.pantallas if plan_info else 1
+        
+        if (cliente.iptv_max_conn or 0) > base_screens:
+            cargo_plus = (cliente.iptv_max_conn - base_screens) * 2
+            cliente.plus = str(try_float(cliente.plus) + cargo_plus)
+            
+        # 2. La tarifa de internet se refleja en Pendiente vía sync_balances
         count += 1
         
     save_config({"ultima_facturacion": current_month})
