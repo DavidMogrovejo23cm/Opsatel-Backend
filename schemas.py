@@ -393,6 +393,7 @@ class ClienteExtraBase(BaseModel):
     activo: Optional[str] = "SI"
     saldo_pendiente: Optional[float] = 0.0
     total_pagado: Optional[float] = 0.0
+    fecha_ingreso: Optional[str] = None
 
     # Campos mensuales (Opcionales todos)
     enero_factura: Optional[str] = None

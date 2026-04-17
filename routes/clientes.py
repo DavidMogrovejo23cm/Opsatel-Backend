@@ -284,7 +284,7 @@ def obtener_siguiente_valor_tecnico(
         "ip": ip_sugerida,
         "ont": cmd_ont,
         "servicio": cmd_servicio,
-        "breach": cmd_breach
+        "breach": cmd_breach if has_breach else ""
     }
 
 

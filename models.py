@@ -232,6 +232,7 @@ class ClienteExtra(Base):
     estado = Column(String(50)) # FIJO, IRREGULAR, SEMIFIJO, EXTERNO
     valor = Column(Numeric(precision=10, scale=2), default=0.00)
     activo = Column(String(10), default="SI")
+    fecha_ingreso = Column(String(50)) # Formato YYYY-MM-DD
     
     # Pendientes y saldos globales para el apartado de pagos
     saldo_pendiente = Column(Numeric(precision=10, scale=2), default=0.00)

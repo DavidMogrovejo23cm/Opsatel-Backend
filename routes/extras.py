@@ -14,6 +14,8 @@ def listar_extras(db: Session = Depends(get_db)):
 
 @router.post("/", response_model=schemas.ClienteExtraResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def crear_extra(extra: schemas.ClienteExtraCreate, db: Session = Depends(get_db)):
+    if not extra.fecha_ingreso:
+        extra.fecha_ingreso = datetime.now().strftime("%Y-%m-%d")
     db_extra = models.ClienteExtra(**extra.dict())
     db.add(db_extra)
     db.commit()
@@ -70,32 +72,42 @@ def registrar_pago_extra(id: int, pago_data: schemas.PagoExtraCreate, db: Sessio
     
     if mes in meses_validos:
         monto_restante = monto
-        indice_inicio = meses_validos.index(mes)
         
-        # Iterar desde el mes seleccionado hacia adelante
-        for i in range(indice_inicio, len(meses_validos)):
+        # Lógica Profesional: Siempre intentar pagar el mes más antiguo con deuda
+        # que sea igual o posterior al mes de ingreso.
+        limite_ingreso_idx = 0
+        if cliente.fecha_ingreso:
+            try:
+                # Extraer el mes del formato YYYY-MM-DD
+                mes_ingreso_num = int(cliente.fecha_ingreso.split("-")[1])
+                limite_ingreso_idx = mes_ingreso_num - 1
+            except:
+                limite_ingreso_idx = 0
+
+        # Iterar desde el mes de ingreso para cubrir deudas antiguas primero
+        for i in range(limite_ingreso_idx, len(meses_validos)):
             if monto_restante <= 0:
                 break
             
             mes_actual = meses_validos[i]
             valor_mensual = float(cliente.valor or 0)
             pago_actual = float(getattr(cliente, f"{mes_actual}_pago") or 0)
-            saldo_pendiente_mes = max(0, valor_mensual - pago_actual)
-            
+            saldo_pendiente_mes = float(getattr(cliente, f"{mes_actual}_saldo") or 0)
+
+            # Si el mes no tiene gestión previa, calculamos saldo como valor_mensual
+            if pago_actual == 0 and saldo_pendiente_mes == 0:
+                saldo_pendiente_mes = valor_mensual
+
             if saldo_pendiente_mes > 0:
-                # Aplicamos lo que falte para este mes o lo que nos quede de dinero
                 pago_a_aplicar = min(monto_restante, saldo_pendiente_mes)
-                
-                nuevo_pago = pago_actual + pago_a_aplicar
-                setattr(cliente, f"{mes_actual}_pago", nuevo_pago)
-                setattr(cliente, f"{mes_actual}_saldo", max(0, valor_mensual - nuevo_pago))
+                nuevo_pago_total = pago_actual + pago_a_aplicar
+                setattr(cliente, f"{mes_actual}_pago", nuevo_pago_total)
+                setattr(cliente, f"{mes_actual}_saldo", max(0, valor_mensual - nuevo_pago_total))
                 setattr(cliente, f"{mes_actual}_fecha_pago", datetime.now().strftime("%d/%m/%Y"))
                 setattr(cliente, f"{mes_actual}_banco", pago_data.metodo_pago)
                 setattr(cliente, f"{mes_actual}_factura", pago_data.factura)
-                
                 monto_restante -= pago_a_aplicar
             else:
-                # Si este mes ya está pagado, el monto_restante pasa íntegro al siguiente mes
                 continue
 
 
