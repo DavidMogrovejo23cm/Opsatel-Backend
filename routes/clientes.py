@@ -466,46 +466,57 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
         if not cliente:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-        # Extraemos montos del pago
-        m_total = float(pago_data.monto)
-        m_adic_p = try_float(pago_data.adicional)
-        m_plus_p = try_float(pago_data.plus)
-        m_internet_p = m_total - m_plus_p - m_adic_p
+        # Extraemos montos reales pagados (Cash)
+        m_total_cash = float(pago_data.monto)
+        m_adic_cash = try_float(pago_data.adicional)
+        m_plus_cash = try_float(pago_data.plus)
+        m_internet_cash = m_total_cash - m_plus_cash - m_adic_cash
 
         # Validar que no haya NaN
         import math
-        if math.isnan(m_total) or math.isnan(m_internet_p):
+        if math.isnan(m_total_cash) or math.isnan(m_internet_cash):
             raise HTTPException(status_code=400, detail="Monto inválido (NaN)")
 
+        # Calculamos la reducción total de deuda: Cash + Descuentos
+        deuda_internet = m_internet_cash + (pago_data.descuento_internet or 0.0)
+        deuda_plus = m_plus_cash + (pago_data.descuento_plus or 0.0)
+        deuda_adicional = m_adic_cash + (pago_data.descuento_adicional or 0.0)
+
+        # Usamos el Cash real en models.Pago para mantener Finanzas correctas
         nuevo_pago = models.Pago(
             cliente_id=id,
-            monto=m_total,
+            monto=m_total_cash,
             metodo_pago=pago_data.metodo_pago,
             mes_correspondiente=pago_data.mes_correspondiente,
             referencia=pago_data.referencia,
-            monto_internet=m_internet_p,
-            monto_plus=m_plus_p,
-            monto_adicional=m_adic_p
+            monto_internet=m_internet_cash,
+            monto_plus=m_plus_cash,
+            monto_adicional=m_adic_cash
         )
         db.add(nuevo_pago)
 
         # 1. ACTUALIZAR ADICIONAL
-        if m_adic_p > 0:
+        if deuda_adicional > 0:
             curr_adic = try_float(cliente.adicional)
-            cliente.adicional = str(max(0, curr_adic - m_adic_p))
-            cliente.adicional_pagado = float(cliente.adicional_pagado or 0) + m_adic_p
+            cliente.adicional = str(max(0, curr_adic - deuda_adicional))
+            # Pagado refleja solo el efectivo
+            if m_adic_cash > 0:
+                cliente.adicional_pagado = float(cliente.adicional_pagado or 0) + m_adic_cash
             if cliente.adicional == "0.0": cliente.adicional = ""
 
         # 2. ACTUALIZAR PLUS (IPTV)
-        if m_plus_p > 0:
+        if deuda_plus > 0:
             curr_plus = try_float(cliente.plus)
-            cliente.plus = str(max(0, curr_plus - m_plus_p))
-            cliente.plus_pagado = float(cliente.plus_pagado or 0) + m_plus_p
+            cliente.plus = str(max(0, curr_plus - deuda_plus))
+            # Pagado refleja solo el efectivo
+            if m_plus_cash > 0:
+                cliente.plus_pagado = float(cliente.plus_pagado or 0) + m_plus_cash
             if cliente.plus == "0.0": cliente.plus = ""
 
         # 3. ACTUALIZAR SALDO PRINCIPAL
-        cliente.saldo = float(cliente.saldo or 0) - m_internet_p
-        cliente.pago_mensual = float(cliente.pago_mensual or 0) + m_total
+        cliente.saldo = float(cliente.saldo or 0) - deuda_internet
+        # El pago mensual refleja solo el dinero real ingresado a caja. Los descuentos no aumentan el total cobrado.
+        cliente.pago_mensual = float(cliente.pago_mensual or 0) + m_total_cash
 
         if pago_data.facturas is not None: cliente.facturas = pago_data.facturas
         if pago_data.app is not None: cliente.app = pago_data.app

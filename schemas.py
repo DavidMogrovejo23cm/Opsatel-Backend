@@ -183,6 +183,9 @@ class PagoCreate(BaseModel):
     adicional: Optional[str] = None
     comentarios: Optional[str] = None
     notas_pago: Optional[str] = None
+    descuento_internet: Optional[float] = 0.0
+    descuento_plus: Optional[float] = 0.0
+    descuento_adicional: Optional[float] = 0.0
 
 class ClienteResponse(BaseModel):
     id: int
