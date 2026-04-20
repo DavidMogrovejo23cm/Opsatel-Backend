@@ -750,3 +750,99 @@ def eliminar_cliente(id: int, db: Session = Depends(get_db)):
         print(f"Aviso: No se pudo resetear AUTO_INCREMENT: {e}")
 
     return {"message": "Cliente eliminado correctamente y ID liberado para el siguiente registro."}
+
+@router.post("/upload-db", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="El archivo debe ser un Excel (.xlsx, .xls)")
+    
+    try:
+        df = pd.read_excel(file.file)
+        # Limpiar NaN o inf
+        df = df.replace([pd.NA, float('nan')], None)
+        
+        count_nuevos = 0
+        count_actualizados = 0
+        errores = 0
+        
+        # Mapear columnas a variables
+        # Buscamos columnas si coinciden.
+        columnas_df = {col.upper().strip(): col for col in df.columns if isinstance(col, str)}
+        
+        def get_val(row, aliases):
+            for alias in aliases:
+                if alias in columnas_df:
+                    val = row[columnas_df[alias]]
+                    if pd.notnull(val):
+                        return str(val).strip()
+            return None
+            
+        for index, row in df.iterrows():
+            try:
+                nombre = get_val(row, ["NOMBRE", "NOMBRES", "CLIENTE"])
+                if not nombre:
+                    continue
+                    
+                cedula = get_val(row, ["CEDULA", "CI", "RUC", "IDENTIFICACION"]) or ""
+                celular = get_val(row, ["CELULAR", "TELEFONO", "MOVIL"]) or ""
+                correo = get_val(row, ["CORREO", "EMAIL"]) or ""
+                direccion = get_val(row, ["DIRECCION", "DIR"]) or ""
+                nodo = get_val(row, ["NODO", "SECTOR"]) or ""
+                parroquia = get_val(row, ["PARROQUIA", "CIUDAD"]) or ""
+                plan = get_val(row, ["PLAN", "VELOCIDAD"]) or ""
+                estado = get_val(row, ["ESTADO", "STATUS"]) or "Pendiente"
+                
+                # Check if it exists by Cedula or Nombre
+                cliente = None
+                if cedula:
+                    cliente = db.query(models.Cliente).filter(models.Cliente.cedula == cedula).first()
+                if not cliente:
+                    cliente = db.query(models.Cliente).filter(models.Cliente.nombre == nombre).first()
+                    
+                if cliente:
+                    # Update
+                    cliente.celular = celular if celular else cliente.celular
+                    cliente.correo = correo if correo else cliente.correo
+                    cliente.direccion = direccion if direccion else cliente.direccion
+                    cliente.nodo = nodo if nodo else cliente.nodo
+                    cliente.parroquia = parroquia if parroquia else cliente.parroquia
+                    cliente.plan = plan if plan else cliente.plan
+                    count_actualizados += 1
+                else:
+                    # Lógica para reutilizar IDs: Encontrar hueco disponible
+                    ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
+                    ids = [i[0] for i in ids_query]
+                    
+                    nuevo_id = 1
+                    for current_id in ids:
+                        if current_id == nuevo_id:
+                            nuevo_id += 1
+                        elif current_id > nuevo_id:
+                            break
+                            
+                    nuevo_cliente = models.Cliente(
+                        id=nuevo_id,
+                        nombre=nombre,
+                        cedula=cedula,
+                        celular=celular,
+                        correo=correo,
+                        direccion=direccion,
+                        nodo=nodo,
+                        parroquia=parroquia,
+                        plan=plan,
+                        estado=estado
+                    )
+                    db.add(nuevo_cliente)
+                    db.commit()
+                    count_nuevos += 1
+                    
+            except Exception as e:
+                db.rollback()
+                errores += 1
+                
+        db.commit()
+        return {"message": f"Importación exitosa. {count_nuevos} nuevos, {count_actualizados} actualizados. {errores} errores en filas."}
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error al procesar el archivo Excel: {str(e)}")
