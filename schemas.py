@@ -572,3 +572,28 @@ class TicketResponse(TicketBase):
 
     class Config:
         from_attributes = True
+
+class CallCenterTicketBase(BaseModel):
+    cliente_nombre: Optional[str] = None
+    ip: Optional[str] = None
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+    estado: Optional[str] = "PENDIENTE"
+    a_cargo: Optional[str] = None
+    problema: Optional[str] = None
+    observacion_revision: Optional[str] = None
+    fecha_cambio_estado: Optional[str] = None
+
+class CallCenterTicketCreate(CallCenterTicketBase):
+    pass
+
+class CallCenterTicketUpdate(CallCenterTicketBase):
+    pass
+
+class CallCenterTicketResponse(CallCenterTicketBase):
+    id: int
+    fecha_ingreso: datetime
+    registrado_por: Optional[str] = None
+
+    class Config:
+        from_attributes = True

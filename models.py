@@ -392,3 +392,18 @@ class Ticket(Base):
     estado = Column(String(50), default="Pendiente")
     autor = Column(String(100), nullable=False)
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+
+class CallCenterTicket(Base):
+    __tablename__ = "call_center_tickets"
+    id = Column(Integer, primary_key=True, index=True)
+    cliente_nombre = Column(String(255))
+    fecha_ingreso = Column(DateTime, default=datetime.datetime.utcnow)
+    ip = Column(String(50))
+    direccion = Column(String(255))
+    telefono = Column(String(255))
+    registrado_por = Column(String(100))
+    estado = Column(String(50), default="PENDIENTE")
+    a_cargo = Column(String(100))
+    problema = Column(Text)
+    observacion_revision = Column(Text)
+    fecha_cambio_estado = Column(String(50))
