@@ -6,7 +6,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import engine, Base
 import models
 import os
-from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter
+from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance
 import rutas_configuraciones
 from sync_db import sync_schema
 from force_fix import force_fix_columns
@@ -85,6 +85,7 @@ app.include_router(extras.router)
 app.include_router(hoja_ruta.router)
 app.include_router(tickets.router)
 app.include_router(callcenter.router)
+app.include_router(balance.router)
 app.include_router(rutas_configuraciones.router)
 
 from fastapi.staticfiles import StaticFiles

@@ -407,3 +407,29 @@ class CallCenterTicket(Base):
     problema = Column(Text)
     observacion_revision = Column(Text)
     fecha_cambio_estado = Column(String(50))
+
+class Egreso(Base):
+    """Registro de egresos/gastos operacionales para el módulo de Balance."""
+    __tablename__ = "egresos_balance"
+    id = Column(Integer, primary_key=True, index=True)
+    descripcion = Column(String(255), nullable=False)
+    categoria = Column(String(100), default="operacional")  # operacional, proyecto, nomina, otro
+    monto = Column(Numeric(precision=10, scale=2), default=0.00)
+    fecha = Column(String(50))          # YYYY-MM-DD
+    mes = Column(String(20))            # YYYY-MM  → para filtrado rápido
+    metodo_pago = Column(String(100), default="Efectivo")
+    notas = Column(Text)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class Proyecto(Base):
+    """Registro de proyectos e inversiones para el módulo de Balance."""
+    __tablename__ = "proyectos_balance"
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(255), nullable=False)
+    descripcion = Column(Text)
+    monto_total = Column(Numeric(precision=10, scale=2), default=0.00)
+    monto_invertido = Column(Numeric(precision=10, scale=2), default=0.00)
+    estado = Column(String(50), default="En progreso")  # En progreso, Completado, Pausado
+    fecha_inicio = Column(String(50))
+    fecha_fin = Column(String(50))
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
