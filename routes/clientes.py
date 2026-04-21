@@ -400,11 +400,12 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
         cliente.instalation_date = datetime.now().strftime("%Y-%m-%d")
 
         # --- SINCRONIZACIÓN CON HOJA DE RUTA ---
-        # Al activar técnicamente, marcamos como 'Realizado' cualquier registro pendiente en Hoja de Ruta
+        # Al activar técnicamente, marcamos como 'En proceso' cualquier registro pendiente en Hoja de Ruta
         db.query(models.HojaRuta).filter(
             models.HojaRuta.cliente_id == id,
             models.HojaRuta.estado == "Pendiente"
-        ).update({"estado": "Realizado"})
+        ).update({"estado": "En proceso"})
+        db.commit() # Asegurar cambios persistentes
 
         # Lógica de Prorrateo
         try:

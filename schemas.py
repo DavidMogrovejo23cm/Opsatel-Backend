@@ -544,7 +544,7 @@ class HojaRutaUpdate(BaseModel):
     observacion: Optional[str] = None
     observacion_tecnico: Optional[str] = None
     parroquia: Optional[str] = None
-    pass
+    estado: Optional[str] = None
 
 class HojaRutaResponse(HojaRutaBase):
     id: int

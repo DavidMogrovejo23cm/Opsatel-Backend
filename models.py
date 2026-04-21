@@ -415,6 +415,7 @@ class Egreso(Base):
     descripcion = Column(String(255), nullable=False)
     categoria = Column(String(100), default="operacional")  # operacional, proyecto, nomina, otro
     monto = Column(Numeric(precision=10, scale=2), default=0.00)
+    subcategoria = Column(String(150))  # VIATICOS, CONSTRUCCION, COMPRAS, etc.
     fecha = Column(String(50))          # YYYY-MM-DD
     mes = Column(String(20))            # YYYY-MM  → para filtrado rápido
     metodo_pago = Column(String(100), default="Efectivo")
@@ -432,4 +433,30 @@ class Proyecto(Base):
     estado = Column(String(50), default="En progreso")  # En progreso, Completado, Pausado
     fecha_inicio = Column(String(50))
     fecha_fin = Column(String(50))
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class ProyectoPago(Base):
+    """Cuotas/pagos realizados al proyecto (tabla de aportes)."""
+    __tablename__ = "proyecto_pagos"
+    id = Column(Integer, primary_key=True, index=True)
+    proyecto_id = Column(Integer, ForeignKey("proyectos_balance.id", ondelete="CASCADE"))
+    item = Column(Integer, default=1)
+    descripcion = Column(String(255))
+    fecha = Column(String(50))
+    tipo_pago = Column(String(100), default="Pichincha")
+    valor = Column(Numeric(precision=10, scale=2), default=0.00)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class GastoProyecto(Base):
+    """Gastos generales internos de un proyecto, agrupados por subcategoría."""
+    __tablename__ = "gastos_proyecto"
+    id = Column(Integer, primary_key=True, index=True)
+    proyecto_id = Column(Integer, ForeignKey("proyectos_balance.id", ondelete="CASCADE"))
+    subcategoria = Column(String(150))  # VIATICOS, CONSTRUCCION, COMPRAS, HERRAJERIA…
+    item = Column(Integer, default=1)
+    descripcion = Column(String(255))
+    fecha = Column(String(50))
+    tipo_pago = Column(String(150), default="Pichincha")
+    valor = Column(Numeric(precision=10, scale=2), default=0.00)
+    pendiente = Column(Boolean, default=False)  # True = Pendiente de pago
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

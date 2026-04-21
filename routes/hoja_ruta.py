@@ -27,25 +27,52 @@ def crear_hoja_ruta(hoja: schemas.HojaRutaCreate, db: Session = Depends(get_db))
 
 @router.patch("/{id}", response_model=schemas.HojaRutaResponse)
 def actualizar_hoja_ruta(id: int, data: schemas.HojaRutaUpdate, db: Session = Depends(get_db), current_user: models.Usuario = Depends(get_current_user)):
-    db_hoja = db.query(models.HojaRuta).filter(models.HojaRuta.id == id).first()
-    if not db_hoja:
-        raise HTTPException(status_code=404, detail="Hoja de ruta no encontrada")
-    
-    # Restringir cambio de estado solo a administradores
-    if data.estado is not None and data.estado != db_hoja.estado:
-        if current_user.rol not in ["administrador", "admin"]:
-            raise HTTPException(status_code=403, detail="Solo el administrador puede cambiar el estado de la hoja de ruta")
-    
-    # Técnicos solo pueden editar si son administradores o técnicos (require_role logic manual)
-    if current_user.rol not in ["administrador", "admin", "tecnico"]:
-        raise HTTPException(status_code=403, detail="No tienes permisos para editar hojas de ruta")
+    try:
+        db_hoja = db.query(models.HojaRuta).filter(models.HojaRuta.id == id).first()
+        if not db_hoja:
+            raise HTTPException(status_code=404, detail="Hoja de ruta no encontrada")
+        
+        # Obtener el rol en minúsculas para comparaciones seguras
+        user_role = (current_user.rol or "").lower()
+        is_admin = user_role in ["administrador", "admin"]
+        is_staff = is_admin or user_role in ["tecnico", "secretario", "instalador"]
 
-    for var, value in data.dict(exclude_unset=True).items():
-        setattr(db_hoja, var, value)
-    
-    db.commit()
-    db.refresh(db_hoja)
-    return db_hoja
+        # 1. Permisos para cambiar el estado: Solo administradores
+        # Usamos getattr por seguridad si hay problemas de recarga de schemas
+        new_estado = getattr(data, 'estado', None)
+        if new_estado is not None and new_estado != db_hoja.estado:
+            if not is_admin:
+                raise HTTPException(status_code=403, detail="Solo el administrador puede cambiar el estado de la hoja de ruta")
+        
+        # 2. Permisos generales para editar cualquier campo: Staff autorizado
+        if not is_staff:
+            raise HTTPException(status_code=403, detail="No tienes permisos para editar hojas de ruta")
+
+        # 3. Aplicar cambios de forma segura
+        # Usamos model_dump para Pydantic v2 (o dict para compatibilidad)
+        if hasattr(data, "model_dump"):
+            update_data = data.model_dump(exclude_unset=True)
+        else:
+            update_data = data.dict(exclude_unset=True)
+
+        for var, value in update_data.items():
+            # Manejo de campos numéricos que vienen como string vacío desde el frontend
+            if var == "cliente_id" and (value == "" or value == 0):
+                value = None
+            setattr(db_hoja, var, value)
+        
+        db.commit()
+        db.refresh(db_hoja)
+        return db_hoja
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print("--- ERROR CRÍTICO EN HOJA DE RUTA PATCH ---")
+        traceback.print_exc()
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{id}", dependencies=[Depends(require_role(["administrador"]))])
 def eliminar_hoja_ruta(id: int, db: Session = Depends(get_db)):
