@@ -15,21 +15,21 @@ class Cliente(Base):
 
     nombre = Column("NOMBRE", String(255))
 
-    cedula = Column("CEDULA", String(20))
-    cedula_tipo = Column("CEDULA_TIPO", String(50))
-    cedula_frontal = Column("CEDULA_FRONTAL", String(255))
-    cedula_posterior = Column("CEDULA_POSTERIOR", String(255))
+    cedula = Column("CEDULA", String(100))
+    cedula_tipo = Column("CEDULA_TIPO", String(100))
+    cedula_frontal = Column("CEDULA_FRONTAL", String(500))
+    cedula_posterior = Column("CEDULA_POSTERIOR", String(500))
 
-    celular = Column("CELULAR", String(20))
+    celular = Column("CELULAR", String(255))
 
-    correo = Column("CORREO", String(100))
+    correo = Column("CORREO", String(255))
 
-    direccion = Column("DIRECCION", String(255))
+    direccion = Column("DIRECCION", String(1000))
 
-    nodo = Column("NODO", String(100))
-    parroquia = Column("PARROQUIA", String(100))
+    nodo = Column("NODO", String(255))
+    parroquia = Column("PARROQUIA", String(255))
 
-    plan = Column("PLAN", String(100))
+    plan = Column("PLAN", String(255))
 
     fecha_firma = Column("FECHA_FIRMA", String(50))
 

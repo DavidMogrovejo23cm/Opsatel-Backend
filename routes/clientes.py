@@ -1,3 +1,4 @@
+from check_data import engine
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 import os
 import shutil
@@ -28,7 +29,7 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
     # El total_pago representa el total real adeudado en tiempo real.
     # Incluye Saldo (deuda histórica neta de pagos) + Tarifa (valor del plan actual) + IPTV + Adicional.
     tarifa = 0.00
-    if cliente.tercera_edad and cliente.precio_plan_especial:
+    if cliente.tercera_edad and cliente.precio_plan_especial is not None:
         tarifa = float(cliente.precio_plan_especial)
     elif db:
         plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
@@ -758,92 +759,189 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
         raise HTTPException(status_code=400, detail="El archivo debe ser un Excel (.xlsx, .xls)")
     
     try:
+        # Leer el archivo Excel
         df = pd.read_excel(file.file)
-        # Limpiar NaN o inf
+        # Reemplazar valores nulos de pandas por None de Python para SQLAlchemy
         df = df.replace([pd.NA, float('nan')], None)
         
         count_nuevos = 0
         count_actualizados = 0
         errores = 0
+        detalles_errores = []
         
-        # Mapear columnas a variables
-        # Buscamos columnas si coinciden.
+        # Diccionario de columnas del Excel para búsqueda insensible a mayúsculas/espacios
         columnas_df = {col.upper().strip(): col for col in df.columns if isinstance(col, str)}
         
-        def get_val(row, aliases):
+        # Mapeo exhaustivo de campos del modelo Cliente a posibles alias en el Excel
+        FIELD_MAPPING = {
+            "nombre": ["NOMBRE", "NOMBRES", "CLIENTE", "NOMBRE COMPLETO"],
+            "cedula": ["CEDULA", "CI", "RUC", "IDENTIFICACION", "DNI"],
+            "cedula_tipo": ["CEDULA_TIPO", "TIPO_CEDULA", "TIPO_IDENTIFICACION"],
+            "celular": ["CELULAR", "TELEFONO", "MOVIL", "CONTACTO", "CEL"],
+            "correo": ["CORREO", "EMAIL", "MAIL"],
+            "direccion": ["DIRECCION", "DIR", "DOMICILIO"],
+            "nodo": ["NODO", "SECTOR", "NODO_ACCESO"],
+            "parroquia": ["PARROQUIA", "CIUDAD", "CANTON", "PARROQUIA/CANTON"],
+            "plan": ["PLAN", "VELOCIDAD", "PAQUETE", "PLAN INTERNET"],
+            "fecha_firma": ["FECHA_FIRMA", "FECHA_CONTRATO", "FIRMA", "CONTRATO"],
+            "estado": ["ESTADO", "STATUS", "ESTADO_CLIENTE"],
+            "puerto": ["PUERTO", "PORT", "NAP_PORT", "PUERTO_PON"],
+            "ont": ["ONT", "SCRIPT_ONT", "COMANDO_ONT"],
+            "servicio": ["SERVICIO", "SCRIPT_SERVICIO", "COMANDO_SERVICIO"],
+            "breach": ["BREACH", "SCRIPT_BREACH"],
+            "id_port": ["ID_PORT", "ONT_ID", "ID PORT"],
+            "service_port": ["SERVICE_PORT", "SERVICE PORT", "SP"],
+            "ip": ["IP", "DIRECCION_IP", "IP_ADDRESS"],
+            "dispositivo": ["DISPOSITIVO", "EQUIPO", "ROUTER", "ONU"],
+            "potencia": ["POTENCIA", "DBM", "SEÑAL", "POTENCIA_RX"],
+            "nap": ["NAP", "CAJA_NAP", "CAJA", "NUMERO_CAJA"],
+            "ubicacion": ["UBICACION", "COORDENADAS", "LAT_LONG", "GPS"],
+            "tecnico": ["TECNICO", "INSTALADOR_TECNICO", "TECNICO_RESPONSABLE"],
+            "activador": ["ACTIVADOR", "QUIEN_ACTIVA"],
+            "red": ["RED", "VLAN", "SEGMENTO"],
+            "clave": ["CLAVE", "PASSWORD_WIFI", "CLAVE_ONT"],
+            "mac": ["MAC", "MAC_ADDRESS", "PON_SN", "SERIAL"],
+            "instalation_date": ["INSTALATION_DATE", "FECHA_INSTALACION", "FECHA_ACTIVA"],
+            "tiempo": ["TIEMPO", "DURACION_CONTRATO", "MESES", "CONTRATO_MESES"],
+            "arrienda": ["ARRIENDA", "ARRIENDO"],
+            "cuenta": ["CUENTA", "NUM_CUENTA"],
+            "facturas": ["FACTURAS", "FACTURA", "NUM_FACTURA"],
+            "internet_payment": ["INTERNET_PAYMENT", "INTERNET PAYMENT", "PAGO_INTERNET"],
+            "app": ["APP", "USA_APP"],
+            "payment_date": ["PAYMENT_DATE", "PAYMENT DATE", "FECHA_PAGO"],
+            "client_payment_date": ["CLIENT_PAYMENT_DATE", "CLIENT PAYMENT DATE"],
+            "bank": ["BANK", "BANCO", "ENTIDAD_FINANCIERA"],
+            "cod": ["COD", "CODIGO_PAGO", "CODIGO_CLIENTE"],
+            "plus": ["PLUS", "ADICIONAL_MENSUAL", "TV_PLUS", "VALOR_PLUS"],
+            "bank_plus": ["BANK_PLUS", "BANCO_TV"],
+            "adicional": ["ADICIONAL", "MONTO_ADICIONAL", "CARGO_EXTRA"],
+            "comentarios": ["COMENTARIOS", "NOTAS", "OBS", "DESCRIPCION"],
+            "observaciones": ["OBSERVACIONES"],
+            "notas_pago": ["NOTAS_PAGO", "OBSERVACION_PAGO"],
+            "tercera_edad": ["TERCERA_EDAD", "DISCAPACIDAD", "MAYOR_EDAD"],
+            "precio_plan_especial": ["PRECIO_PLAN_ESPECIAL", "VALOR_ESPECIAL", "TARIFA_REDUCIDA"],
+            "saldo": ["SALDO", "DEUDA", "PENDIENTE", "SALDO_ANTERIOR"],
+            "pago_mensual": ["PAGO_MENSUAL", "COBRO_MES", "RECAUDACION"],
+            "iptv_activar": ["IPTV_ACTIVAR", "ACTIVAR_IPTV"],
+            "iptv_user": ["IPTV_USER", "USUARIO_IPTV"],
+            "iptv_pass": ["IPTV_PASS", "CLAVE_IPTV"],
+            "iptv_bouquets": ["IPTV_BOUQUETS", "PAQUETES_IPTV"],
+            "iptv_exp_date": ["IPTV_EXP_DATE", "EXPIRACION_IPTV"],
+            "iptv_max_conn": ["IPTV_MAX_CONN", "PANTALLAS_IPTV", "CONEXIONES"],
+            "iptv_outputs": ["IPTV_OUTPUTS", "SALIDAS_IPTV"],
+            "iptv_notes": ["IPTV_NOTES", "NOTAS_IPTV"],
+            "iptv_member_id": ["IPTV_MEMBER_ID", "ID_SOCIO_IPTV"]
+        }
+
+        # Tipos de campos para conversión correcta
+        NUMERIC_FIELDS = {"saldo", "precio_plan_especial", "pago_mensual", "total_pago", "plus_pagado", "adicional_pagado"}
+        INT_FIELDS = {"id", "iptv_max_conn", "iptv_member_id"}
+        BOOL_FIELDS = {"tercera_edad", "iptv_activar"}
+
+        def get_raw_val(row, aliases):
             for alias in aliases:
-                if alias in columnas_df:
-                    val = row[columnas_df[alias]]
+                a_up = alias.upper().strip()
+                if a_up in columnas_df:
+                    val = row[columnas_df[a_up]]
                     if pd.notnull(val):
-                        return str(val).strip()
+                        return val
             return None
-            
+
+        # Optimización: Obtener IDs existentes UNA SOLA VEZ antes del bucle
+        ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
+        ids_existentes = set(i[0] for i in ids_query)
+        proximo_id_hueco = 1
+
         for index, row in df.iterrows():
             try:
-                nombre = get_val(row, ["NOMBRE", "NOMBRES", "CLIENTE"])
-                if not nombre:
+                # Validar nombre (Obligatorio)
+                nombre_raw = get_raw_val(row, FIELD_MAPPING["nombre"])
+                if not nombre_raw:
                     continue
+                nombre = str(nombre_raw).strip()
                     
-                cedula = get_val(row, ["CEDULA", "CI", "RUC", "IDENTIFICACION"]) or ""
-                celular = get_val(row, ["CELULAR", "TELEFONO", "MOVIL"]) or ""
-                correo = get_val(row, ["CORREO", "EMAIL"]) or ""
-                direccion = get_val(row, ["DIRECCION", "DIR"]) or ""
-                nodo = get_val(row, ["NODO", "SECTOR"]) or ""
-                parroquia = get_val(row, ["PARROQUIA", "CIUDAD"]) or ""
-                plan = get_val(row, ["PLAN", "VELOCIDAD"]) or ""
-                estado = get_val(row, ["ESTADO", "STATUS"]) or "Pendiente"
+                cedula_raw = get_raw_val(row, FIELD_MAPPING["cedula"])
+                cedula = str(cedula_raw).strip() if cedula_raw else None
                 
-                # Check if it exists by Cedula or Nombre
+                # Buscar cliente por Cédula o por Nombre
                 cliente = None
                 if cedula:
                     cliente = db.query(models.Cliente).filter(models.Cliente.cedula == cedula).first()
                 if not cliente:
                     cliente = db.query(models.Cliente).filter(models.Cliente.nombre == nombre).first()
+                
+                if not cliente:
+                    # Lógica de IDs para llenar huecos de forma eficiente
+                    while proximo_id_hueco in ids_existentes:
+                        proximo_id_hueco += 1
                     
-                if cliente:
-                    # Update
-                    cliente.celular = celular if celular else cliente.celular
-                    cliente.correo = correo if correo else cliente.correo
-                    cliente.direccion = direccion if direccion else cliente.direccion
-                    cliente.nodo = nodo if nodo else cliente.nodo
-                    cliente.parroquia = parroquia if parroquia else cliente.parroquia
-                    cliente.plan = plan if plan else cliente.plan
-                    count_actualizados += 1
-                else:
-                    # Lógica para reutilizar IDs: Encontrar hueco disponible
-                    ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
-                    ids = [i[0] for i in ids_query]
-                    
-                    nuevo_id = 1
-                    for current_id in ids:
-                        if current_id == nuevo_id:
-                            nuevo_id += 1
-                        elif current_id > nuevo_id:
-                            break
-                            
-                    nuevo_cliente = models.Cliente(
-                        id=nuevo_id,
-                        nombre=nombre,
-                        cedula=cedula,
-                        celular=celular,
-                        correo=correo,
-                        direccion=direccion,
-                        nodo=nodo,
-                        parroquia=parroquia,
-                        plan=plan,
-                        estado=estado
-                    )
-                    db.add(nuevo_cliente)
-                    db.commit()
+                    cliente = models.Cliente(id=proximo_id_hueco, nombre=nombre)
+                    ids_existentes.add(proximo_id_hueco)
+                    db.add(cliente)
                     count_nuevos += 1
+                else:
+                    count_actualizados += 1
+
+                # Mapear todos los campos del Excel al modelo
+                for field, aliases in FIELD_MAPPING.items():
+                    val = get_raw_val(row, aliases)
+                    if val is None:
+                        continue
                     
+                    if field in NUMERIC_FIELDS:
+                        setattr(cliente, field, try_float(val))
+                    elif field in INT_FIELDS:
+                        try:
+                            setattr(cliente, field, int(float(val)))
+                        except:
+                            pass
+                    elif field in BOOL_FIELDS:
+                        if isinstance(val, bool):
+                            setattr(cliente, field, val)
+                        else:
+                            s_val = str(val).upper().strip()
+                            setattr(cliente, field, s_val in ["SI", "S", "TRUE", "1", "ACTIVO", "YES"])
+                    elif field == "mac":
+                        # Sanitizar MAC: solo letras y números en mayúsculas
+                        import re
+                        mac_clean = re.sub(r'[^a-zA-Z0-9]', '', str(val)).upper()
+                        cliente.mac = mac_clean
+                    else:
+                        # Texto / String
+                        setattr(cliente, field, str(val).strip())
+                
+                # Recalcular balances (Importante para que total_pago sea correcto)
+                sync_cliente_balances(cliente, db)
+                
+                # Commit individual por cada cliente procesado exitosamente
+                db.commit()
+
             except Exception as e:
                 db.rollback()
                 errores += 1
+                import traceback
+                error_detail = str(e)
+                # Si el error es muy largo, lo recortamos
+                if len(error_detail) > 200:
+                    error_detail = error_detail[:200] + "..."
+                error_msg = f"Fila {index + 2} ({nombre if 'nombre' in locals() else 'S/N'}): {error_detail}"
+                print(f"Error procesando: {error_msg}")
+                # Log traceback completo a la consola para depuración profunda
+                traceback.print_exc()
+                detalles_errores.append(error_msg)
                 
-        db.commit()
-        return {"message": f"Importación exitosa. {count_nuevos} nuevos, {count_actualizados} actualizados. {errores} errores en filas."}
+        return {
+            "message": f"Importación completada. {count_nuevos} nuevos, {count_actualizados} actualizados, {errores} errores.",
+            "nuevos": count_nuevos,
+            "actualizados": count_actualizados,
+            "errores": errores,
+            "total_procesados": len(df),
+            "detalles": detalles_errores[:50] # Mostramos hasta 50 errores para mejor diagnóstico
+        }
+        
     except Exception as e:
+        db.rollback()
         import traceback
         print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error al procesar el archivo Excel: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error crítico procesando Excel: {str(e)}")
+

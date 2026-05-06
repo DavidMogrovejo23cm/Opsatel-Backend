@@ -43,9 +43,13 @@ def sync_schema():
                     # Si ya existe, comprobamos si necesitamos ampliarla (ej: de 50 a 1000)
                     db_col = db_columns_info[column.name]
                     model_length = getattr(column.type, 'length', None)
-                    db_length = db_col.get('length')
+                    
+                    # Para Postgres/SQLAlchemy, el largo puede estar en col['type'].length o col['length']
+                    db_length = getattr(db_col['type'], 'length', None)
+                    if db_length is None:
+                        db_length = db_col.get('length')
 
-                    if model_length and db_length and model_length > db_length:
+                    if model_length and db_length and int(model_length) > int(db_length):
                         print(f"Detectada necesidad de ampliación en {table_name}.{column.name}: {db_length} -> {model_length}")
                         try:
                             if is_postgres:
