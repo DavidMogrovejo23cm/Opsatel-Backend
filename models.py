@@ -460,3 +460,12 @@ class GastoProyecto(Base):
     valor = Column(Numeric(precision=10, scale=2), default=0.00)
     pendiente = Column(Boolean, default=False)  # True = Pendiente de pago
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class Colchon(Base):
+    """Modelo para el 'Colchón' (Fondo de reserva/ahorro) solicitado por el usuario."""
+    __tablename__ = "colchon_balance"
+    id = Column(Integer, primary_key=True, index=True)
+    descripcion = Column(String(255), nullable=False)
+    monto = Column(Numeric(precision=10, scale=2), default=0.00)
+    fecha = Column(String(50))  # YYYY-MM-DD
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)

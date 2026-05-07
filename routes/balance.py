@@ -84,6 +84,16 @@ class GastoProyectoUpdate(BaseModel):
     valor: Optional[float] = None
     pendiente: Optional[bool] = None
 
+class ColchonCreate(BaseModel):
+    descripcion: str
+    monto: float
+    fecha: str
+
+class ColchonUpdate(BaseModel):
+    descripcion: Optional[str] = None
+    monto: Optional[float] = None
+    fecha: Optional[str] = None
+
 
 # ====================================================================
 # EGRESOS CRUD
@@ -284,6 +294,45 @@ def eliminar_gasto_proyecto(proyecto_id: int, gasto_id: int, db: Session = Depen
 
 
 # ====================================================================
+# COLCHON CRUD
+# ====================================================================
+
+@router.get("/colchon", response_model=List[dict])
+def listar_colchon(db: Session = Depends(get_db)):
+    return [
+        {"id": c.id, "descripcion": c.descripcion, "monto": float(c.monto), "fecha": c.fecha}
+        for c in db.query(models.Colchon).order_by(models.Colchon.fecha.desc()).all()
+    ]
+
+@router.post("/colchon", dependencies=[Depends(require_role(["administrador"]))])
+def crear_colchon(data: ColchonCreate, db: Session = Depends(get_db)):
+    obj = models.Colchon(**data.dict())
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+@router.patch("/colchon/{id}", dependencies=[Depends(require_role(["administrador"]))])
+def actualizar_colchon(id: int, data: ColchonUpdate, db: Session = Depends(get_db)):
+    obj = db.query(models.Colchon).filter(models.Colchon.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Registro de colchón no encontrado")
+    for k, v in data.dict(exclude_none=True).items():
+        setattr(obj, k, v)
+    db.commit()
+    return {"message": "Colchón actualizado"}
+
+@router.delete("/colchon/{id}", dependencies=[Depends(require_role(["administrador"]))])
+def eliminar_colchon(id: int, db: Session = Depends(get_db)):
+    obj = db.query(models.Colchon).filter(models.Colchon.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Registro de colchón no encontrado")
+    db.delete(obj)
+    db.commit()
+    return {"message": "Colchón eliminado"}
+
+
+# ====================================================================
 # REPORTE MENSUAL
 # ====================================================================
 
@@ -346,6 +395,10 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
     proyectos_activos = [p for p in proyectos if p.fecha_inicio[:7] <= mes and (not p.fecha_fin or p.fecha_fin[:7] >= mes)]
     total_proyectos = sum(float(p.monto_invertido or 0) for p in proyectos_activos)
 
+    # Colchon total (histórico)
+    colchones = db.query(models.Colchon).all()
+    total_colchon = sum(float(c.monto or 0) for c in colchones)
+
     balance_neto = total_ingresos - total_egresos - total_proyectos
 
     return {
@@ -375,6 +428,10 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
                 for p in proyectos_activos
             ],
             "total": total_proyectos,
+        },
+        "colchon": {
+            "lista": [{"id": c.id, "descripcion": c.descripcion, "monto": float(c.monto), "fecha": c.fecha} for c in colchones],
+            "total": total_colchon
         },
         "balance_neto": balance_neto,
     }
