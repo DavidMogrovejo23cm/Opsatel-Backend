@@ -1,4 +1,4 @@
-from check_data import engine
+from database import engine
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 import os
 import shutil

@@ -6,13 +6,29 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import engine, Base
 import models
 import os
-from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance
-import rutas_configuraciones
 from sync_db import sync_schema
 from force_fix import force_fix_columns
-
 # Iniciar App
 app = FastAPI(title="ISP Management API")
+
+# Función para inicializar la base de datos de forma segura
+def init_db():
+    try:
+        print("Sincronizando esquema...")
+        sync_schema() 
+        print("Aplicando parches de columnas...")
+        force_fix_columns() 
+        print("Creando tablas si no existen...")
+        Base.metadata.create_all(bind=engine)
+        print("Base de datos lista.")
+    except Exception as e:
+        print(f"Error inicializando base de datos: {e}")
+
+# Ejecutar inicialización ANTES de importar rutas
+init_db()
+
+from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance
+import rutas_configuraciones
 
 # ========================================================================
 # CORS HEADERS - Aplicar en TODAS las respuestas incluyendo errores 500
@@ -54,21 +70,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
 async def favicon():
     return Response(status_code=204)
 
-# Función para inicializar la base de datos de forma segura
-def init_db():
-    try:
-        print("Sincronizando esquema...")
-        sync_schema() 
-        print("Aplicando parches de columnas...")
-        force_fix_columns() 
-        print("Creando tablas si no existen...")
-        Base.metadata.create_all(bind=engine)
-        print("Base de datos lista.")
-    except Exception as e:
-        print(f"Error inicializando base de datos: {e}")
-
-# Ejecutar inicialización
-init_db()
+# Rutas ya importadas arriba
 
 app.add_middleware(
     CORSMiddleware,
