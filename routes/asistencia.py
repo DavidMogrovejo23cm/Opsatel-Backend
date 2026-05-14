@@ -3,10 +3,14 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 import models, schemas
 from database import get_db
-from datetime import datetime
+from datetime import datetime, timedelta
 from .auth import get_current_user, require_role
 
 router = APIRouter(prefix="/asistencia", tags=["asistencia"])
+
+def get_ecuador_time():
+    # Ecuador es UTC-5 fijo (sin horario de verano)
+    return datetime.utcnow() - timedelta(hours=5)
 
 @router.post("/registrar", response_model=schemas.AsistenciaResponse)
 def registrar_asistencia(
@@ -15,7 +19,8 @@ def registrar_asistencia(
     current_user: models.Usuario = Depends(get_current_user)
 ):
     # Verificar si ya registró asistencia hoy
-    hoy = datetime.now().strftime("%Y-%m-%d")
+    ahora_ec = get_ecuador_time()
+    hoy = ahora_ec.strftime("%Y-%m-%d")
     existente = db.query(models.Asistencia).filter(
         models.Asistencia.usuario_id == current_user.id,
         models.Asistencia.fecha == hoy
@@ -28,7 +33,7 @@ def registrar_asistencia(
         usuario_id=current_user.id,
         nombre_usuario=current_user.username,
         fecha=hoy,
-        hora_entrada=datetime.now().strftime("%H:%M:%S"),
+        hora_entrada=data.hora_dispositivo if data.hora_dispositivo else ahora_ec.strftime("%H:%M:%S"),
         ubicacion=data.ubicacion,
         distancia_metros=data.distancia_metros,
         dispositivo_info=data.dispositivo_info,

@@ -603,6 +603,7 @@ class AsistenciaCreate(BaseModel):
     distancia_metros: float
     dispositivo_info: Optional[str] = None
     biometria_validada: bool = False
+    hora_dispositivo: Optional[str] = None
 
 class AsistenciaResponse(BaseModel):
     id: int
