@@ -469,3 +469,18 @@ class Colchon(Base):
     monto = Column(Numeric(precision=10, scale=2), default=0.00)
     fecha = Column(String(50))  # YYYY-MM-DD
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class Asistencia(Base):
+    __tablename__ = "asistencias"
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
+    nombre_usuario = Column(String(100))
+    fecha = Column(String(50)) # YYYY-MM-DD
+    hora_entrada = Column(String(50)) # HH:MM:SS
+    ubicacion = Column(String(255)) # "lat, lng"
+    distancia_metros = Column(Float)
+    dispositivo_info = Column(String(255))
+    biometria_validada = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    usuario = relationship("Usuario")

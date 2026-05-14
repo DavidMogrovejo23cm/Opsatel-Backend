@@ -246,7 +246,7 @@ def obtener_siguiente_valor_tecnico(
         ip_offset += 1
 
     # 4. Parámetros Técnicos Diferenciados
-    mac_clean = re.sub(r'[^a-zA-Z0-9]', '', mac).upper()
+    mac_clean = re.sub(r'[^a-zA-Z0-9]', '', str(mac or "")).upper()
     
     if is_sayausi:
         # SAYAUSI: Perfiles 400+, VLAN 400+, GPON 0/1/x
@@ -306,7 +306,7 @@ def obtener_cliente(id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return cliente
 
-@router.patch("/{id}", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+@router.patch("/{id}", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: Session = Depends(get_db)):
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
     if not cliente:
@@ -702,17 +702,6 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     
     return {"message": "Reporte generado. Campos de pago vaciados (saldos intactos).", "reporte_id": nuevo_reporte.id, "archivo": nuevo_reporte.archivo_ruta_excel}
 
-@router.patch("/{id}", response_model=schemas.ClienteResponse, dependencies=[Depends(require_role(["administrador", "secretario"]))])
-def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: Session = Depends(get_db)):
-    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
-    if not cliente:
-        raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    for var, value in vars(data).items():
-        if value is not None:
-            setattr(cliente, var, value)
-    db.commit()
-    db.refresh(cliente)
-    return cliente
 
 
 @router.delete("/{id}", dependencies=[Depends(require_role(["administrador"]))])

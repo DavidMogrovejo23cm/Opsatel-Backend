@@ -597,3 +597,23 @@ class CallCenterTicketResponse(CallCenterTicketBase):
 
     class Config:
         from_attributes = True
+
+class AsistenciaCreate(BaseModel):
+    ubicacion: str
+    distancia_metros: float
+    dispositivo_info: Optional[str] = None
+    biometria_validada: bool = False
+
+class AsistenciaResponse(BaseModel):
+    id: int
+    usuario_id: int
+    nombre_usuario: str
+    fecha: str
+    hora_entrada: str
+    ubicacion: str
+    distancia_metros: float
+    biometria_validada: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
