@@ -613,8 +613,20 @@ class AsistenciaResponse(BaseModel):
     hora_entrada: str
     ubicacion: str
     distancia_metros: float
+    hora_salida: Optional[str] = None
+    ubicacion_salida: Optional[str] = None
+    distancia_metros_salida: Optional[float] = None
     biometria_validada: bool
+    biometria_salida_validada: bool = False
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+class AsistenciaStatusResponse(BaseModel):
+    ha_entrado: bool
+    ha_salido: bool
+    hora_entrada: Optional[str] = None
+    asistencia_id: Optional[int] = None
+    puede_salir: bool = False
+    mensaje_restriccion: Optional[str] = None

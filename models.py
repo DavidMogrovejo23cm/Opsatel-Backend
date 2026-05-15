@@ -479,6 +479,13 @@ class Asistencia(Base):
     hora_entrada = Column(String(50)) # HH:MM:SS
     ubicacion = Column(String(255)) # "lat, lng"
     distancia_metros = Column(Float)
+    
+    # Salida
+    hora_salida = Column(String(50)) # HH:MM:SS
+    ubicacion_salida = Column(String(255)) # "lat, lng"
+    distancia_metros_salida = Column(Float)
+    biometria_salida_validada = Column(Boolean, default=False)
+    
     dispositivo_info = Column(String(255))
     biometria_validada = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
