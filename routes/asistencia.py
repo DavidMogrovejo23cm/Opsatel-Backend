@@ -73,7 +73,7 @@ def estado_asistencia_hoy(
         puede_salir = diff.total_seconds() >= restriccion_segundos
         
         segundos_restantes = round(restriccion_segundos - diff.total_seconds())
-        mensaje = None if puede_salir else f"Deben pasar 2 min desde la entrada. Faltan {segundos_restantes} seg."
+        mensaje = None if puede_salir else "Aún no acabas tu jornada laboral"
     except:
         puede_salir = True
         mensaje = None
@@ -109,8 +109,8 @@ def registrar_salida(
     # Validar 2 minutos (antes 4 horas)
     try:
         hora_ent = datetime.strptime(f"{hoy} {asistencia.hora_entrada}", "%Y-%m-%d %H:%M:%S")
-        if (ahora_ec - hora_ent).total_seconds() < 120:
-            raise HTTPException(status_code=400, detail="No han pasado 2 minutos desde tu entrada.")
+        if (ahora_ec - hora_ent).total_seconds() < 14400:
+            raise HTTPException(status_code=400, detail="Aún no acabas tu jornada laboral")
     except Exception as e:
         pass # Si falla el parseo por algún motivo, permitimos el paso
 
