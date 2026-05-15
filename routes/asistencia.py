@@ -65,14 +65,15 @@ def estado_asistencia_hoy(
             "puede_salir": False
         }
 
-    # Verificar restricción de 4 horas
+    # Verificar restricción de 2 minutos (antes 4 horas)
     try:
         hora_ent = datetime.strptime(f"{hoy} {asistencia.hora_entrada}", "%Y-%m-%d %H:%M:%S")
         diff = ahora_ec - hora_ent
-        puede_salir = diff.total_seconds() >= (4 * 3600)
+        restriccion_segundos = 120 # 2 minutos para pruebas
+        puede_salir = diff.total_seconds() >= restriccion_segundos
         
-        minutos_restantes = round((4*3600 - diff.total_seconds())/60)
-        mensaje = None if puede_salir else f"Deben pasar 4 horas desde la entrada. Faltan {minutos_restantes} min."
+        segundos_restantes = round(restriccion_segundos - diff.total_seconds())
+        mensaje = None if puede_salir else f"Deben pasar 2 min desde la entrada. Faltan {segundos_restantes} seg."
     except:
         puede_salir = True
         mensaje = None
@@ -105,11 +106,11 @@ def registrar_salida(
     if asistencia.hora_salida:
         raise HTTPException(status_code=400, detail="Ya has registrado salida hoy.")
 
-    # Validar 4 horas
+    # Validar 2 minutos (antes 4 horas)
     try:
         hora_ent = datetime.strptime(f"{hoy} {asistencia.hora_entrada}", "%Y-%m-%d %H:%M:%S")
-        if (ahora_ec - hora_ent).total_seconds() < (4 * 3600):
-            raise HTTPException(status_code=400, detail="No han pasado 4 horas desde tu entrada.")
+        if (ahora_ec - hora_ent).total_seconds() < 120:
+            raise HTTPException(status_code=400, detail="No han pasado 2 minutos desde tu entrada.")
     except Exception as e:
         pass # Si falla el parseo por algún motivo, permitimos el paso
 

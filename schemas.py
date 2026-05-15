@@ -617,7 +617,7 @@ class AsistenciaResponse(BaseModel):
     ubicacion_salida: Optional[str] = None
     distancia_metros_salida: Optional[float] = None
     biometria_validada: bool
-    biometria_salida_validada: bool = False
+    biometria_salida_validada: Optional[bool] = False
     created_at: datetime
 
     class Config:

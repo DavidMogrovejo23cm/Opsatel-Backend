@@ -24,6 +24,15 @@ def force_fix_columns():
         ("monto_adicional", "DECIMAL(10,2)")
     ]
 
+    # 3. Tabla Asistencias
+    table_asistencias = "asistencias"
+    columns_asistencias = [
+        ("hora_salida", "VARCHAR(50)"),
+        ("ubicacion_salida", "VARCHAR(255)"),
+        ("distancia_metros_salida", "FLOAT"),
+        ("biometria_salida_validada", "BOOLEAN")
+    ]
+
     def process_table(table_name, columns):
         inspector = inspect(engine)
         if not inspector.has_table(table_name):
@@ -48,6 +57,7 @@ def force_fix_columns():
 
     process_table(table_clientes, columns_clientes)
     process_table(table_pagos, columns_pagos)
+    process_table(table_asistencias, columns_asistencias)
     
     print("Reparación terminada.")
 
