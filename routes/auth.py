@@ -80,6 +80,9 @@ def eliminar_usuario(usuario_id: int, db: Session = Depends(get_db)):
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
+    # Eliminar registros relacionados para evitar errores de Foreign Key (Constraint)
+    db.query(models.Asistencia).filter(models.Asistencia.usuario_id == usuario_id).delete()
+    
     db.delete(db_user)
     db.commit()
     return {"message": "Usuario eliminado correctamente"}
