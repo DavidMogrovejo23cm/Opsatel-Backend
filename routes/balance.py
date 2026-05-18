@@ -492,3 +492,48 @@ def reporte_anual(anio: int, db: Session = Depends(get_db)):
             for p in proyectos_all
         ],
     }
+
+
+# ====================================================================
+# HISTORIAL DE PAGOS / DEUDAS DE CLIENTES
+# ====================================================================
+
+@router.get("/historial-clientes")
+def historial_clientes(db: Session = Depends(get_db)):
+    clientes = db.query(models.Cliente).all()
+    planes = {p.nombre: float(p.precio) for p in db.query(models.PlanInternet).all()}
+    
+    def try_float(v):
+        try:
+            return float(str(v or 0).replace("$", "").replace(",", ".").strip())
+        except:
+            return 0.0
+
+    res = []
+    for c in clientes:
+        # Se incluyen todos los clientes para mostrar el historial de pagos y deudas, 
+        # sin importar si están suspendidos o activos.
+            
+        tarifa_base = 0.0
+        if c.tercera_edad and c.precio_plan_especial is not None:
+            tarifa_base = try_float(c.precio_plan_especial)
+        elif c.plan in planes:
+            tarifa_base = planes[c.plan]
+            
+        plus = try_float(c.plus)
+        adicional = try_float(c.adicional)
+        tarifa_mensual = tarifa_base + plus + adicional
+        saldo = try_float(c.saldo)
+        
+        res.append({
+            "id": c.id,
+            "nombre": c.nombre,
+            "nodo": c.nodo,
+            "plan": c.plan,
+            "tarifa_mensual": tarifa_mensual,
+            "saldo_total": saldo,
+        })
+    
+    # Ordenar por los que más deben
+    res.sort(key=lambda x: x["saldo_total"], reverse=True)
+    return res
