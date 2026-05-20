@@ -566,6 +566,9 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
 
     # Si no existe reporte cerrado o es el mes actual en curso, lo generamos dinámicamente:
     clientes = db.query(models.Cliente).all()
+    planes = db.query(models.PlanInternet).all()
+    planes_precios = {p.nombre: float(p.precio) for p in planes}
+    planes_megas = {p.nombre: int(p.megas or 0) for p in planes}
     
     # ── HOJA 1: FACTURACIÓN CLIENTES ──
     month_num = parts[1] if len(parts) == 2 else "01"
@@ -583,7 +586,8 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         
         pago_mensual = float(c.pago_mensual or 0.00)
         confirmar = True if (has_factura and pago_mensual > 0) else False
-        megas_val = c.plan if (confirmar and c.plan) else "FALSE"
+        # Sacar megas reales del plan desde configuraciones
+        megas_val = f"{planes_megas.get(c.plan, 0)}MB" if (confirmar and c.plan and c.plan in planes_megas) else "FALSE"
         factura_val = fact_val if has_factura else "SIN FACTURA"
         
         data_clientes.append({
@@ -601,33 +605,84 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     df_clientes = pd.DataFrame(data_clientes)
 
     # ── HOJA 2: RESUMEN POR PLAN ──
-    planes = db.query(models.PlanInternet).all()
-    planes_precios = {p.nombre: float(p.precio) for p in planes}
-    
     pagos_todos = db.query(models.Pago).all()
     pagos_mes = [p for p in pagos_todos if str(p.fecha_pago)[:7] == mes]
     
-    pago_internet_por_cliente = {}
+    # Acumular pagos por cliente y por método de pago
+    pago_por_cliente = {}
+    pago_por_cliente_metodo = {}
     for p in pagos_mes:
         if p.cliente_id:
-            pago_internet_por_cliente[p.cliente_id] = pago_internet_por_cliente.get(p.cliente_id, 0.0) + float(p.monto_internet or 0.0)
+            monto_total_pago = float(p.monto_internet or 0) + float(p.monto_plus or 0) + float(p.monto_adicional or 0)
+            pago_por_cliente[p.cliente_id] = pago_por_cliente.get(p.cliente_id, 0.0) + monto_total_pago
+            metodo = (p.metodo_pago or "Efectivo").upper()
+            key = (p.cliente_id, metodo)
+            pago_por_cliente_metodo[key] = pago_por_cliente_metodo.get(key, 0.0) + monto_total_pago
             
     planes_nombres = sorted(list(set(c.plan for c in clientes if c.plan)))
     resumen_data = []
+    gran_total_clientes = 0
+    gran_total_estimado = 0.0
+    gran_total_efectivo = 0.0
+    gran_total_pichincha = 0.0
+    gran_total_jep = 0.0
+    gran_total_reunido = 0.0
+    
     for plan_nombre in planes_nombres:
         clientes_en_plan = [c for c in clientes if c.plan == plan_nombre and c.estado == "Activo"]
         cant_clientes = len(clientes_en_plan)
         precio_plan = planes_precios.get(plan_nombre, 0.0)
+        megas_plan = planes_megas.get(plan_nombre, 0)
         generacion_estimada = cant_clientes * precio_plan
-        total_reunido = sum(pago_internet_por_cliente.get(c.id, 0.0) for c in clientes if c.plan == plan_nombre)
+        
+        # Desglose por método de pago para este plan
+        efectivo_plan = 0.0
+        pichincha_plan = 0.0
+        jep_plan = 0.0
+        for c in clientes_en_plan:
+            for metodo_key, monto in pago_por_cliente_metodo.items():
+                cid, met = metodo_key
+                if cid == c.id:
+                    if "JEP" in met:
+                        jep_plan += monto
+                    elif "PICHINCHA" in met:
+                        pichincha_plan += monto
+                    else:
+                        efectivo_plan += monto
+        
+        total_reunido_plan = efectivo_plan + pichincha_plan + jep_plan
         
         resumen_data.append({
             "PLAN": plan_nombre,
+            "MEGAS": f"{megas_plan}MB",
             "CANTIDAD CLIENTES": cant_clientes,
             "PRECIO PLAN": precio_plan,
             "GENERACION ESTIMADA": round(generacion_estimada, 2),
-            "TOTAL REUNIDO INTERNET": round(total_reunido, 2)
+            "EFECTIVO": round(efectivo_plan, 2),
+            "PICHINCHA": round(pichincha_plan, 2),
+            "JEP": round(jep_plan, 2),
+            "TOTAL REUNIDO": round(total_reunido_plan, 2)
         })
+        
+        gran_total_clientes += cant_clientes
+        gran_total_estimado += generacion_estimada
+        gran_total_efectivo += efectivo_plan
+        gran_total_pichincha += pichincha_plan
+        gran_total_jep += jep_plan
+        gran_total_reunido += total_reunido_plan
+    
+    # Fila de TOTALES al final
+    resumen_data.append({
+        "PLAN": "TOTAL GENERAL",
+        "MEGAS": "",
+        "CANTIDAD CLIENTES": gran_total_clientes,
+        "PRECIO PLAN": "",
+        "GENERACION ESTIMADA": round(gran_total_estimado, 2),
+        "EFECTIVO": round(gran_total_efectivo, 2),
+        "PICHINCHA": round(gran_total_pichincha, 2),
+        "JEP": round(gran_total_jep, 2),
+        "TOTAL REUNIDO": round(gran_total_reunido, 2)
+    })
     df_resumen = pd.DataFrame(resumen_data)
 
     # ── HOJA 3: EGRESOS ──
