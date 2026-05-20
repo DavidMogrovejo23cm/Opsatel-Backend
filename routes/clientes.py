@@ -635,21 +635,22 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     clientes = db.query(models.Cliente).all()
     
     # ── HOJA 1: FACTURACIÓN CLIENTES ──
+    month_num = current_month.split("-")[1]
+    month_name_en = {
+        "01": "JANUARY", "02": "FEBRUARY", "03": "MARCH", "04": "APRIL",
+        "05": "MAY", "06": "JUNE", "07": "JULY", "08": "AUGUST",
+        "09": "SEPTEMBER", "10": "OCTOBER", "11": "NOVEMBER", "12": "DECEMBER"
+    }.get(month_num, "MONTH")
+
     data = []
     for c in clientes:
-        # Formatear ID como C01, C02, C03...
         id_str = f"C{c.id:02d}" if c.id is not None else ""
-        
         fact_val = str(c.facturas or "").strip()
         has_factura = bool(fact_val and fact_val.upper() != "NONE" and fact_val != "")
         
-        # CONFIRMAR es True si tiene factura y ha realizado algún pago este mes
         pago_mensual = float(c.pago_mensual or 0.00)
         confirmar = True if (has_factura and pago_mensual > 0) else False
-        
-        # MEGAS es el plan si se confirma el pago, si no "FALSE"
         megas_val = c.plan if (confirmar and c.plan) else "FALSE"
-        
         factura_val = fact_val if has_factura else "SIN FACTURA"
 
         data.append({
@@ -659,9 +660,10 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
             "CEL": c.celular or "",
             "PARISH": c.parroquia or "",
             "PLAN": c.plan or "",
-            "FACTURAS": factura_val,
+            f"FACT {month_name_en}": factura_val,
             "CONFIRMAR": confirmar,
-            "MEGAS": megas_val,
+            f"MEGAS {month_name_en}": megas_val,
+            "FACTURAS": factura_val,
         })
         
     df_clientes = pd.DataFrame(data)
@@ -679,13 +681,20 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
         if p.cliente_id:
             pago_internet_por_cliente[p.cliente_id] = pago_internet_por_cliente.get(p.cliente_id, 0.0) + float(p.monto_internet or 0.0)
             
+    # Obtener planes y precios
+    planes = db.query(models.PlanInternet).all()
+    planes_precios = {p.nombre: float(p.precio) for p in planes}
+    
     # Obtener planes únicos presentes en los clientes
     planes_nombres = sorted(list(set(c.plan for c in clientes if c.plan)))
     
+    resumen_data = []
     for plan_nombre in planes_nombres:
         # Clientes activos con este plan
         clientes_en_plan = [c for c in clientes if c.plan == plan_nombre and c.estado == "Activo"]
         cant_clientes = len(clientes_en_plan)
+        precio_plan = planes_precios.get(plan_nombre, 0.0)
+        generacion_estimada = cant_clientes * precio_plan
         
         # Total reunido por plan de internet (sumando pagos_internet del mes)
         total_reunido = sum(pago_internet_por_cliente.get(c.id, 0.0) for c in clientes if c.plan == plan_nombre)
@@ -693,86 +702,31 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
         resumen_data.append({
             "PLAN": plan_nombre,
             "CANTIDAD CLIENTES": cant_clientes,
+            "PRECIO PLAN": precio_plan,
+            "GENERACION ESTIMADA": round(generacion_estimada, 2),
             "TOTAL REUNIDO INTERNET": round(total_reunido, 2)
         })
         
     df_resumen = pd.DataFrame(resumen_data)
     
-    # ── HOJA 3: DETALLE DE INGRESOS ──
-    ingresos_data = []
-    
-    # 1. Pagos de Clientes de Internet
-    for p in pagos_mes_actual:
-        cliente_nombre = ""
-        if p.cliente:
-            cliente_nombre = p.cliente.nombre
-        else:
-            c_db = db.query(models.Cliente).filter(models.Cliente.id == p.cliente_id).first()
-            if c_db:
-                cliente_nombre = c_db.nombre
-                
-        ingresos_data.append({
-            "TIPO INGRESO": "Cliente Internet",
-            "CLIENTE/CONCEPTO": cliente_nombre or f"Cliente ID: {p.cliente_id}",
-            "MONTO TOTAL": float(p.monto or 0.0),
-            "MONTO INTERNET": float(p.monto_internet or 0.0),
-            "MONTO IPTV": float(p.monto_plus or 0.0),
-            "MONTO ADICIONAL": float(p.monto_adicional or 0.0),
-            "METODO/BANCO": p.metodo_pago or "",
-            "FECHA": str(p.fecha_pago)[:10] if p.fecha_pago else "",
-            "REFERENCIA": p.referencia or ""
-        })
-        
-    # 2. Pagos de Clientes Extras
-    month_key = {
-        "01":"enero","02":"febrero","03":"marzo","04":"abril",
-        "05":"mayo","06":"junio","07":"julio","08":"agosto",
-        "09":"septiembre","10":"octubre","11":"noviembre","12":"diciembre"
-    }.get(current_month.split("-")[1], "")
-    
-    if month_key:
-        extras = db.query(models.ClienteExtra).all()
-        for e in extras:
-            pago_extra = float(getattr(e, f"{month_key}_pago", 0) or 0)
-            banco_extra = getattr(e, f"{month_key}_banco", "")
-            fecha_extra = getattr(e, f"{month_key}_fecha_pago", "")
-            cod_extra = getattr(e, f"{month_key}_cod", "")
-            
-            if pago_extra > 0:
-                ingresos_data.append({
-                    "TIPO INGRESO": "Cliente Extra",
-                    "CLIENTE/CONCEPTO": e.nombre_cliente or "",
-                    "MONTO TOTAL": pago_extra,
-                    "MONTO INTERNET": 0.0,
-                    "MONTO IPTV": 0.0,
-                    "MONTO ADICIONAL": 0.0,
-                    "METODO/BANCO": banco_extra or "",
-                    "FECHA": fecha_extra or "",
-                    "REFERENCIA": cod_extra or ""
-                })
-                
-    df_ingresos = pd.DataFrame(ingresos_data)
-    if df_ingresos.empty:
-        df_ingresos = pd.DataFrame(columns=["TIPO INGRESO", "CLIENTE/CONCEPTO", "MONTO TOTAL", "MONTO INTERNET", "MONTO IPTV", "MONTO ADICIONAL", "METODO/BANCO", "FECHA", "REFERENCIA"])
-
-    # ── HOJA 4: DETALLE DE EGRESOS ──
+    # ── HOJA 3: EGRESOS ──
     egresos_mes = db.query(models.Egreso).filter(models.Egreso.mes == current_month).all()
     egresos_data = []
     for eg in egresos_mes:
         egresos_data.append({
+            "FECHA": eg.fecha or "",
             "DESCRIPCION": eg.descripcion,
             "CATEGORIA": eg.categoria,
             "SUBCATEGORIA": eg.subcategoria or "",
             "METODO PAGO": eg.metodo_pago or "Efectivo",
             "MONTO": float(eg.monto or 0.0),
-            "FECHA": eg.fecha or "",
-            "NOTAS": eg.notes or "" if hasattr(eg, "notes") else (eg.notas or "")
+            "NOTAS": eg.notas or ""
         })
     df_egresos = pd.DataFrame(egresos_data)
     if df_egresos.empty:
-        df_egresos = pd.DataFrame(columns=["DESCRIPCION", "CATEGORIA", "SUBCATEGORIA", "METODO PAGO", "MONTO", "FECHA", "NOTAS"])
+        df_egresos = pd.DataFrame(columns=["FECHA", "DESCRIPCION", "CATEGORIA", "SUBCATEGORIA", "METODO PAGO", "MONTO", "NOTAS"])
 
-    # ── HOJA 5: INVERSION PROYECTOS ──
+    # ── HOJA 4: PROYECTOS ──
     proyectos = db.query(models.Proyecto).all()
     proyectos_data = []
     for p in proyectos:
@@ -789,7 +743,7 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     if df_proyectos.empty:
         df_proyectos = pd.DataFrame(columns=["NOMBRE PROYECTO", "DESCRIPCION", "MONTO TOTAL PRESUPUESTO", "MONTO INVERTIDO", "ESTADO", "FECHA INICIO", "FECHA FIN"])
 
-    # ── HOJA 6: COLCHON DE RESERVA ──
+    # ── HOJA 5: COLCHÓN DE LA EMPRESA ──
     colchon = db.query(models.Colchon).all()
     colchon_data = []
     for c in colchon:
@@ -809,14 +763,13 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     file_name = f"Reporte_{mes_actual}_{timestamp}.xlsx"
     file_path = os.path.join("rutas_reportes", file_name)
     
-    # Escribir a Excel con múltiples hojas
+    # Escribir a Excel con 5 hojas ordenadas
     with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
         df_clientes.to_excel(writer, sheet_name="Facturación Clientes", index=False)
         df_resumen.to_excel(writer, sheet_name="Resumen por Plan", index=False)
-        df_ingresos.to_excel(writer, sheet_name="Detalle de Ingresos", index=False)
-        df_egresos.to_excel(writer, sheet_name="Detalle de Egresos", index=False)
-        df_proyectos.to_excel(writer, sheet_name="Inversión Proyectos", index=False)
-        df_colchon.to_excel(writer, sheet_name="Colchón de Reserva", index=False)
+        df_egresos.to_excel(writer, sheet_name="Egresos", index=False)
+        df_proyectos.to_excel(writer, sheet_name="Proyectos", index=False)
+        df_colchon.to_excel(writer, sheet_name="Colchón de la Empresa", index=False)
     
     nuevo_reporte = models.ReporteMensual(
         mes_anio=mes_actual,

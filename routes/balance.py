@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -6,6 +7,9 @@ from database import get_db
 from .auth import require_role
 import models
 import datetime
+import pandas as pd
+import tempfile
+import os
 
 router = APIRouter(prefix="/balance", tags=["balance"])
 
@@ -540,3 +544,152 @@ def historial_clientes(db: Session = Depends(get_db)):
     # Ordenar por los que más deben
     res.sort(key=lambda x: x["saldo_total"], reverse=True)
     return res
+
+@router.get("/reporte-excel")
+def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
+    parts = mes.split("-")
+    if len(parts) == 2:
+        mes_anio_buscar = f"{parts[1]}-{parts[0]}"
+    else:
+        mes_anio_buscar = mes
+
+    # Si existe un reporte mensual guardado para este mes ya cerrado, lo servimos directamente
+    reporte_guardado = db.query(models.ReporteMensual).filter(models.ReporteMensual.mes_anio == mes_anio_buscar).first()
+    if reporte_guardado and reporte_guardado.archivo_ruta_excel:
+        path_rel = reporte_guardado.archivo_ruta_excel.lstrip("/")
+        if os.path.exists(path_rel):
+            return FileResponse(
+                path=path_rel,
+                filename=os.path.basename(path_rel),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+    # Si no existe reporte cerrado o es el mes actual en curso, lo generamos dinámicamente:
+    clientes = db.query(models.Cliente).all()
+    
+    # ── HOJA 1: FACTURACIÓN CLIENTES ──
+    month_num = parts[1] if len(parts) == 2 else "01"
+    month_name_en = {
+        "01": "JANUARY", "02": "FEBRUARY", "03": "MARCH", "04": "APRIL",
+        "05": "MAY", "06": "JUNE", "07": "JULY", "08": "AUGUST",
+        "09": "SEPTEMBER", "10": "OCTOBER", "11": "NOVEMBER", "12": "DECEMBER"
+    }.get(month_num, "MONTH")
+
+    data_clientes = []
+    for c in clientes:
+        id_str = f"C{c.id:02d}" if c.id is not None else ""
+        fact_val = str(c.facturas or "").strip()
+        has_factura = bool(fact_val and fact_val.upper() != "NONE" and fact_val != "")
+        
+        pago_mensual = float(c.pago_mensual or 0.00)
+        confirmar = True if (has_factura and pago_mensual > 0) else False
+        megas_val = c.plan if (confirmar and c.plan) else "FALSE"
+        factura_val = fact_val if has_factura else "SIN FACTURA"
+        
+        data_clientes.append({
+            "ID": id_str,
+            "NAME": c.nombre or "",
+            "DIRECTION": c.direccion or "",
+            "CEL": c.celular or "",
+            "PARISH": c.parroquia or "",
+            "PLAN": c.plan or "",
+            f"FACT {month_name_en}": factura_val,
+            "CONFIRMAR": confirmar,
+            f"MEGAS {month_name_en}": megas_val,
+            "FACTURAS": factura_val
+        })
+    df_clientes = pd.DataFrame(data_clientes)
+
+    # ── HOJA 2: RESUMEN POR PLAN ──
+    planes = db.query(models.PlanInternet).all()
+    planes_precios = {p.nombre: float(p.precio) for p in planes}
+    
+    pagos_todos = db.query(models.Pago).all()
+    pagos_mes = [p for p in pagos_todos if str(p.fecha_pago)[:7] == mes]
+    
+    pago_internet_por_cliente = {}
+    for p in pagos_mes:
+        if p.cliente_id:
+            pago_internet_por_cliente[p.cliente_id] = pago_internet_por_cliente.get(p.cliente_id, 0.0) + float(p.monto_internet or 0.0)
+            
+    planes_nombres = sorted(list(set(c.plan for c in clientes if c.plan)))
+    resumen_data = []
+    for plan_nombre in planes_nombres:
+        clientes_en_plan = [c for c in clientes if c.plan == plan_nombre and c.estado == "Activo"]
+        cant_clientes = len(clientes_en_plan)
+        precio_plan = planes_precios.get(plan_nombre, 0.0)
+        generacion_estimada = cant_clientes * precio_plan
+        total_reunido = sum(pago_internet_por_cliente.get(c.id, 0.0) for c in clientes if c.plan == plan_nombre)
+        
+        resumen_data.append({
+            "PLAN": plan_nombre,
+            "CANTIDAD CLIENTES": cant_clientes,
+            "PRECIO PLAN": precio_plan,
+            "GENERACION ESTIMADA": round(generacion_estimada, 2),
+            "TOTAL REUNIDO INTERNET": round(total_reunido, 2)
+        })
+    df_resumen = pd.DataFrame(resumen_data)
+
+    # ── HOJA 3: EGRESOS ──
+    egresos_mes = db.query(models.Egreso).filter(models.Egreso.mes == mes).all()
+    egresos_data = []
+    for eg in egresos_mes:
+        egresos_data.append({
+            "FECHA": eg.fecha or "",
+            "DESCRIPCION": eg.descripcion,
+            "CATEGORIA": eg.categoria,
+            "SUBCATEGORIA": eg.subcategoria or "",
+            "METODO PAGO": eg.metodo_pago or "Efectivo",
+            "MONTO": float(eg.monto or 0.0),
+            "NOTAS": eg.notas or ""
+        })
+    df_egresos = pd.DataFrame(egresos_data)
+    if df_egresos.empty:
+        df_egresos = pd.DataFrame(columns=["FECHA", "DESCRIPCION", "CATEGORIA", "SUBCATEGORIA", "METODO PAGO", "MONTO", "NOTAS"])
+
+    # ── HOJA 4: PROYECTOS ──
+    proyectos = db.query(models.Proyecto).all()
+    proyectos_data = []
+    for p in proyectos:
+        proyectos_data.append({
+            "NOMBRE PROYECTO": p.nombre,
+            "DESCRIPCION": p.descripcion or "",
+            "MONTO TOTAL PRESUPUESTO": float(p.monto_total or 0.0),
+            "MONTO INVERTIDO": float(p.monto_invertido or 0.0),
+            "ESTADO": p.estado or "",
+            "FECHA INICIO": p.fecha_inicio or "",
+            "FECHA FIN": p.fecha_fin or ""
+        })
+    df_proyectos = pd.DataFrame(proyectos_data)
+    if df_proyectos.empty:
+        df_proyectos = pd.DataFrame(columns=["NOMBRE PROYECTO", "DESCRIPCION", "MONTO TOTAL PRESUPUESTO", "MONTO INVERTIDO", "ESTADO", "FECHA INICIO", "FECHA FIN"])
+
+    # ── HOJA 5: COLCHÓN DE LA EMPRESA ──
+    colchon = db.query(models.Colchon).all()
+    colchon_data = []
+    for c in colchon:
+        colchon_data.append({
+            "FECHA": c.fecha or "",
+            "CONCEPTO/DESCRIPCION": c.descripcion,
+            "MONTO": float(c.monto or 0.0)
+        })
+    df_colchon = pd.DataFrame(colchon_data)
+    if df_colchon.empty:
+        df_colchon = pd.DataFrame(columns=["FECHA", "CONCEPTO/DESCRIPCION", "MONTO"])
+
+    # Escribir a un archivo temporal
+    temp_dir = tempfile.gettempdir()
+    file_path = os.path.join(temp_dir, f"Balance_Opsatel_{mes}.xlsx")
+    
+    with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+        df_clientes.to_excel(writer, sheet_name="Facturación Clientes", index=False)
+        df_resumen.to_excel(writer, sheet_name="Resumen por Plan", index=False)
+        df_egresos.to_excel(writer, sheet_name="Egresos", index=False)
+        df_proyectos.to_excel(writer, sheet_name="Proyectos", index=False)
+        df_colchon.to_excel(writer, sheet_name="Colchón de la Empresa", index=False)
+        
+    return FileResponse(
+        path=file_path,
+        filename=f"Balance_Opsatel_{mes}.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
