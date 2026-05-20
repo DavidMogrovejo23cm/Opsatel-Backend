@@ -634,24 +634,70 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     
     clientes = db.query(models.Cliente).all()
     
+    # ── HOJA 1: FACTURACIÓN CLIENTES ──
     data = []
     for c in clientes:
-        fact_val = str(c.facturas or "").strip().upper()
-        # Filtro: Solo si hay factura y no es "NONE"
-        if not fact_val or fact_val == "NONE":
-            continue
+        # Formatear ID como C01, C02, C03...
+        id_str = f"C{c.id:02d}" if c.id is not None else ""
+        
+        fact_val = str(c.facturas or "").strip()
+        has_factura = bool(fact_val and fact_val.upper() != "NONE" and fact_val != "")
+        
+        # CONFIRMAR es True si tiene factura y ha realizado algún pago este mes
+        pago_mensual = float(c.pago_mensual or 0.00)
+        confirmar = True if (has_factura and pago_mensual > 0) else False
+        
+        # MEGAS es el plan si se confirma el pago, si no "FALSE"
+        megas_val = c.plan if (confirmar and c.plan) else "FALSE"
+        
+        factura_val = fact_val if has_factura else "SIN FACTURA"
 
         data.append({
-            "ID": c.id,
-            "NOMBRE": c.nombre,
-            "CELULAR": c.celular,
-            "CEDULA": c.cedula,
-            "CORREO": c.correo,
-            "BANK": c.bank,
-            "TOTAL": float(c.total_pago) if c.total_pago is not None else 0.00,
+            "ID": id_str,
+            "NAME": c.nombre or "",
+            "DIRECTION": c.direccion or "",
+            "CEL": c.celular or "",
+            "PARISH": c.parroquia or "",
+            "PLAN": c.plan or "",
+            "FACTURAS": factura_val,
+            "CONFIRMAR": confirmar,
+            "MEGAS": megas_val,
         })
         
-    df = pd.DataFrame(data)
+    df_clientes = pd.DataFrame(data)
+    
+    # ── HOJA 2: RESUMEN POR PLAN ──
+    resumen_data = []
+    
+    # Consultar todos los pagos del mes correspondiente
+    pagos_todos = db.query(models.Pago).all()
+    pagos_mes_actual = [p for p in pagos_todos if str(p.fecha_pago)[:7] == current_month]
+    
+    # Acumular pagos por cliente de internet
+    pago_internet_por_cliente = {}
+    for p in pagos_mes_actual:
+        if p.cliente_id:
+            pago_internet_por_cliente[p.cliente_id] = pago_internet_por_cliente.get(p.cliente_id, 0.0) + float(p.monto_internet or 0.0)
+            
+    # Obtener planes únicos presentes en los clientes
+    planes_nombres = sorted(list(set(c.plan for c in clientes if c.plan)))
+    
+    for plan_nombre in planes_nombres:
+        # Clientes activos con este plan
+        clientes_en_plan = [c for c in clientes if c.plan == plan_nombre and c.estado == "Activo"]
+        cant_clientes = len(clientes_en_plan)
+        
+        # Total reunido por plan de internet (sumando pagos_internet del mes)
+        total_reunido = sum(pago_internet_por_cliente.get(c.id, 0.0) for c in clientes if c.plan == plan_nombre)
+        
+        resumen_data.append({
+            "PLAN": plan_nombre,
+            "CANTIDAD CLIENTES": cant_clientes,
+            "TOTAL REUNIDO INTERNET": round(total_reunido, 2)
+        })
+        
+    df_resumen = pd.DataFrame(resumen_data)
+    
     os.makedirs("rutas_reportes", exist_ok=True)
     
     mes_actual = datetime.now().strftime("%m-%Y")
@@ -659,7 +705,10 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     file_name = f"Reporte_{mes_actual}_{timestamp}.xlsx"
     file_path = os.path.join("rutas_reportes", file_name)
     
-    df.to_excel(file_path, index=False)
+    # Escribir a Excel con múltiples hojas
+    with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+        df_clientes.to_excel(writer, sheet_name="Facturación Clientes", index=False)
+        df_resumen.to_excel(writer, sheet_name="Resumen por Plan", index=False)
     
     nuevo_reporte = models.ReporteMensual(
         mes_anio=mes_actual,
