@@ -532,7 +532,9 @@ def historial_clientes(db: Session = Depends(get_db)):
             "plan": c.plan,
             "tarifa_mensual": tarifa_mensual,
             "saldo_total": saldo,
-            "estado": c.estado
+            "estado": c.estado,
+            "instalation_date": c.instalation_date,
+            "bank": c.bank
         })
     
     # Ordenar por los que más deben
