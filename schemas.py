@@ -630,3 +630,22 @@ class AsistenciaStatusResponse(BaseModel):
     asistencia_id: Optional[int] = None
     puede_salir: bool = False
     mensaje_restriccion: Optional[str] = None
+
+class WhatsAppConfiguracionCreate(BaseModel):
+    hora: str
+    mensaje: str
+    enviar_a_todos: Optional[bool] = True
+    fecha: Optional[str] = None # Formato: YYYY-MM-DD
+
+class WhatsAppConfiguracionUpdate(BaseModel):
+    hora: Optional[str] = None
+    mensaje: Optional[str] = None
+    activo: Optional[bool] = None
+    enviar_a_todos: Optional[bool] = None
+    fecha: Optional[str] = None # Formato: YYYY-MM-DD, o "vaciar" si se quiere eliminar
+
+class WhatsAppManualSend(BaseModel):
+    numero: str
+    mensaje: str
+
+

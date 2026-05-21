@@ -15,8 +15,7 @@ ECUADOR_TZ = pytz.timezone('America/Guayaquil')
 
 @router.post("/enviar-manual", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def enviar_whatsapp_manual(
-    numero: str,
-    mensaje: str,
+    payload: schemas.WhatsAppManualSend,
     db: Session = Depends(get_db)
 ):
     """
@@ -26,6 +25,9 @@ def enviar_whatsapp_manual(
     - mensaje: Texto del mensaje a enviar
     """
     try:
+        numero = payload.numero
+        mensaje = payload.mensaje
+        
         if not numero or not mensaje:
             raise HTTPException(status_code=400, detail="Número y mensaje son obligatorios")
         
@@ -64,27 +66,34 @@ def enviar_whatsapp_manual(
 
 @router.post("/programar")
 def programar_whatsapp(
-    hora: str,  # Formato: HH:MM (ej: 16:05)
-    mensaje: str,
-    enviar_a_todos: bool = True,  # True = todos clientes, False = solo a específicos
+    payload: schemas.WhatsAppConfiguracionCreate,
     db: Session = Depends(get_db)
 ):
     """
-    Programa un envío de WhatsApp para una hora específica.
-    
-    - hora: Hora en formato HH:MM (ej: 16:05)
-    - mensaje: Texto del mensaje
-    - enviar_a_todos: Si es True, envía a todos los clientes
+    Programa un envío de WhatsApp para una hora específica y opcionalmente una fecha específica.
     """
     try:
+        hora = payload.hora
+        mensaje = payload.mensaje
+        enviar_a_todos = payload.enviar_a_todos
+        fecha = payload.fecha
+        
         if not hora or not mensaje:
             raise HTTPException(status_code=400, detail="Hora y mensaje son obligatorios")
         
         # Validar formato de hora
         try:
-            hora_obj = datetime.strptime(hora, "%H:%M").time()
+            datetime.strptime(hora, "%H:%M").time()
         except ValueError:
             raise HTTPException(status_code=400, detail="Formato de hora inválido. Use HH:MM")
+        
+        # Validar formato de fecha (si existe)
+        fecha_obj = None
+        if fecha:
+            try:
+                fecha_obj = datetime.strptime(fecha, "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
         
         # Guardar configuración programada
         config = models.WhatsAppConfiguracion(
@@ -92,14 +101,19 @@ def programar_whatsapp(
             mensaje_programado=mensaje,
             activo=True,
             enviar_a_todos=enviar_a_todos,
+            fecha_programada=fecha_obj,
             fecha_creacion=datetime.now(ECUADOR_TZ)
         )
         db.add(config)
         db.commit()
         
+        msg_resp = f"Envío programado para las {hora}"
+        if fecha:
+            msg_resp += f" el día {fecha}"
+            
         return {
             "success": True,
-            "message": f"Envío programado para las {hora}",
+            "message": msg_resp,
             "id_config": config.id
         }
     
@@ -120,11 +134,14 @@ def obtener_configuracion(db: Session = Depends(get_db)):
         if not config:
             return {"configurado": False, "mensaje": "No hay envío programado"}
         
+        fecha_str = config.fecha_programada.strftime("%Y-%m-%d") if config.fecha_programada else None
+        
         return {
             "configurado": True,
             "hora": config.hora_programada,
             "mensaje": config.mensaje_programado,
             "enviar_a_todos": config.enviar_a_todos,
+            "fecha": fecha_str,
             "id": config.id
         }
     except Exception as e:
@@ -133,9 +150,7 @@ def obtener_configuracion(db: Session = Depends(get_db)):
 @router.patch("/configuracion/{config_id}")
 def actualizar_configuracion(
     config_id: int,
-    hora: str = None,
-    mensaje: str = None,
-    activo: bool = None,
+    payload: schemas.WhatsAppConfiguracionUpdate,
     db: Session = Depends(get_db)
 ):
     """Actualiza la configuración de envío programado"""
@@ -147,19 +162,32 @@ def actualizar_configuracion(
         if not config:
             raise HTTPException(status_code=404, detail="Configuración no encontrada")
         
-        if hora:
+        if payload.hora is not None:
             # Validar formato
             try:
-                datetime.strptime(hora, "%H:%M").time()
-                config.hora_programada = hora
+                datetime.strptime(payload.hora, "%H:%M").time()
+                config.hora_programada = payload.hora
             except ValueError:
                 raise HTTPException(status_code=400, detail="Formato de hora inválido")
         
-        if mensaje:
-            config.mensaje_programado = mensaje
+        if payload.mensaje is not None:
+            config.mensaje_programado = payload.mensaje
         
-        if activo is not None:
-            config.activo = activo
+        if payload.activo is not None:
+            config.activo = payload.activo
+            
+        if payload.enviar_a_todos is not None:
+            config.enviar_a_todos = payload.enviar_a_todos
+            
+        if payload.fecha is not None:
+            if payload.fecha == "vaciar":
+                config.fecha_programada = None
+            else:
+                try:
+                    fecha_obj = datetime.strptime(payload.fecha, "%Y-%m-%d")
+                    config.fecha_programada = fecha_obj
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
         
         db.commit()
         

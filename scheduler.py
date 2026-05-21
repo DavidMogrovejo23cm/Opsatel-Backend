@@ -21,31 +21,55 @@ def enviar_whatsapp_programado():
     """
     db = SessionLocal()
     try:
-        # Obtener configuración activa
-        config = db.query(models.WhatsAppConfiguracion).filter(
+        # Obtener todas las configuraciones activas
+        configs = db.query(models.WhatsAppConfiguracion).filter(
             models.WhatsAppConfiguracion.activo == True
-        ).first()
+        ).all()
         
-        if not config:
-            return  # No hay configuración activa
+        if not configs:
+            return  # No hay configuraciones activas
         
-        # Obtener hora actual en Ecuador
+        # Obtener hora y fecha actual en Ecuador
         ahora = datetime.now(ECUADOR_TZ)
         hora_actual = ahora.strftime("%H:%M")
+        fecha_actual_str = ahora.strftime("%Y-%m-%d")
         
-        # Verificar si la hora actual coincide con la programada
-        if hora_actual == config.hora_programada:
-            print(f"[WhatsApp] Iniciando envío automático a las {hora_actual}")
+        for config in configs:
+            # Verificar si la hora actual coincide con la programada
+            if hora_actual != config.hora_programada:
+                continue
+                
+            # Verificar si tiene fecha programada
+            debe_enviar = False
+            es_envio_unico = False
             
-            # Obtener todos los clientes con celular
+            if config.fecha_programada is None:
+                # Envío diario recurrente
+                debe_enviar = True
+            else:
+                # Envío puntual
+                fecha_prog_str = config.fecha_programada.strftime("%Y-%m-%d")
+                if fecha_prog_str == fecha_actual_str:
+                    debe_enviar = True
+                    es_envio_unico = True
+            
+            if not debe_enviar:
+                continue
+                
+            print(f"[WhatsApp] Iniciando envío automático para config ID {config.id} a las {hora_actual}")
+            
+            # Obtener clientes con celular
             clientes = db.query(models.Cliente).filter(
                 models.Cliente.celular != None,
                 models.Cliente.celular != ""
             ).all()
             
             if not clientes:
-                print("[WhatsApp] No hay clientes con celular registrado")
-                return
+                print(f"[WhatsApp] No hay clientes con celular registrado para config ID {config.id}")
+                if es_envio_unico:
+                    config.activo = False
+                    db.commit()
+                continue
             
             # Enviar mensaje a cada cliente
             enviados = 0
@@ -93,8 +117,13 @@ def enviar_whatsapp_programado():
                     db.add(historial)
                     print(f"[WhatsApp] Error enviando a {cliente.celular}: {str(e)}")
             
+            # Si era envío único, desactivarlo para que no se vuelva a mandar
+            if es_envio_unico:
+                config.activo = False
+                print(f"[WhatsApp] Desactivando configuración única ID {config.id} tras envío.")
+                
             db.commit()
-            print(f"[WhatsApp] Envío completado. Enviados: {enviados}, Fallidos: {fallidos}")
+            print(f"[WhatsApp] Envío completado para config ID {config.id}. Enviados: {enviados}, Fallidos: {fallidos}")
     
     except Exception as e:
         print(f"[WhatsApp] Error en scheduler: {str(e)}")
