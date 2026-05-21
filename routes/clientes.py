@@ -860,6 +860,57 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
 
 
 
+@router.delete("/all", dependencies=[Depends(require_role(["administrador"]))])
+def eliminar_todos_clientes(db: Session = Depends(get_db)):
+    """
+    Elimina TODOS los clientes de la base de datos.
+    Solo accesible para administradores.
+    ESTA ACCIÓN ES IRREVERSIBLE.
+    """
+    try:
+        # Obtener todos los clientes
+        clientes = db.query(models.Cliente).all()
+        
+        # Eliminar archivos de cédulas y pagos asociados
+        for cliente in clientes:
+            # Eliminar archivos de cédula
+            if cliente.cedula_frontal:
+                path = cliente.cedula_frontal.lstrip("/")
+                if os.path.exists(path):
+                    try: os.remove(path)
+                    except: pass
+            if cliente.cedula_posterior:
+                path = cliente.cedula_posterior.lstrip("/")
+                if os.path.exists(path):
+                    try: os.remove(path)
+                    except: pass
+            
+            # Eliminar pagos asociados
+            db.query(models.Pago).filter(models.Pago.cliente_id == cliente.id).delete()
+        
+        # Contar cuántos se van a eliminar
+        count = len(clientes)
+        
+        # Eliminar todos los clientes
+        db.query(models.Cliente).delete()
+        db.commit()
+        
+        # Resetear AUTO_INCREMENT
+        try:
+            from sqlalchemy import text
+            is_mysql = "mysql" in str(engine.url).lower() if 'engine' in dir() else False
+            if is_mysql:
+                db.execute(text("ALTER TABLE hoja_de_c__lculo_sin_t__tulo AUTO_INCREMENT = 1"))
+                db.commit()
+        except Exception as e:
+            print(f"Aviso: No se pudo resetear AUTO_INCREMENT: {e}")
+        
+        return {"message": f"{count} clientes eliminados correctamente. La base de datos ha sido limpiada."}
+    
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar clientes: {str(e)}")
+
 @router.delete("/{id}", dependencies=[Depends(require_role(["administrador"]))])
 def eliminar_cliente(id: int, db: Session = Depends(get_db)):
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
