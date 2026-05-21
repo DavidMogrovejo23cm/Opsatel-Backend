@@ -871,7 +871,7 @@ def eliminar_todos_clientes(db: Session = Depends(get_db)):
         # Obtener todos los clientes
         clientes = db.query(models.Cliente).all()
         
-        # Eliminar archivos de cédulas y pagos asociados
+        # Eliminar archivos de cédulas
         for cliente in clientes:
             # Eliminar archivos de cédula
             if cliente.cedula_frontal:
@@ -884,28 +884,43 @@ def eliminar_todos_clientes(db: Session = Depends(get_db)):
                 if os.path.exists(path):
                     try: os.remove(path)
                     except: pass
-            
-            # Eliminar pagos asociados
-            db.query(models.Pago).filter(models.Pago.cliente_id == cliente.id).delete()
         
         # Contar cuántos se van a eliminar
         count = len(clientes)
         
-        # Eliminar todos los clientes
+        # Eliminar registros relacionados en el orden correcto (respetando foreign keys)
+        # 1. Eliminar hojas de ruta (tienen foreign key a clientes)
+        db.query(models.HojaRuta).delete()
+        
+        # 2. Eliminar pagos (tienen foreign key a clientes)
+        db.query(models.Pago).delete()
+        
+        # 3. Eliminar todos los clientes
         db.query(models.Cliente).delete()
+        
         db.commit()
         
         # Resetear AUTO_INCREMENT
         try:
             from sqlalchemy import text
-            is_mysql = "mysql" in str(engine.url).lower() if 'engine' in dir() else False
-            if is_mysql:
+            is_postgresql = "postgresql" in str(engine.url).lower() or "psycopg" in str(engine.url).lower()
+            is_mysql = "mysql" in str(engine.url).lower()
+            
+            if is_postgresql:
+                # Para PostgreSQL (usando sequences)
+                db.execute(text("ALTER SEQUENCE hoja_de_c__lculo_sin_t__tulo_numero_seq RESTART WITH 1"))
+                db.execute(text("ALTER SEQUENCE hoja_ruta_id_seq RESTART WITH 1"))
+                db.execute(text("ALTER SEQUENCE pago_id_seq RESTART WITH 1"))
+            elif is_mysql:
                 db.execute(text("ALTER TABLE hoja_de_c__lculo_sin_t__tulo AUTO_INCREMENT = 1"))
-                db.commit()
+                db.execute(text("ALTER TABLE hoja_ruta AUTO_INCREMENT = 1"))
+                db.execute(text("ALTER TABLE pago AUTO_INCREMENT = 1"))
+            
+            db.commit()
         except Exception as e:
             print(f"Aviso: No se pudo resetear AUTO_INCREMENT: {e}")
         
-        return {"message": f"{count} clientes eliminados correctamente. La base de datos ha sido limpiada."}
+        return {"message": f"{count} clientes eliminados correctamente. Hojas de ruta y pagos asociados también fueron eliminados. La base de datos ha sido limpiada."}
     
     except Exception as e:
         db.rollback()
