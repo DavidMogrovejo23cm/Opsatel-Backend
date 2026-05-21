@@ -491,3 +491,27 @@ class Asistencia(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     usuario = relationship("Usuario")
+
+class WhatsAppHistorial(Base):
+    """Historial de mensajes WhatsApp enviados"""
+    __tablename__ = "whatsapp_historial"
+    id = Column(Integer, primary_key=True, index=True)
+    numero_destino = Column(String(50), nullable=False)  # +593XXXXXXXXX
+    mensaje = Column(Text, nullable=False)
+    tipo_envio = Column(String(50), default="manual")  # manual, automatico
+    estado = Column(String(50), default="enviado")  # enviado, fallido, pendiente
+    fecha_envio = Column(String(50))  # YYYY-MM-DD HH:MM:SS
+    fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+
+class WhatsAppConfiguracion(Base):
+    """Configuración de envío automático de WhatsApp"""
+    __tablename__ = "whatsapp_configuracion"
+    id = Column(Integer, primary_key=True, index=True)
+    hora_programada = Column(String(10), nullable=False)  # HH:MM
+    mensaje_programado = Column(Text, nullable=False)
+    activo = Column(Boolean, default=True)
+    enviar_a_todos = Column(Boolean, default=True)  # True = a todos clientes
+    fecha_programada = Column(DateTime, nullable=True)  # Fecha y hora exacta (opcional)
+    job_id = Column(String(200), nullable=True)  # Scheduler job id si es envío puntual
+    fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+

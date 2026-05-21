@@ -27,7 +27,7 @@ def init_db():
 # Ejecutar inicialización ANTES de importar rutas
 init_db()
 
-from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance, asistencia
+from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance, asistencia, whatsapp
 import rutas_configuraciones
 
 # ========================================================================
@@ -90,6 +90,7 @@ app.include_router(callcenter.router)
 app.include_router(balance.router)
 app.include_router(rutas_configuraciones.router)
 app.include_router(asistencia.router)
+app.include_router(whatsapp.router)
 
 from fastapi.staticfiles import StaticFiles
 os.makedirs("rutas_reportes", exist_ok=True)
@@ -106,6 +107,12 @@ def read_root():
 # ========================================================================
 from database import SessionLocal
 from auth_utils import get_password_hash
+from scheduler import iniciar_scheduler
+import pytz
+from datetime import datetime
+
+# Zona horaria Ecuador
+ECUADOR_TZ = pytz.timezone('America/Guayaquil')
 
 def seed_admin():
     db = SessionLocal()
@@ -128,3 +135,37 @@ def seed_admin():
 
 # Ejecutar el seeding
 seed_admin()
+
+# ========================================================================
+# SEED: Programación WhatsApp de prueba (si no existe)
+# ========================================================================
+def seed_whatsapp_config():
+    db = SessionLocal()
+    try:
+        existing = db.query(models.WhatsAppConfiguracion).first()
+        if not existing:
+            # Por defecto, programamos el mensaje de prueba a las 16:05
+            prueba_hora = '16:05'
+            prueba_mensaje = 'ESTE ES UN MENSAJE DE PRUEBA NO RESPONDER'
+            print(f"Seeding: Creando configuración WhatsApp programada {prueba_hora}")
+            cfg = models.WhatsAppConfiguracion(
+                hora_programada=prueba_hora,
+                mensaje_programado=prueba_mensaje,
+                activo=True,
+                enviar_a_todos=True,
+                fecha_creacion=datetime.now(ECUADOR_TZ)
+            )
+            db.add(cfg)
+            db.commit()
+            print("Seeding: Configuración WhatsApp creada.")
+    except Exception as e:
+        print(f"Error en seed_whatsapp_config: {e}")
+    finally:
+        db.close()
+
+seed_whatsapp_config()
+
+# ========================================================================
+# INICIAR SCHEDULER PARA TAREAS AUTOMÁTICAS
+# ========================================================================
+iniciar_scheduler()
