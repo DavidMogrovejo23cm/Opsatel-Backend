@@ -7,7 +7,15 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 import pytz
-import pywhatkit as kit
+try:
+    import pywhatkit as kit
+except Exception as e:
+    print(f"[WhatsApp] Advertencia en Scheduler: No se pudo importar pywhatkit ({str(e)}). Se usará un simulador.")
+    class DummyPyWhatKit:
+        def sendwhatmsg_instantly(self, *args, **kwargs):
+            print(f"[WhatsApp Mock Scheduler] Enviando mensaje (simulado en entorno headless): {args} {kwargs}")
+            return True
+    kit = DummyPyWhatKit()
 from database import SessionLocal
 import models
 import traceback
