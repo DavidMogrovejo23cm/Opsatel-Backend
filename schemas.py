@@ -636,6 +636,7 @@ class WhatsAppConfiguracionCreate(BaseModel):
     mensaje: str
     enviar_a_todos: Optional[bool] = True
     fecha: Optional[str] = None # Formato: YYYY-MM-DD
+    recurrencia: Optional[str] = "diario" # diario, mensual, unico
 
 class WhatsAppConfiguracionUpdate(BaseModel):
     hora: Optional[str] = None
@@ -643,6 +644,7 @@ class WhatsAppConfiguracionUpdate(BaseModel):
     activo: Optional[bool] = None
     enviar_a_todos: Optional[bool] = None
     fecha: Optional[str] = None # Formato: YYYY-MM-DD, o "vaciar" si se quiere eliminar
+    recurrencia: Optional[str] = None # diario, mensual, unico
 
 class WhatsAppManualSend(BaseModel):
     numero: str

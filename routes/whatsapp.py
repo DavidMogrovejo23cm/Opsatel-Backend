@@ -5,6 +5,7 @@ try:
 except Exception as e:
     print(f"[WhatsApp] Advertencia: No se pudo importar pywhatkit ({str(e)}). Se usará un simulador.")
     class DummyPyWhatKit:
+        is_dummy = True
         def sendwhatmsg_instantly(self, *args, **kwargs):
             print(f"[WhatsApp Mock] Enviando mensaje (simulado en entorno headless): {args} {kwargs}")
             return True
@@ -110,6 +111,7 @@ def programar_whatsapp(
             activo=True,
             enviar_a_todos=enviar_a_todos,
             fecha_programada=fecha_obj,
+            recurrencia=payload.recurrencia or "diario",
             fecha_creacion=datetime.now(ECUADOR_TZ)
         )
         db.add(config)
@@ -118,6 +120,8 @@ def programar_whatsapp(
         msg_resp = f"Envío programado para las {hora}"
         if fecha:
             msg_resp += f" el día {fecha}"
+        if payload.recurrencia == "mensual":
+            msg_resp += " (Recurrente mensual)"
             
         return {
             "success": True,
@@ -150,6 +154,7 @@ def obtener_configuracion(db: Session = Depends(get_db)):
             "mensaje": config.mensaje_programado,
             "enviar_a_todos": config.enviar_a_todos,
             "fecha": fecha_str,
+            "recurrencia": getattr(config, 'recurrencia', 'diario') or 'diario',
             "id": config.id
         }
     except Exception as e:
@@ -197,6 +202,9 @@ def actualizar_configuracion(
                 except ValueError:
                     raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
         
+        if payload.recurrencia is not None:
+            config.recurrencia = payload.recurrencia
+            
         db.commit()
         
         return {"success": True, "message": "Configuración actualizada"}
@@ -253,6 +261,31 @@ def eliminar_configuracion(
         db.commit()
         
         return {"success": True, "message": "Configuración eliminada"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/historial/{historial_id}/marcar-enviado")
+def marcar_historial_enviado(
+    historial_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Marca un mensaje del historial como enviado.
+    """
+    try:
+        historial = db.query(models.WhatsAppHistorial).filter(
+            models.WhatsAppHistorial.id == historial_id
+        ).first()
+        
+        if not historial:
+            raise HTTPException(status_code=404, detail="Registro de historial no encontrado")
+            
+        historial.estado = "enviado"
+        historial.fecha_envio = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        db.commit()
+        
+        return {"success": True, "message": "Mensaje marcado como enviado"}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

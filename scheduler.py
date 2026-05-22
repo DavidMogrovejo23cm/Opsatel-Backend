@@ -12,6 +12,7 @@ try:
 except Exception as e:
     print(f"[WhatsApp] Advertencia en Scheduler: No se pudo importar pywhatkit ({str(e)}). Se usará un simulador.")
     class DummyPyWhatKit:
+        is_dummy = True
         def sendwhatmsg_instantly(self, *args, **kwargs):
             print(f"[WhatsApp Mock Scheduler] Enviando mensaje (simulado en entorno headless): {args} {kwargs}")
             return True
@@ -47,19 +48,32 @@ def enviar_whatsapp_programado():
             if hora_actual != config.hora_programada:
                 continue
                 
-            # Verificar si tiene fecha programada
-            debe_enviar = False
-            es_envio_unico = False
+            # Obtener el tipo de recurrencia
+            rec = getattr(config, 'recurrencia', None)
+            if not rec:
+                # Compatibilidad hacia atrás
+                if config.fecha_programada is None:
+                    rec = 'diario'
+                else:
+                    rec = 'unico'
             
-            if config.fecha_programada is None:
+            if rec == 'diario':
                 # Envío diario recurrente
                 debe_enviar = True
-            else:
-                # Envío puntual
-                fecha_prog_str = config.fecha_programada.strftime("%Y-%m-%d")
-                if fecha_prog_str == fecha_actual_str:
-                    debe_enviar = True
-                    es_envio_unico = True
+            elif rec == 'mensual':
+                # Envío mensual recurrente: mismo día del mes que fecha_programada
+                if config.fecha_programada:
+                    dia_programado = config.fecha_programada.day
+                    dia_actual = ahora.day
+                    if dia_programado == dia_actual:
+                        debe_enviar = True
+            elif rec == 'unico':
+                # Envío único programado
+                if config.fecha_programada:
+                    fecha_prog_str = config.fecha_programada.strftime("%Y-%m-%d")
+                    if fecha_prog_str == fecha_actual_str:
+                        debe_enviar = True
+                        es_envio_unico = True
             
             if not debe_enviar:
                 continue
@@ -90,26 +104,35 @@ def enviar_whatsapp_programado():
                     if not numero.startswith('+'):
                         numero = '+593' + numero.lstrip('0')  # Agregar código Ecuador
                     
-                    # Enviar mensaje
-                    kit.sendwhatmsg_instantly(
-                        numero, 
-                        config.mensaje_programado,
-                        wait_time=10,
-                        tab_close=True
-                    )
+                    # Determinar estado de envío inicial
+                    # Si es headless (DummyPyWhatKit), lo guardamos como 'pendiente'
+                    is_headless = getattr(kit, 'is_dummy', False)
+                    estado_inicial = "pendiente" if is_headless else "enviado"
+                    
+                    if not is_headless:
+                        # Enviar mensaje
+                        kit.sendwhatmsg_instantly(
+                            numero, 
+                            config.mensaje_programado,
+                            wait_time=10,
+                            tab_close=True
+                        )
+                    else:
+                        print(f"[WhatsApp Headless] Mensaje programado guardado en cola PENDIENTE para {numero}")
                     
                     # Guardar en historial
                     historial = models.WhatsAppHistorial(
                         numero_destino=numero,
                         mensaje=config.mensaje_programado,
                         tipo_envio="automatico",
-                        estado="enviado",
-                        fecha_envio=ahora.strftime("%Y-%m-%d %H:%M:%S"),
+                        estado=estado_inicial,
+                        fecha_envio=ahora.strftime("%Y-%m-%d %H:%M:%S") if not is_headless else None,
                         fecha_creacion=ahora
                     )
                     db.add(historial)
                     enviados += 1
-                    print(f"[WhatsApp] Mensaje enviado a {numero}")
+                    if not is_headless:
+                        print(f"[WhatsApp] Mensaje enviado a {numero}")
                     
                 except Exception as e:
                     fallidos += 1

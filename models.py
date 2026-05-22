@@ -512,6 +512,7 @@ class WhatsAppConfiguracion(Base):
     activo = Column(Boolean, default=True)
     enviar_a_todos = Column(Boolean, default=True)  # True = a todos clientes
     fecha_programada = Column(DateTime, nullable=True)  # Fecha y hora exacta (opcional)
+    recurrencia = Column(String(50), default="diario")  # diario, mensual, unico
     job_id = Column(String(200), nullable=True)  # Scheduler job id si es envío puntual
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
 
