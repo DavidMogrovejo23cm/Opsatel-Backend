@@ -15,3 +15,4 @@ psycopg2-binary
 bcrypt==3.2.0
 pywhatkit
 apscheduler
+pytz
