@@ -98,6 +98,22 @@ class ColchonUpdate(BaseModel):
     monto: Optional[float] = None
     fecha: Optional[str] = None
 
+class GastoFijoCreate(BaseModel):
+    descripcion: str
+    monto: float
+    categoria: str = "operacional"   # operacional, nomina, otro
+    metodo_pago: Optional[str] = "Efectivo"
+    activo: bool = True
+    notas: Optional[str] = None
+
+class GastoFijoUpdate(BaseModel):
+    descripcion: Optional[str] = None
+    monto: Optional[float] = None
+    categoria: Optional[str] = None
+    metodo_pago: Optional[str] = None
+    activo: Optional[bool] = None
+    notas: Optional[str] = None
+
 
 # ====================================================================
 # EGRESOS CRUD
@@ -337,6 +353,49 @@ def eliminar_colchon(id: int, db: Session = Depends(get_db)):
 
 
 # ====================================================================
+# GASTOS FIJOS CRUD
+# ====================================================================
+
+@router.get("/gastos-fijos")
+def listar_gastos_fijos(db: Session = Depends(get_db)):
+    return [
+        {
+            "id": g.id, "descripcion": g.descripcion, "monto": float(g.monto),
+            "categoria": g.categoria, "metodo_pago": g.metodo_pago,
+            "activo": g.activo, "notas": g.notas
+        }
+        for g in db.query(models.GastoFijo).order_by(models.GastoFijo.id).all()
+    ]
+
+@router.post("/gastos-fijos", dependencies=[Depends(require_role(["administrador"]))])
+def crear_gasto_fijo(data: GastoFijoCreate, db: Session = Depends(get_db)):
+    obj = models.GastoFijo(**data.dict())
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+@router.patch("/gastos-fijos/{id}", dependencies=[Depends(require_role(["administrador"]))])
+def actualizar_gasto_fijo(id: int, data: GastoFijoUpdate, db: Session = Depends(get_db)):
+    obj = db.query(models.GastoFijo).filter(models.GastoFijo.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Gasto fijo no encontrado")
+    for k, v in data.dict(exclude_none=True).items():
+        setattr(obj, k, v)
+    db.commit()
+    return {"message": "Gasto fijo actualizado"}
+
+@router.delete("/gastos-fijos/{id}", dependencies=[Depends(require_role(["administrador"]))])
+def eliminar_gasto_fijo(id: int, db: Session = Depends(get_db)):
+    obj = db.query(models.GastoFijo).filter(models.GastoFijo.id == id).first()
+    if not obj:
+        raise HTTPException(status_code=404, detail="Gasto fijo no encontrado")
+    db.delete(obj)
+    db.commit()
+    return {"message": "Gasto fijo eliminado"}
+
+
+# ====================================================================
 # REPORTE MENSUAL
 # ====================================================================
 
@@ -395,6 +454,20 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
         egresos_por_cat[eg.categoria] += float(eg.monto)
         total_egresos += float(eg.monto)
 
+    # Gastos fijos activos: se suman siempre en cada mes
+    gastos_fijos = db.query(models.GastoFijo).filter(models.GastoFijo.activo == True).all()
+    total_gastos_fijos = 0.0
+    gastos_fijos_lista = []
+    for gf in gastos_fijos:
+        monto_gf = float(gf.monto or 0)
+        total_gastos_fijos += monto_gf
+        total_egresos += monto_gf
+        egresos_por_cat[gf.categoria] = egresos_por_cat.get(gf.categoria, 0.0) + monto_gf
+        gastos_fijos_lista.append({
+            "id": gf.id, "descripcion": gf.descripcion, "monto": monto_gf,
+            "categoria": gf.categoria, "metodo_pago": gf.metodo_pago, "notas": gf.notas
+        })
+
     proyectos = db.query(models.Proyecto).all()
     proyectos_activos = [p for p in proyectos if p.fecha_inicio[:7] <= mes and (not p.fecha_fin or p.fecha_fin[:7] >= mes)]
     total_proyectos = sum(float(p.monto_invertido or 0) for p in proyectos_activos)
@@ -422,6 +495,8 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
                  "fecha": e.fecha, "metodo_pago": e.metodo_pago, "notas": e.notas}
                 for e in egresos_mes
             ],
+            "gastos_fijos": gastos_fijos_lista,
+            "total_gastos_fijos": total_gastos_fijos,
             "total": total_egresos,
         },
         "proyectos": {

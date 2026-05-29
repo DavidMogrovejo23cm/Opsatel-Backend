@@ -470,6 +470,18 @@ class Colchon(Base):
     fecha = Column(String(50))  # YYYY-MM-DD
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+class GastoFijo(Base):
+    """Gastos fijos recurrentes que se incluyen automáticamente cada mes en los egresos."""
+    __tablename__ = "gastos_fijos_balance"
+    id = Column(Integer, primary_key=True, index=True)
+    descripcion = Column(String(255), nullable=False)
+    monto = Column(Numeric(precision=10, scale=2), default=0.00)
+    categoria = Column(String(100), default="operacional")  # operacional, nomina, otro
+    metodo_pago = Column(String(100), default="Efectivo")
+    activo = Column(Boolean, default=True)  # Si False, no se suma ese mes
+    notas = Column(Text)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 class Asistencia(Base):
     __tablename__ = "asistencias"
     id = Column(Integer, primary_key=True, index=True)
