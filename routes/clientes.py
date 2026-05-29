@@ -25,6 +25,79 @@ def try_float(val):
         return 0.0
 
 
+def clean_int_string_value(val):
+    if val is None:
+        return ""
+    # Si ya es un float/int en Python
+    if isinstance(val, (int, float)):
+        if isinstance(val, float) and val.is_integer():
+            return str(int(val))
+        elif isinstance(val, int):
+            return str(val)
+        else:
+            return str(val)
+    
+    # Si es string
+    s_val = str(val).strip()
+    if s_val.endswith('.0'):
+        try:
+            f_val = float(s_val)
+            if f_val.is_integer():
+                return str(int(f_val))
+        except:
+            pass
+    return s_val
+
+
+def clean_existing_database_formats(db: Session):
+    try:
+        clients = db.query(models.Cliente).all()
+        fixed_count = 0
+        for c in clients:
+            changed = False
+            
+            # Campos a limpiar de terminaciones .0
+            fields_to_clean = ["puerto", "id_port", "service_port", "tiempo", "cod", "nap"]
+            for field in fields_to_clean:
+                old_val = getattr(c, field)
+                if old_val is not None:
+                    new_val = clean_int_string_value(old_val)
+                    if new_val != old_val:
+                        setattr(c, field, new_val)
+                        changed = True
+            
+            # Lógica especial para cédula (agregar cero a la izquierda si tiene 9 dígitos)
+            if c.cedula is not None:
+                old_ced = getattr(c, "cedula")
+                clean_ced = clean_int_string_value(old_ced)
+                if clean_ced and clean_ced.isdigit() and len(clean_ced) == 9:
+                    clean_ced = "0" + clean_ced
+                if clean_ced != old_ced:
+                    c.cedula = clean_ced
+                    changed = True
+            
+            # Lógica especial para celular (agregar cero a la izquierda si tiene 9 dígitos empezando por 9)
+            if c.celular is not None:
+                old_cel = getattr(c, "celular")
+                clean_cel = clean_int_string_value(old_cel)
+                if clean_cel and clean_cel.isdigit() and len(clean_cel) == 9 and clean_cel.startswith("9"):
+                    clean_cel = "0" + clean_cel
+                if clean_cel != old_cel:
+                    c.celular = clean_cel
+                    changed = True
+                    
+            if changed:
+                fixed_count += 1
+                
+        if fixed_count > 0:
+            db.commit()
+            print(f"AUTOMIGRACIÓN: Se corrigieron {fixed_count} clientes con formatos inconsistentes de Excel (.0 o ceros a la izquierda).")
+    except Exception as e:
+        db.rollback()
+        print(f"Error en AUTOMIGRACIÓN de formatos de clientes: {e}")
+
+
+
 def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
     # El total_pago representa el total real adeudado en tiempo real.
     # Incluye Saldo (deuda histórica neta de pagos) + Tarifa (valor del plan actual) + IPTV + Adicional.
@@ -1119,7 +1192,14 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                         cliente.mac = mac_clean
                     else:
                         # Texto / String
-                        setattr(cliente, field, str(val).strip())
+                        clean_val = clean_int_string_value(val)
+                        if field == "cedula":
+                            if clean_val and clean_val.isdigit() and len(clean_val) == 9:
+                                clean_val = "0" + clean_val
+                        elif field == "celular":
+                            if clean_val and clean_val.isdigit() and len(clean_val) == 9 and clean_val.startswith("9"):
+                                clean_val = "0" + clean_val
+                        setattr(cliente, field, clean_val)
                 
                 # Recalcular balances (Importante para que total_pago sea correcto)
                 sync_cliente_balances(cliente, db)

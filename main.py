@@ -21,6 +21,19 @@ def init_db():
         print("Creando tablas si no existen...")
         Base.metadata.create_all(bind=engine)
         print("Base de datos lista.")
+        
+        # Corregir formatos inconsistentes (.0) en clientes existentes
+        try:
+            from database import SessionLocal
+            from routes.clientes import clean_existing_database_formats
+            db = SessionLocal()
+            try:
+                clean_existing_database_formats(db)
+            finally:
+                db.close()
+        except Exception as migration_error:
+            print(f"Error al ejecutar automigración de formatos: {migration_error}")
+            
     except Exception as e:
         print(f"Error inicializando base de datos: {e}")
 
