@@ -650,4 +650,7 @@ class WhatsAppManualSend(BaseModel):
     numero: str
     mensaje: str
 
+class WhatsAppGlobalSend(BaseModel):
+    mensaje: str
+
 

@@ -1,26 +1,51 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
-try:
-    import pywhatkit as kit
-except Exception as e:
-    print(f"[WhatsApp] Advertencia: No se pudo importar pywhatkit ({str(e)}). Se usará un simulador.")
-    class DummyPyWhatKit:
-        is_dummy = True
-        def sendwhatmsg_instantly(self, *args, **kwargs):
-            print(f"[WhatsApp Mock] Enviando mensaje (simulado en entorno headless): {args} {kwargs}")
-            return True
-    kit = DummyPyWhatKit()
 from datetime import datetime
 import pytz
 import models, schemas
-from database import get_db
+from database import get_db, SessionLocal
 from .auth import require_role
 import traceback
+import whatsapp_service
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 
 # Zona horaria Ecuador
 ECUADOR_TZ = pytz.timezone('America/Guayaquil')
+
+def send_global_broadcast_task(mensaje: str, db_session_factory):
+    db = db_session_factory()
+    try:
+        # Obtener clientes activos con celular registrado
+        clientes = db.query(models.Cliente).filter(
+            models.Cliente.estado == "Activo",
+            models.Cliente.celular != None,
+            models.Cliente.celular != ""
+        ).all()
+        
+        print(f"[Broadcast Task] Iniciando envío masivo a {len(clientes)} clientes activos.")
+        
+        for cliente in clientes:
+            numero = cliente.celular.strip()
+            success = whatsapp_service.send_whatsapp_message(numero, mensaje)
+            
+            # Guardar en historial
+            historial = models.WhatsAppHistorial(
+                numero_destino=numero,
+                mensaje=mensaje,
+                tipo_envio="difusion_global",
+                estado="enviado" if success else "fallido",
+                fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S") if success else None,
+                fecha_creacion=datetime.now(ECUADOR_TZ)
+            )
+            db.add(historial)
+        db.commit()
+        print(f"[Broadcast Task] Envío masivo finalizado.")
+    except Exception as e:
+        db.rollback()
+        print(f"[Broadcast Task] Error durante el envío masivo: {str(e)}")
+    finally:
+        db.close()
 
 @router.post("/enviar-manual", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def enviar_whatsapp_manual(
@@ -40,12 +65,14 @@ def enviar_whatsapp_manual(
         if not numero or not mensaje:
             raise HTTPException(status_code=400, detail="Número y mensaje son obligatorios")
         
-        # Validar formato del número (debe empezar con +)
-        if not numero.startswith('+'):
-            numero = '+' + numero
+        # Enviar mensaje usando el servicio unificado
+        success = whatsapp_service.send_whatsapp_message(numero, mensaje)
         
-        # Enviar mensaje (después de 5 segundos para evitar bloqueos)
-        kit.sendwhatmsg_instantly(numero, mensaje, wait_time=10, tab_close=False)
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail="No se pudo enviar el mensaje. Asegúrate de que el puente local de WhatsApp esté conectado."
+            )
         
         # Guardar en historial
         historial = models.WhatsAppHistorial(
@@ -65,6 +92,8 @@ def enviar_whatsapp_manual(
             "numero": numero
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         print(traceback.format_exc())
@@ -289,3 +318,43 @@ def marcar_historial_enviado(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/status-bridge", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def obtener_status_puente():
+    """
+    Obtiene el estado de conexión del puente local Node.js.
+    """
+    return whatsapp_service.get_whatsapp_bridge_status()
+
+@router.get("/qr-bridge", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def obtener_qr_puente():
+    """
+    Obtiene la imagen Base64 del código QR para conectarse al puente de WhatsApp.
+    """
+    res = whatsapp_service.get_whatsapp_bridge_qr()
+    if not res.get("qr"):
+        raise HTTPException(
+            status_code=400,
+            detail=res.get("message") or "El código QR no está disponible (es posible que ya estés conectado)."
+        )
+    return res
+
+@router.post("/enviar-global", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def enviar_whatsapp_global(
+    payload: schemas.WhatsAppGlobalSend,
+    background_tasks: BackgroundTasks
+):
+    """
+    Envía un mensaje de WhatsApp a todos los clientes que se encuentran en estado 'Activo'.
+    El envío se realiza en segundo plano (asíncronamente) para no bloquear al servidor.
+    """
+    if not payload.mensaje:
+        raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío.")
+    
+    # Encolar la tarea en background
+    background_tasks.add_task(send_global_broadcast_task, payload.mensaje, SessionLocal)
+    
+    return {
+        "success": True,
+        "message": "Difusión masiva iniciada en segundo plano."
+    }

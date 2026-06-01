@@ -7,19 +7,10 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 import pytz
-try:
-    import pywhatkit as kit
-except Exception as e:
-    print(f"[WhatsApp] Advertencia en Scheduler: No se pudo importar pywhatkit ({str(e)}). Se usará un simulador.")
-    class DummyPyWhatKit:
-        is_dummy = True
-        def sendwhatmsg_instantly(self, *args, **kwargs):
-            print(f"[WhatsApp Mock Scheduler] Enviando mensaje (simulado en entorno headless): {args} {kwargs}")
-            return True
-    kit = DummyPyWhatKit()
 from database import SessionLocal
 import models
 import traceback
+import whatsapp_service
 
 ECUADOR_TZ = pytz.timezone('America/Guayaquil')
 scheduler = None
@@ -99,40 +90,28 @@ def enviar_whatsapp_programado():
             
             for cliente in clientes:
                 try:
-                    # Normalizar número (asegurar que inicie con +)
                     numero = cliente.celular.strip()
-                    if not numero.startswith('+'):
-                        numero = '+593' + numero.lstrip('0')  # Agregar código Ecuador
                     
-                    # Determinar estado de envío inicial
-                    # Si es headless (DummyPyWhatKit), lo guardamos como 'pendiente'
-                    is_headless = getattr(kit, 'is_dummy', False)
-                    estado_inicial = "pendiente" if is_headless else "enviado"
-                    
-                    if not is_headless:
-                        # Enviar mensaje
-                        kit.sendwhatmsg_instantly(
-                            numero, 
-                            config.mensaje_programado,
-                            wait_time=10,
-                            tab_close=True
-                        )
-                    else:
-                        print(f"[WhatsApp Headless] Mensaje programado guardado en cola PENDIENTE para {numero}")
+                    # Enviar mensaje usando el servicio unificado
+                    success = whatsapp_service.send_whatsapp_message(numero, config.mensaje_programado)
                     
                     # Guardar en historial
                     historial = models.WhatsAppHistorial(
                         numero_destino=numero,
                         mensaje=config.mensaje_programado,
                         tipo_envio="automatico",
-                        estado=estado_inicial,
-                        fecha_envio=ahora.strftime("%Y-%m-%d %H:%M:%S") if not is_headless else None,
+                        estado="enviado" if success else "fallido",
+                        fecha_envio=ahora.strftime("%Y-%m-%d %H:%M:%S") if success else None,
                         fecha_creacion=ahora
                     )
                     db.add(historial)
-                    enviados += 1
-                    if not is_headless:
-                        print(f"[WhatsApp] Mensaje enviado a {numero}")
+                    
+                    if success:
+                        enviados += 1
+                        print(f"[WhatsApp Scheduler] Mensaje enviado a {numero}")
+                    else:
+                        fallidos += 1
+                        print(f"[WhatsApp Scheduler] Falló el envío a {numero}")
                     
                 except Exception as e:
                     fallidos += 1
@@ -146,7 +125,7 @@ def enviar_whatsapp_programado():
                         fecha_creacion=ahora
                     )
                     db.add(historial)
-                    print(f"[WhatsApp] Error enviando a {cliente.celular}: {str(e)}")
+                    print(f"[WhatsApp Scheduler] Error enviando a {cliente.celular}: {str(e)}")
             
             # Si era envío único, desactivarlo para que no se vuelva a mandar
             if es_envio_unico:
