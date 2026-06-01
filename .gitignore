@@ -12,4 +12,9 @@ venv.bak/
 .idea/
 *.sql
 *.sqlite
+# Node.js
+node_modules/
+package-lock.json
+.wwebjs_auth/
+.wwebjs_cache/
 # Si deseas ignorar DOCUMENTACION_PROYECTO.md o similares, puedes añadirlos.

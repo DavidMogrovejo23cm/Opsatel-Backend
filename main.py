@@ -182,3 +182,60 @@ seed_whatsapp_config()
 # INICIAR SCHEDULER PARA TAREAS AUTOMÁTICAS
 # ========================================================================
 iniciar_scheduler()
+
+# ========================================================================
+# AUTO-INICIAR EL PUENTE DE WHATSAPP (NODE.JS) EN SEGUNDO PLANO
+# ========================================================================
+import subprocess
+import threading
+
+def iniciar_puente_whatsapp():
+    provider = os.getenv("WHATSAPP_PROVIDER", "local-bridge")
+    if provider != "local-bridge":
+        print(f"Omitiendo inicio automático del puente local de WhatsApp porque WHATSAPP_PROVIDER es '{provider}'")
+        return
+
+    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+    port = "3001"
+    if "localhost:" in bridge_url:
+        port = bridge_url.split("localhost:")[-1].split("/")[0]
+    elif "127.0.0.1:" in bridge_url:
+        port = bridge_url.split("127.0.0.1:")[-1].split("/")[0]
+
+    env = os.environ.copy()
+    env["PORT"] = port
+
+    print(f"Iniciando puente de WhatsApp (Node.js) en puerto {port}...")
+    try:
+        process = subprocess.Popen(
+            ["node", "whatsapp_bridge.js"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env
+        )
+        
+        app.state.whatsapp_bridge_process = process
+
+        def read_logs():
+            for line in iter(process.stdout.readline, ""):
+                print(f"[WhatsApp Bridge Output] {line.strip()}")
+            process.stdout.close()
+
+        log_thread = threading.Thread(target=read_logs, daemon=True)
+        log_thread.start()
+        print("Subproceso del puente local de WhatsApp iniciado y monitoreado.")
+    except Exception as e:
+        print(f"Error al iniciar el puente de WhatsApp (Node.js): {e}")
+
+@app.on_event("startup")
+async def startup_bridge():
+    iniciar_puente_whatsapp()
+
+@app.on_event("shutdown")
+async def shutdown_bridge():
+    if hasattr(app.state, "whatsapp_bridge_process"):
+        print("Terminando subproceso del puente de WhatsApp...")
+        app.state.whatsapp_bridge_process.terminate()
+

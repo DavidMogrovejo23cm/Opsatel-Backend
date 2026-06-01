@@ -2,6 +2,8 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcodeTerminal = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const express = require('express');
+const { execSync, statSync } = require('child_process');
+const fs = require('fs');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -11,14 +13,41 @@ app.use(express.json());
 let clientStatus = 'INITIALIZING'; // INITIALIZING, QR_READY, CONNECTED, DISCONNECTED
 let activeQrCode = null; // Base64 Data URL for the QR code image
 
+// --- Detección automática del ejecutable de Chromium ---
+function getChromiumPath() {
+    // 1. Variable de entorno explícita (Railway, Docker, VPS)
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+        return process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+    // 2. Rutas comunes en sistemas Linux / Nix (Railway nixpacks)
+    const candidates = [
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/google-chrome',
+        '/usr/bin/google-chrome-stable',
+        '/nix/var/nix/profiles/default/bin/chromium',
+        '/run/current-system/sw/bin/chromium',
+    ];
+    for (const p of candidates) {
+        try { fs.statSync(p); return p; } catch (_) {}
+    }
+    // 3. Buscar en PATH
+    try { return execSync('which chromium chromium-browser 2>/dev/null | head -1', { encoding: 'utf8' }).trim() || undefined; } catch (_) {}
+    return undefined;
+}
+
+const chromiumExecutablePath = getChromiumPath();
+console.log(`[WhatsApp Bridge] Chromium ejecutable: ${chromiumExecutablePath || 'Puppeteer bundled'}`);
+
 const client = new Client({
     authStrategy: new LocalAuth({
         dataPath: './.wwebjs_auth'
     }),
     puppeteer: {
         headless: true,
+        executablePath: chromiumExecutablePath,
         args: [
-            '--no-sandbox', 
+            '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
