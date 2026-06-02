@@ -105,6 +105,51 @@ client.on('disconnected', (reason) => {
     }, 10000);
 });
 
+// Webhook to send incoming messages to FastAPI (SAM Chatbot)
+function sendWebhook(from, body) {
+    const http = require('http');
+    const payload = JSON.stringify({ numero: from, mensaje: body });
+    const options = {
+        hostname: 'localhost',
+        port: 8000,
+        path: '/whatsapp/webhook-mensaje',
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload)
+        }
+    };
+
+    console.log(`[Webhook] Enviando mensaje a FastAPI de ${from}: ${body.substring(0, 30)}...`);
+    const req = http.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', () => {
+            console.log(`[Webhook] Respuesta de FastAPI (${res.statusCode}): ${data}`);
+        });
+    });
+
+    req.on('error', (e) => {
+        console.error(`[Webhook] Error conectando a FastAPI: ${e.message}`);
+    });
+
+    req.write(payload);
+    req.end();
+}
+
+// Incoming Message Event
+client.on('message', async (msg) => {
+    if (msg.isStatus) return;
+    if (msg.fromMe) return;
+    if (client.info && client.info.wid && msg.from === client.info.wid._serialized) return;
+    if (msg.from.endsWith('@g.us')) return; // Ignore group chats
+
+    // Send only text messages
+    if (msg.type === 'chat' && msg.body) {
+        sendWebhook(msg.from, msg.body);
+    }
+});
+
 // --- API Endpoints ---
 
 // Get Status

@@ -386,3 +386,39 @@ def enviar_whatsapp_global(
         "success": True,
         "message": "Difusión masiva iniciada en segundo plano."
     }
+
+from pydantic import BaseModel
+
+class WhatsAppWebhookPayload(BaseModel):
+    numero: str
+    mensaje: str
+
+@router.post("/webhook-mensaje")
+def webhook_mensaje_whatsapp(
+    payload: WhatsAppWebhookPayload,
+    db: Session = Depends(get_db)
+):
+    """
+    Webhook público que recibe los mensajes entrantes de WhatsApp desde el puente local
+    y los procesa a través del asistente virtual SAM.
+    """
+    try:
+        import sam_bot_service
+        
+        response_text = sam_bot_service.procesar_mensaje_entrante(
+            numero=payload.numero,
+            mensaje=payload.mensaje,
+            db=db
+        )
+        return {
+            "success": True,
+            "response": response_text
+        }
+    except Exception as e:
+        print(f"[Webhook Mensaje Error] {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno procesando mensaje en SAM: {str(e)}"
+        )
+
