@@ -372,6 +372,43 @@ def pasar_a_activacion(id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Cliente pasado a etapa de activación", "estado": cliente.estado}
 
+@router.get("/test-db")
+def test_database_tables(db: Session = Depends(get_db)):
+    models_to_test = [
+        ("Cliente", models.Cliente),
+        ("Pago", models.Pago),
+        ("Nodo", models.Nodo),
+        ("PlanInternet", models.PlanInternet),
+        ("Banco", models.Banco),
+        ("Puerto", models.Puerto),
+        ("FinanzasBase", models.FinanzasBase),
+        ("Parroquia", models.Parroquia),
+        ("ClienteExtra", models.ClienteExtra),
+        ("PagoExtra", models.PagoExtra),
+        ("HojaRuta", models.HojaRuta),
+        ("Ticket", models.Ticket),
+        ("CallCenterTicket", models.CallCenterTicket),
+        ("Egreso", models.Egreso),
+        ("Proyecto", models.Proyecto),
+        ("ProyectoPago", models.ProyectoPago),
+        ("GastoProyecto", models.GastoProyecto),
+        ("Colchon", models.Colchon),
+        ("GastoFijo", models.GastoFijo),
+        ("Asistencia", models.Asistencia),
+        ("WhatsAppHistorial", models.WhatsAppHistorial),
+        ("WhatsAppConfiguracion", models.WhatsAppConfiguracion),
+        ("ReporteMensual", models.ReporteMensual),
+        ("Usuario", models.Usuario)
+    ]
+    results = {}
+    for name, model in models_to_test:
+        try:
+            count = db.query(model).count()
+            results[name] = {"status": "ok", "count": count}
+        except Exception as e:
+            results[name] = {"status": "error", "message": str(e)}
+    return results
+
 @router.get("/descargar-completo")
 def descargar_completa_base_datos(db: Session = Depends(get_db)):
     """
