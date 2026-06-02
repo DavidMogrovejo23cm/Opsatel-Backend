@@ -456,23 +456,23 @@ def descargar_completa_base_datos(db: Session = Depends(get_db)):
                 # Query all records for this model
                 records = db.query(model).all()
                 
-                # Get column names
-                columns = [c.name for c in model.__table__.columns]
-                
                 if records:
                     data_list = []
                     for rec in records:
                         d = {}
-                        for col in columns:
-                            val = getattr(rec, col)
+                        for col in model.__table__.columns:
+                            # col.key es el nombre del atributo en Python (ej: 'id')
+                            # col.name es el nombre del campo en la base de datos (ej: 'NUMERO')
+                            val = getattr(rec, col.key)
                             if isinstance(val, (datetime, date)):
                                 val = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, "strftime") else str(val)
                             elif isinstance(val, Decimal):
                                 val = float(val)
-                            d[col] = val
+                            d[col.name] = val
                         data_list.append(d)
                     df = pd.DataFrame(data_list)
                 else:
+                    columns = [c.name for c in model.__table__.columns]
                     df = pd.DataFrame(columns=columns)
                     
                 # Limit sheet name to 31 characters
