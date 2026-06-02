@@ -372,6 +372,92 @@ def pasar_a_activacion(id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Cliente pasado a etapa de activación", "estado": cliente.estado}
 
+@router.get("/descargar-completo")
+def descargar_completa_base_datos(db: Session = Depends(get_db)):
+    """
+    Exporta todas las tablas de la base de datos a un único archivo Excel con múltiples pestañas.
+    """
+    try:
+        import io
+        from decimal import Decimal
+        from datetime import datetime, date
+        import pandas as pd
+        from fastapi.responses import StreamingResponse
+        
+        # Lista de todos los modelos a exportar
+        models_to_export = [
+            (models.Cliente, "Clientes"),
+            (models.Pago, "Pagos"),
+            (models.Nodo, "Nodos"),
+            (models.PlanInternet, "Planes de Internet"),
+            (models.Banco, "Bancos"),
+            (models.Puerto, "Puertos"),
+            (models.FinanzasBase, "Finanzas Base"),
+            (models.Parroquia, "Parroquias"),
+            (models.ClienteExtra, "Clientes Extras"),
+            (models.PagoExtra, "Pagos Extras"),
+            (models.HojaRuta, "Hojas de Ruta"),
+            (models.Ticket, "Tickets de Asistencia"),
+            (models.CallCenterTicket, "Tickets Call Center"),
+            (models.Egreso, "Egresos"),
+            (models.Proyecto, "Proyectos"),
+            (models.ProyectoPago, "Proyecto Pagos"),
+            (models.GastoProyecto, "Gasto Proyectos"),
+            (models.Colchon, "Colchón de Reserva"),
+            (models.GastoFijo, "Gastos Fijos"),
+            (models.Asistencia, "Asistencias del Personal"),
+            (models.WhatsAppHistorial, "Historial WhatsApp"),
+            (models.WhatsAppConfiguracion, "Configuración WhatsApp"),
+            (models.ReporteMensual, "Reportes Mensuales"),
+            (models.Usuario, "Usuarios del Sistema")
+        ]
+        
+        output = io.BytesIO()
+        
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            for model, sheet_name in models_to_export:
+                # Query all records for this model
+                records = db.query(model).all()
+                
+                # Get column names
+                columns = [c.name for c in model.__table__.columns]
+                
+                if records:
+                    data_list = []
+                    for rec in records:
+                        d = {}
+                        for col in columns:
+                            val = getattr(rec, col)
+                            if isinstance(val, (datetime, date)):
+                                val = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, "strftime") else str(val)
+                            elif isinstance(val, Decimal):
+                                val = float(val)
+                            d[col] = val
+                        data_list.append(d)
+                    df = pd.DataFrame(data_list)
+                else:
+                    df = pd.DataFrame(columns=columns)
+                    
+                # Limit sheet name to 31 characters
+                sheet_name_limit = sheet_name[:31]
+                df.to_excel(writer, sheet_name=sheet_name_limit, index=False)
+                
+        output.seek(0)
+        
+        headers = {
+            'Content-Disposition': 'attachment; filename="Base_Datos_Completa_Opsatel.xlsx"'
+        }
+        return StreamingResponse(
+            output,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers=headers
+        )
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error al generar la descarga de la base de datos: {str(e)}")
+
+
 @router.get("/{id}", response_model=schemas.ClienteResponse)
 def obtener_cliente(id: int, db: Session = Depends(get_db)):
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
@@ -1237,89 +1323,5 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"Error crítico procesando Excel: {str(e)}")
 
 
-@router.get("/descargar-completo")
-def descargar_completa_base_datos(db: Session = Depends(get_db)):
-    """
-    Exporta todas las tablas de la base de datos a un único archivo Excel con múltiples pestañas.
-    """
-    try:
-        import io
-        from decimal import Decimal
-        from datetime import datetime, date
-        import pandas as pd
-        from fastapi.responses import StreamingResponse
-        
-        # Lista de todos los modelos a exportar
-        models_to_export = [
-            (models.Cliente, "Clientes"),
-            (models.Pago, "Pagos"),
-            (models.Nodo, "Nodos"),
-            (models.PlanInternet, "Planes de Internet"),
-            (models.Banco, "Bancos"),
-            (models.Puerto, "Puertos"),
-            (models.FinanzasBase, "Finanzas Base"),
-            (models.Parroquia, "Parroquias"),
-            (models.ClienteExtra, "Clientes Extras"),
-            (models.PagoExtra, "Pagos Extras"),
-            (models.HojaRuta, "Hojas de Ruta"),
-            (models.Ticket, "Tickets de Asistencia"),
-            (models.CallCenterTicket, "Tickets Call Center"),
-            (models.Egreso, "Egresos"),
-            (models.Proyecto, "Proyectos"),
-            (models.ProyectoPago, "Proyecto Pagos"),
-            (models.GastoProyecto, "Gasto Proyectos"),
-            (models.Colchon, "Colchón de Reserva"),
-            (models.GastoFijo, "Gastos Fijos"),
-            (models.Asistencia, "Asistencias del Personal"),
-            (models.WhatsAppHistorial, "Historial WhatsApp"),
-            (models.WhatsAppConfiguracion, "Configuración WhatsApp"),
-            (models.ReporteMensual, "Reportes Mensuales"),
-            (models.Usuario, "Usuarios del Sistema")
-        ]
-        
-        output = io.BytesIO()
-        
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for model, sheet_name in models_to_export:
-                # Query all records for this model
-                records = db.query(model).all()
-                
-                # Get column names
-                columns = [c.name for c in model.__table__.columns]
-                
-                if records:
-                    data_list = []
-                    for rec in records:
-                        d = {}
-                        for col in columns:
-                            val = getattr(rec, col)
-                            if isinstance(val, (datetime, date)):
-                                val = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, "strftime") else str(val)
-                            elif isinstance(val, Decimal):
-                                val = float(val)
-                            d[col] = val
-                        data_list.append(d)
-                    df = pd.DataFrame(data_list)
-                else:
-                    df = pd.DataFrame(columns=columns)
-                    
-                # Limit sheet name to 31 characters
-                sheet_name_limit = sheet_name[:31]
-                df.to_excel(writer, sheet_name=sheet_name_limit, index=False)
-                
-        output.seek(0)
-        
-        headers = {
-            'Content-Disposition': 'attachment; filename="Base_Datos_Completa_Opsatel.xlsx"'
-        }
-        return StreamingResponse(
-            output,
-            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            headers=headers
-        )
-    except Exception as e:
-        import traceback
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error al generar la descarga de la base de datos: {str(e)}")
 
 
