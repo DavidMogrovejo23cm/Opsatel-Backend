@@ -645,7 +645,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     planes_precios = {p.nombre: float(p.precio) for p in planes}
     planes_megas = {p.nombre: int(p.megas or 0) for p in planes}
     
-    # ── HOJA 1: FACTURACIÓN CLIENTES ──
+    # ── NOMBRES DE MES EN ESPAÑOL Y INGLÉS ──
     month_num = parts[1] if len(parts) == 2 else "01"
     month_name_en = {
         "01": "JANUARY", "02": "FEBRUARY", "03": "MARCH", "04": "APRIL",
@@ -653,6 +653,14 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         "09": "SEPTEMBER", "10": "OCTOBER", "11": "NOVEMBER", "12": "DECEMBER"
     }.get(month_num, "MONTH")
 
+    month_name_es = {
+        "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
+        "05": "Mayo", "06": "Junio", "07": "Julio", "08": "Agosto",
+        "09": "Septiembre", "10": "Octubre", "11": "Noviembre", "12": "Diciembre"
+    }.get(month_num, "Mes")
+    mes_label = f"{month_name_es} {parts[0]}" if len(parts) == 2 else mes
+
+    # ── HOJA 1: FACTURACIÓN CLIENTES ──
     data_clientes = []
     for c in clientes:
         id_str = f"C{c.id:02d}" if c.id is not None else ""
@@ -661,29 +669,31 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         
         pago_mensual = float(c.pago_mensual or 0.00)
         confirmar = True if (has_factura and pago_mensual > 0) else False
-        # Sacar megas reales del plan desde configuraciones
         megas_val = f"{planes_megas.get(c.plan, 0)}MB" if (confirmar and c.plan and c.plan in planes_megas) else "FALSE"
         factura_val = fact_val if has_factura else "SIN FACTURA"
         
         data_clientes.append({
             "ID": id_str,
+            "RUC / CEDULA": c.cedula or "—",
             "NAME": c.nombre or "",
             "DIRECTION": c.direccion or "",
             "CEL": c.celular or "",
             "PARISH": c.parroquia or "",
             "PLAN": c.plan or "",
             f"FACT {month_name_en}": factura_val,
+            "ESTADO": c.estado or "Pendiente",
             "CONFIRMAR": confirmar,
             f"MEGAS {month_name_en}": megas_val,
             "FACTURAS": factura_val
         })
     df_clientes = pd.DataFrame(data_clientes)
+    if not df_clientes.empty:
+        df_clientes = df_clientes.sort_values(by=["ESTADO", "NAME"])
 
     # ── HOJA 2: RESUMEN POR PLAN ──
     pagos_todos = db.query(models.Pago).all()
     pagos_mes = [p for p in pagos_todos if str(p.fecha_pago)[:7] == mes]
     
-    # Acumular pagos por cliente y por método de pago
     pago_por_cliente = {}
     pago_por_cliente_metodo = {}
     for p in pagos_mes:
@@ -694,7 +704,11 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
             key = (p.cliente_id, metodo)
             pago_por_cliente_metodo[key] = pago_por_cliente_metodo.get(key, 0.0) + monto_total_pago
             
-    planes_nombres = sorted(list(set(c.plan for c in clientes if c.plan)))
+    # Obtener todos los planes configurados en la base de datos más los que tengan los clientes asignados
+    planes_db_nombres = set(p.nombre for p in planes if p.nombre)
+    planes_clientes_nombres = set(c.plan for c in clientes if c.plan)
+    planes_nombres = sorted(list(planes_db_nombres.union(planes_clientes_nombres)))
+    
     resumen_data = []
     gran_total_clientes = 0
     gran_total_estimado = 0.0
@@ -702,6 +716,28 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     gran_total_pichincha = 0.0
     gran_total_jep = 0.0
     gran_total_reunido = 0.0
+
+    internet_ef = internet_pich = internet_jep = 0.0
+    plus_ef = plus_pich = 0.0
+    adicional_total = 0.0
+
+    for p in pagos_mes:
+        metodo = (p.metodo_pago or "").upper()
+        m_internet = float(p.monto_internet or 0)
+        m_plus    = float(p.monto_plus or 0)
+        m_adic    = float(p.monto_adicional or 0)
+        adicional_total += m_adic
+        if "JEP" in metodo:
+            internet_jep += m_internet
+        elif "PICHINCHA" in metodo:
+            internet_pich += m_internet
+            plus_pich += m_plus
+        else:
+            internet_ef += m_internet
+            plus_ef += m_plus
+
+    total_internet = internet_ef + internet_pich + internet_jep
+    total_plus     = plus_ef + plus_pich
     
     for plan_nombre in planes_nombres:
         clientes_en_plan = [c for c in clientes if c.plan == plan_nombre and c.estado == "Activo"]
@@ -710,7 +746,6 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         megas_plan = planes_megas.get(plan_nombre, 0)
         generacion_estimada = cant_clientes * precio_plan
         
-        # Desglose por método de pago para este plan
         efectivo_plan = 0.0
         pichincha_plan = 0.0
         jep_plan = 0.0
@@ -736,7 +771,9 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
             "EFECTIVO": round(efectivo_plan, 2),
             "PICHINCHA": round(pichincha_plan, 2),
             "JEP": round(jep_plan, 2),
-            "TOTAL REUNIDO": round(total_reunido_plan, 2)
+            "TOTAL REUNIDO": round(total_reunido_plan, 2),
+            "DIFERENCIA": round(generacion_estimada - total_reunido_plan, 2),
+            "% CUMPLIMIENTO": round((total_reunido_plan / generacion_estimada * 100) if generacion_estimada > 0 else 0.0, 1)
         })
         
         gran_total_clientes += cant_clientes
@@ -746,7 +783,6 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         gran_total_jep += jep_plan
         gran_total_reunido += total_reunido_plan
     
-    # Fila de TOTALES al final
     resumen_data.append({
         "PLAN": "TOTAL GENERAL",
         "MEGAS": "",
@@ -756,30 +792,95 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         "EFECTIVO": round(gran_total_efectivo, 2),
         "PICHINCHA": round(gran_total_pichincha, 2),
         "JEP": round(gran_total_jep, 2),
-        "TOTAL REUNIDO": round(gran_total_reunido, 2)
+        "TOTAL REUNIDO": round(gran_total_reunido, 2),
+        "DIFERENCIA": round(gran_total_estimado - gran_total_reunido, 2),
+        "% CUMPLIMIENTO": round((gran_total_reunido / gran_total_estimado * 100) if gran_total_estimado > 0 else 0.0, 1)
     })
     df_resumen = pd.DataFrame(resumen_data)
 
-    # ── HOJA 3: EGRESOS ──
+    # ── HOJA 3: DESGLOSE DE INGRESOS POR BANCO/SERVICIO ──
+    extras = db.query(models.ClienteExtra).all()
+    month_key = {
+        "01":"enero","02":"febrero","03":"marzo","04":"abril",
+        "05":"mayo","06":"junio","07":"julio","08":"agosto",
+        "09":"septiembre","10":"octubre","11":"noviembre","12":"diciembre"
+    }.get(month_num, "")
+
+    extras_ef = extras_pich = extras_jep = 0.0
+    if month_key:
+        for e in extras:
+            pago  = float(getattr(e, f"{month_key}_pago", 0) or 0)
+            banco = (getattr(e, f"{month_key}_banco", "") or "").upper()
+            if pago > 0:
+                if "PICHINCHA" in banco: extras_pich += pago
+                elif "JEP" in banco:    extras_jep += pago
+                else:                   extras_ef  += pago
+
+    total_extras = extras_ef + extras_pich + extras_jep
+    total_ingresos = total_internet + total_plus + adicional_total + total_extras
+
+    data_desglose = [
+        {"CONCEPTO": "🌐 Servicio Internet", "EFECTIVO": round(internet_ef, 2), "PICHINCHA": round(internet_pich, 2), "JEP": round(internet_jep, 2), "TOTAL": round(total_internet, 2)},
+        {"CONCEPTO": "📺 Servicio IPTV", "EFECTIVO": round(plus_ef, 2), "PICHINCHA": round(plus_pich, 2), "JEP": 0.0, "TOTAL": round(total_plus, 2)},
+        {"CONCEPTO": "🌍 Extras / Convenios", "EFECTIVO": round(extras_ef, 2), "PICHINCHA": round(extras_pich, 2), "JEP": round(extras_jep, 2), "TOTAL": round(total_extras, 2)},
+        {"CONCEPTO": "➕ Adicionales", "EFECTIVO": round(adicional_total, 2), "PICHINCHA": 0.0, "JEP": 0.0, "TOTAL": round(adicional_total, 2)},
+        {"CONCEPTO": "TOTAL GENERAL", "EFECTIVO": round(internet_ef + plus_ef + extras_ef + adicional_total, 2), "PICHINCHA": round(internet_pich + plus_pich + extras_pich, 2), "JEP": round(internet_jep + extras_jep, 2), "TOTAL": round(total_ingresos, 2)}
+    ]
+    df_desglose = pd.DataFrame(data_desglose)
+
+    # ── HOJA 4: EGRESOS ──
     egresos_mes = db.query(models.Egreso).filter(models.Egreso.mes == mes).all()
     egresos_data = []
+    total_egresos = 0.0
+    egresos_por_cat = {}
+
     for eg in egresos_mes:
+        monto_val = float(eg.monto or 0.0)
+        total_egresos += monto_val
+        egresos_por_cat[eg.categoria] = egresos_por_cat.get(eg.categoria, 0.0) + monto_val
         egresos_data.append({
             "FECHA": eg.fecha or "",
             "DESCRIPCION": eg.descripcion,
-            "CATEGORIA": eg.categoria,
-            "SUBCATEGORIA": eg.subcategoria or "",
+            "CATEGORIA": eg.categoria.upper(),
+            "SUBCATEGORIA": eg.subcategoria or "GENERAL",
             "METODO PAGO": eg.metodo_pago or "Efectivo",
-            "MONTO": float(eg.monto or 0.0),
+            "MONTO": monto_val,
             "NOTAS": eg.notas or ""
         })
+
+    # Gastos fijos activos
+    gastos_fijos = db.query(models.GastoFijo).filter(models.GastoFijo.activo == True).all()
+    for gf in gastos_fijos:
+        monto_gf = float(gf.monto or 0.0)
+        total_egresos += monto_gf
+        egresos_por_cat[gf.categoria] = egresos_por_cat.get(gf.categoria, 0.0) + monto_gf
+        egresos_data.append({
+            "FECHA": f"{mes}-01",
+            "DESCRIPCION": f"[FIJO] {gf.descripcion}",
+            "CATEGORIA": gf.categoria.upper(),
+            "SUBCATEGORIA": "GASTO RECURRENTE",
+            "METODO PAGO": gf.metodo_pago or "Efectivo",
+            "MONTO": monto_gf,
+            "NOTAS": gf.notas or ""
+        })
+
     df_egresos = pd.DataFrame(egresos_data)
-    if df_egresos.empty:
+    if not df_egresos.empty:
+        df_egresos = df_egresos.sort_values(by=["CATEGORIA", "FECHA"])
+        df_egresos.loc[len(df_egresos)] = {
+            "FECHA": "TOTAL GENERAL", "DESCRIPCION": "", "CATEGORIA": "", "SUBCATEGORIA": "", "METODO PAGO": "",
+            "MONTO": total_egresos, "NOTAS": ""
+        }
+    else:
         df_egresos = pd.DataFrame(columns=["FECHA", "DESCRIPCION", "CATEGORIA", "SUBCATEGORIA", "METODO PAGO", "MONTO", "NOTAS"])
 
-    # ── HOJA 4: PROYECTOS ──
+    # ── HOJA 5: PROYECTOS ──
     proyectos = db.query(models.Proyecto).all()
     proyectos_data = []
+    
+    proyectos_activos = [p for p in proyectos if p.fecha_inicio[:7] <= mes and (not p.fecha_fin or p.fecha_fin[:7] >= mes)]
+    total_proyectos = sum(float(p.monto_invertido or 0) for p in proyectos_activos)
+
     for p in proyectos:
         proyectos_data.append({
             "NOMBRE PROYECTO": p.nombre,
@@ -793,8 +894,15 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     df_proyectos = pd.DataFrame(proyectos_data)
     if df_proyectos.empty:
         df_proyectos = pd.DataFrame(columns=["NOMBRE PROYECTO", "DESCRIPCION", "MONTO TOTAL PRESUPUESTO", "MONTO INVERTIDO", "ESTADO", "FECHA INICIO", "FECHA FIN"])
+    else:
+        df_proyectos.loc[len(df_proyectos)] = {
+            "NOMBRE PROYECTO": "TOTAL GENERAL", "DESCRIPCION": "",
+            "MONTO TOTAL PRESUPUESTO": sum(x["MONTO TOTAL PRESUPUESTO"] for x in proyectos_data),
+            "MONTO INVERTIDO": sum(x["MONTO INVERTIDO"] for x in proyectos_data),
+            "ESTADO": "", "FECHA INICIO": "", "FECHA FIN": ""
+        }
 
-    # ── HOJA 5: COLCHÓN DE LA EMPRESA ──
+    # ── HOJA 6: COLCHÓN DE LA EMPRESA ──
     colchon = db.query(models.Colchon).all()
     colchon_data = []
     for c in colchon:
@@ -806,18 +914,277 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     df_colchon = pd.DataFrame(colchon_data)
     if df_colchon.empty:
         df_colchon = pd.DataFrame(columns=["FECHA", "CONCEPTO/DESCRIPCION", "MONTO"])
+    else:
+        df_colchon.loc[len(df_colchon)] = {
+            "FECHA": "TOTAL GENERAL", "CONCEPTO/DESCRIPCION": "",
+            "MONTO": sum(x["MONTO"] for x in colchon_data)
+        }
 
-    # Escribir a un archivo temporal
+    balance_neto = total_ingresos - total_egresos - total_proyectos
+    total_clientes_activos = sum(1 for c in clientes if c.estado == "Activo")
+    total_clientes_suspendidos = sum(1 for c in clientes if c.estado == "Suspendido")
+    total_clientes_otros = sum(1 for c in clientes if c.estado not in ("Activo", "Suspendido"))
+
     temp_dir = tempfile.gettempdir()
     file_path = os.path.join(temp_dir, f"Balance_Opsatel_{mes}.xlsx")
     
     with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
-        df_clientes.to_excel(writer, sheet_name="Facturación Clientes", index=False)
-        df_resumen.to_excel(writer, sheet_name="Resumen por Plan", index=False)
-        df_egresos.to_excel(writer, sheet_name="Egresos", index=False)
-        df_proyectos.to_excel(writer, sheet_name="Proyectos", index=False)
-        df_colchon.to_excel(writer, sheet_name="Colchón de la Empresa", index=False)
+        df_clientes.to_excel(writer, sheet_name="Facturación Clientes", startrow=4, index=False)
+        df_resumen.to_excel(writer, sheet_name="Resumen por Plan", startrow=4, index=False)
+        df_desglose.to_excel(writer, sheet_name="Ingresos por Banco", startrow=4, index=False)
+        df_egresos.to_excel(writer, sheet_name="Egresos", startrow=4, index=False)
+        df_proyectos.to_excel(writer, sheet_name="Proyectos", startrow=4, index=False)
+        df_colchon.to_excel(writer, sheet_name="Colchón de la Empresa", startrow=4, index=False)
+
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.load_workbook(file_path)
+
+    color_primary = "1E3A8A"
+    color_header_fill = PatternFill(start_color=color_primary, end_color=color_primary, fill_type="solid")
+    font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    
+    font_title = Font(name="Calibri", size=16, bold=True, color=color_primary)
+    font_subtitle = Font(name="Calibri", size=11, italic=True, color="4B5563")
+    font_section = Font(name="Calibri", size=12, bold=True, color=color_primary)
+    
+    font_bold = Font(name="Calibri", size=10, bold=True)
+    font_regular = Font(name="Calibri", size=10)
+    
+    fill_zebra = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
+    fill_total = PatternFill(start_color="E5E7EB", end_color="E5E7EB", fill_type="solid")
+    fill_success = PatternFill(start_color="D1FAE5", end_color="D1FAE5", fill_type="solid")
+    fill_danger = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    
+    thin_border_side = Side(border_style="thin", color="D1D5DB")
+    thin_border = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
+    double_bottom_border = Border(
+        left=thin_border_side, right=thin_border_side,
+        top=thin_border_side,
+        bottom=Side(border_style="double", color="1E3A8A")
+    )
+    
+    align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    align_left = Alignment(horizontal="left", vertical="center")
+    align_right = Alignment(horizontal="right", vertical="center")
+
+    ws_res = wb.create_sheet(title="Resumen Ejecutivo", index=0)
+    ws_res.views.sheetView[0].showGridLines = True
+    
+    ws_res["A1"] = "OPSATEL S.A.S."
+    ws_res["A1"].font = Font(name="Calibri", size=18, bold=True, color=color_primary)
+    ws_res["A2"] = "RUC: 0993245678001 | Operador de Telecomunicaciones"
+    ws_res["A2"].font = font_subtitle
+    ws_res["A3"] = f"REPORTE MENSUAL DE BALANCES Y FINANZAS — {mes_label.upper()}"
+    ws_res["A3"].font = Font(name="Calibri", size=12, bold=True, color="374151")
+    ws_res["A4"] = f"Fecha de generación: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+    ws_res["A4"].font = Font(name="Calibri", size=9, italic=True, color="6B7280")
+    
+    ws_res["A6"] = "1. ESTADO DE RESULTADOS MENSUAL"
+    ws_res["A6"].font = font_section
+    ws_res.merge_cells("A6:D6")
+    
+    headers_res = ["Detalle de Conceptos", "", "", "Monto ($)"]
+    for col_idx, h in enumerate(headers_res, 1):
+        cell = ws_res.cell(row=7, column=col_idx, value=h)
+        cell.font = font_header
+        cell.fill = color_header_fill
+        cell.alignment = align_center if col_idx == 4 else align_left
+        cell.border = thin_border
+    ws_res.merge_cells("A7:C7")
+    
+    filas_resumen = [
+        ("INGRESOS TOTALES DEL MES", total_ingresos, True, None),
+        ("   (+) Recaudación Internet", total_internet, False, None),
+        ("   (+) Recaudación IPTV", total_plus, False, None),
+        ("   (+) Convenios y Extras", total_extras, False, None),
+        ("   (+) Servicios Adicionales", adicional_total, False, None),
+        ("EGRESOS TOTALES DEL MES", total_egresos, True, None),
+        ("   (-) Gastos Operacionales", egresos_por_cat.get("OPERACIONAL", 0.0) + egresos_por_cat.get("operacional", 0.0), False, None),
+        ("   (-) Nómina / Sueldos", egresos_por_cat.get("NOMINA", 0.0) + egresos_por_cat.get("nomina", 0.0), False, None),
+        ("   (-) Inversión en Proyectos", total_proyectos, False, None),
+        ("   (-) Otros Gastos", egresos_por_cat.get("OTRO", 0.0) + egresos_por_cat.get("otro", 0.0), False, None),
+        ("BALANCE NETO (UTILIDAD/PÉRDIDA)", balance_neto, True, fill_success if balance_neto >= 0 else fill_danger)
+    ]
+    
+    current_row = 8
+    for desc, val, is_bold, fill_color in filas_resumen:
+        ws_res.row_dimensions[current_row].height = 20
+        ws_res.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=3)
         
+        c_desc = ws_res.cell(row=current_row, column=1, value=desc)
+        c_desc.font = font_bold if is_bold else font_regular
+        c_desc.alignment = align_left
+        
+        for col in range(1, 4):
+            ws_res.cell(row=current_row, column=col).border = thin_border
+            if fill_color:
+                ws_res.cell(row=current_row, column=col).fill = fill_color
+                
+        c_val = ws_res.cell(row=current_row, column=4, value=val)
+        c_val.font = font_bold if is_bold else font_regular
+        c_val.alignment = align_right
+        c_val.number_format = '$#,##0.00'
+        c_val.border = thin_border
+        if fill_color:
+            c_val.fill = fill_color
+            
+        current_row += 1
+        
+    current_row += 2
+    ws_res.cell(row=current_row, column=1, value="2. ESTADÍSTICAS DE CLIENTES").font = font_section
+    ws_res.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=4)
+    
+    current_row += 1
+    for col_idx, h in enumerate(["Métrica de Gestión", "", "", "Cantidad"], 1):
+        cell = ws_res.cell(row=current_row, column=col_idx, value=h)
+        cell.font = font_header
+        cell.fill = color_header_fill
+        cell.alignment = align_center if col_idx == 4 else align_left
+        cell.border = thin_border
+    ws_res.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=3)
+    
+    clientes_res = [
+        ("Clientes Activos en el Sistema", total_clientes_activos, False),
+        ("Clientes Suspendidos en el Sistema", total_clientes_suspendidos, False),
+        ("Otros Clientes / Pendientes", total_clientes_otros, False),
+        ("TOTAL CLIENTES REGISTRADOS", total_clientes_activos + total_clientes_suspendidos + total_clientes_otros, True)
+    ]
+    
+    current_row += 1
+    for desc, val, is_bold in clientes_res:
+        ws_res.row_dimensions[current_row].height = 20
+        ws_res.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=3)
+        
+        c_desc = ws_res.cell(row=current_row, column=1, value=desc)
+        c_desc.font = font_bold if is_bold else font_regular
+        c_desc.alignment = align_left
+        
+        for col in range(1, 4):
+            ws_res.cell(row=current_row, column=col).border = thin_border
+            if is_bold:
+                ws_res.cell(row=current_row, column=col).fill = fill_total
+                
+        c_val = ws_res.cell(row=current_row, column=4, value=val)
+        c_val.font = font_bold if is_bold else font_regular
+        c_val.alignment = align_right
+        c_val.number_format = '#,##0'
+        c_val.border = thin_border
+        if is_bold:
+            c_val.fill = fill_total
+            
+        current_row += 1
+        
+    current_row += 3
+    ws_res.cell(row=current_row, column=2, value="_________________________").alignment = align_center
+    ws_res.cell(row=current_row, column=4, value="_________________________").alignment = align_center
+    
+    current_row += 1
+    ws_res.cell(row=current_row, column=2, value="Elaborado por: Contabilidad").font = font_bold
+    ws_res.cell(row=current_row, column=2).alignment = align_center
+    ws_res.cell(row=current_row, column=4, value="Aprobado por: Gerencia").font = font_bold
+    ws_res.cell(row=current_row, column=4).alignment = align_center
+    
+    ws_res.column_dimensions["A"].width = 28
+    ws_res.column_dimensions["B"].width = 15
+    ws_res.column_dimensions["C"].width = 15
+    ws_res.column_dimensions["D"].width = 18
+
+    for sheet_name in wb.sheetnames:
+        if sheet_name == "Resumen Ejecutivo":
+            continue
+        ws = wb[sheet_name]
+        ws.views.sheetView[0].showGridLines = True
+        
+        ws["A1"] = "OPSATEL S.A.S."
+        ws["A1"].font = font_title
+        
+        ws["A2"] = f"Reporte de {sheet_name} — Período: {mes_label}"
+        ws["A2"].font = font_subtitle
+        
+        ws["A3"] = "RUC: 0993245678001 | Reporte Oficial para ARCOTEL"
+        ws["A3"].font = Font(name="Calibri", size=9, color="6B7280", italic=True)
+        
+        max_row = ws.max_row
+        max_col = ws.max_column
+        
+        ws.row_dimensions[5].height = 28
+        for col in range(1, max_col + 1):
+            cell = ws.cell(row=5, column=col)
+            cell.fill = color_header_fill
+            cell.font = font_header
+            cell.alignment = align_center
+            cell.border = thin_border
+            
+        for row in range(6, max_row + 1):
+            ws.row_dimensions[row].height = 20
+            is_zebra = (row % 2 == 1)
+            is_total_row = False
+            
+            first_cell_val = str(ws.cell(row=row, column=1).value or "").strip().upper()
+            if "TOTAL" in first_cell_val:
+                is_total_row = True
+                
+            for col in range(1, max_col + 1):
+                cell = ws.cell(row=row, column=col)
+                cell.font = font_bold if is_total_row else font_regular
+                cell.border = double_bottom_border if is_total_row else thin_border
+                
+                if is_total_row:
+                    cell.fill = fill_total
+                elif is_zebra:
+                    cell.fill = fill_zebra
+                
+                val = cell.value
+                col_name = str(ws.cell(row=5, column=col).value or "").strip().upper()
+                
+                if isinstance(val, (int, float)) or (isinstance(val, str) and val.replace(".", "", 1).isdigit()):
+                    try:
+                        if isinstance(val, str):
+                            val = float(val)
+                            cell.value = val
+                    except:
+                        pass
+                        
+                    if "ID" in col_name or "NUMERO" in col_name or "CEL" in col_name or "COD" in col_name or "MEGAS" in col_name or "%" in col_name:
+                        cell.alignment = align_center
+                    else:
+                        cell.alignment = align_right
+                        
+                    if "%" in col_name:
+                        cell.number_format = '0.0"%"'
+                    elif "CANTIDAD" in col_name or "CLIENTES" in col_name:
+                        cell.number_format = '#,##0'
+                    elif any(kw in col_name for kw in ["PRECIO", "MONTO", "VALOR", "SALDO", "REUNIDO", "PICHINCHA", "EFECTIVO", "JEP", "DIFERENCIA", "GENERACION", "TOTAL"]):
+                        cell.number_format = '$#,##0.00'
+                else:
+                    if any(kw in col_name for kw in ["ID", "FECHA", "ESTADO", "CELULAR", "CONFIRMAR", "MEGAS", "RUC", "CEDULA"]):
+                        cell.alignment = align_center
+                    else:
+                        cell.alignment = align_left
+                        
+                if val is True:
+                    cell.value = "SÍ"
+                    cell.alignment = align_center
+                elif val is False:
+                    cell.value = "NO"
+                    cell.alignment = align_center
+
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col[4:]:
+                val_str = str(cell.value or "")
+                if cell.number_format == '$#,##0.00' and isinstance(cell.value, (int, float)):
+                    val_str = f"${cell.value:,.2f}"
+                if len(val_str) > max_len:
+                    max_len = len(val_str)
+            ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+    wb.save(file_path)
+
     return FileResponse(
         path=file_path,
         filename=f"Balance_Opsatel_{mes}.xlsx",

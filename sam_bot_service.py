@@ -7,6 +7,8 @@ import models
 from rapidfuzz import fuzz, process
 import whatsapp_service
 
+CLAUDE_MODEL = "claude-3-5-haiku-20241022"
+
 # Inicializar cliente de Anthropic si la clave está configurada
 client_ai = None
 def get_anthropic_client():
@@ -63,7 +65,7 @@ Debes clasificar la intención del usuario basándote en la conversación actual
 Intenciones disponibles:
 - registrar_cliente_potencial: Si el usuario desea registrar, ingresar o guardar un prospecto, nuevo cliente, o prospecto de ventas.
 - consultar_pagos_y_saldos: Si el usuario pregunta por su deuda, saldo pendiente, facturas, último pago, comprobante de pago o estado de cuenta.
-- recomendacion_peliculas_opsatv: Si el usuario pide recomendaciones de películas, qué ver, series o catálogos en OPSATV.
+- recomendacion_peliculas_opsatv: Si el usuario menciona alguna de estas palabras clave o conceptos: recomendar, recomendación, sugerir, sugerencia, qué ver, qué me recomiendas, ver, película, serie, buscar películas, encontrar series, estrenos, tendencia, top, popular, famoso, cartelera, OPSATV, acción (en contexto de cine), comedia, drama, terror, ciencia ficción, suspenso, thriller, aventura, animación, romance, documental, misterio, o cualquier solicitud relacionada con entretenimiento audiovisual.
 - general: Si es un saludo, despedida, pregunta genérica, agradecimiento o no encaja en las anteriores.
 
 Conversación actual:
@@ -73,7 +75,7 @@ Tu tarea: Responde únicamente con el nombre de la intención ("registrar_client
 
     try:
         response = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model=CLAUDE_MODEL,
             max_tokens=30,
             temperature=0.0,
             messages=[{"role": "user", "content": prompt}]
@@ -87,6 +89,21 @@ Tu tarea: Responde únicamente con el nombre de la intención ("registrar_client
         return "general"
     except Exception as e:
         print(f"[SAM Chatbot] Error clasificando intención: {e}")
+        # Obtener el último mensaje del usuario
+        lineas = contexto.strip().split("\n")
+        ultimo_mensaje = lineas[-1].replace("user:", "").strip().lower() if lineas else ""
+        if any(w in ultimo_mensaje for w in ["saldo", "debo", "pagar", "pago", "factura", "cuanto", "cuánto", "deuda"]):
+            return "consultar_pagos_y_saldos"
+        elif any(w in ultimo_mensaje for w in ["registrar", "nuevo cliente", "prospecto", "ingresar cliente"]):
+            return "registrar_cliente_potencial"
+        elif any(w in ultimo_mensaje for w in [
+            "pelicula", "película", "serie", "recomendar", "recomendacion", "recomendación",
+            "sugerir", "sugerencia", "qué ver", "que ver", "opsatv", "ver", "estrenos",
+            "tendencia", "top", "popular", "famoso", "cartelera", "accion", "comedia",
+            "drama", "terror", "ciencia ficcion", "suspenso", "thriller", "aventura",
+            "animacion", "romance", "documental", "misterio", "buscar", "encontrar"
+        ]):
+            return "recomendacion_peliculas_opsatv"
         return "general"
 
 # -------------------------------------------------------------
@@ -136,7 +153,7 @@ def procesar_registro_cliente(numero: str, mensaje: str, contexto: str, db: Sess
     
     try:
         response = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model=CLAUDE_MODEL,
             max_tokens=600,
             temperature=0.2,
             messages=messages
@@ -228,10 +245,92 @@ def buscar_cliente_por_nombre(nombre_buscar: str, db: Session):
         
     return None, coincidencias_validas[:3]
 
-def procesar_consulta_pago(numero: str, mensaje: str, contexto: str, db: Session) -> str:
+def extraer_cedula(texto: str) -> str:
+    """
+    Intenta extraer un número de cédula de 10 dígitos del texto.
+    Limpia espacios, guiones y puntos antes de buscar la secuencia.
+    """
+    if not texto:
+        return ""
+    # Remover guiones, espacios y puntos
+    limpio = re.sub(r'[\s\-.]', '', texto)
+    # Buscar una secuencia de exactamente 10 dígitos en la cadena limpia
+    match = re.search(r'\d{10}', limpio)
+    if match:
+        return match.group(0)
+    return ""
+
+def procesar_consulta_pago(numero: str, mensaje: str, contexto: str, db: Session, ya_solicitado: bool = False) -> str:
     client = get_anthropic_client()
     
-    # Preguntar a Claude si el mensaje menciona un nombre de persona a buscar
+    # 1. Comprobar si el usuario desea cancelar el flujo activo
+    if mensaje.strip().lower() in ["cancelar", "salir", "cancel", "no"]:
+        estados_skills[numero] = None
+        if numero in historial_conversaciones:
+            historial_conversaciones[numero] = []
+        return "Entendido, he cancelado la consulta de saldo. ¿En qué más te puedo ayudar hoy?"
+
+    # 2. Comprobar si el mensaje actual ya contiene una cédula
+    cedula_extraida = extraer_cedula(mensaje)
+    
+    if cedula_extraida:
+        cliente = db.query(models.Cliente).filter(models.Cliente.cedula == cedula_extraida).first()
+        if cliente:
+            # Encontrado, limpiamos el estado del skill y devolvemos la información
+            estados_skills[numero] = None
+            
+            # Obtener pagos e historial
+            pagos = db.query(models.Pago).filter(models.Pago.cliente_id == cliente.id).order_by(models.Pago.fecha_pago.desc()).limit(3).all()
+            historial_pagos_text = ""
+            if pagos:
+                for p in pagos:
+                    fecha_str = p.fecha_pago.strftime("%d/%m/%Y") if p.fecha_pago else "N/A"
+                    historial_pagos_text += f"- {fecha_str}: ${p.monto} ({p.metodo_pago or 'No especificado'})\n"
+            else:
+                historial_pagos_text = "No registra pagos previos en el sistema.\n"
+                
+            prompt_pago = f"""Eres SAM, el Sistema Autónomo Multitarea de OPSATEL.
+Un cliente ha solicitado información sobre su saldo y estado de cuenta.
+Genera una respuesta amigable, educada y concisa informando sobre estos datos.
+
+Datos reales del cliente:
+- Nombre: {cliente.nombre}
+- Cédula: {cliente.cedula}
+- Celular registrado: {cliente.celular}
+- Plan contratado: {cliente.plan or 'No definido'}
+- Mensualidad contratada: ${cliente.pago_mensual or 0.00}
+- Saldo pendiente (Deuda): ${cliente.saldo or 0.00}
+- Estado del servicio: {cliente.estado}
+- Últimos 3 pagos registrados:
+{historial_pagos_text}
+
+Reglas:
+- Si el saldo (deuda) es 0 o menor, felicítalo por estar al día.
+- Si tiene saldo pendiente, infórmale el monto exacto de forma clara y respetuosa.
+- Mantén la respuesta breve y al grano, ideal para WhatsApp.
+- No inventes ningún dato que no esté listado arriba.
+"""
+            try:
+                response_sam = client.messages.create(
+                    model=CLAUDE_MODEL,
+                    max_tokens=250,
+                    temperature=0.3,
+                    messages=[{"role": "user", "content": prompt_pago}]
+                )
+                return response_sam.content[0].text.strip()
+            except Exception as e:
+                print(f"[SAM Chatbot] Error generando respuesta de pago: {e}")
+                return f"Hola {cliente.nombre}, tu saldo pendiente es de ${cliente.saldo or 0.00} y tu servicio se encuentra en estado: {cliente.estado}."
+        else:
+            # Cédula ingresada pero no encontrada en BD. No limpiamos el estado del skill
+            return f"Lo siento, no encontré ningún cliente con el número de cédula **{cedula_extraida}** en nuestra base de datos. Por favor, verifica el número e ingrésalo nuevamente, o escribe **cancelar** para volver al inicio."
+
+    # 3. Si no hay cédula en el mensaje actual:
+    if ya_solicitado:
+        # Ya estábamos en el flujo y no ingresó una cédula válida
+        return "No logré identificar un número de cédula de 10 dígitos. Por favor, indícame tu número de cédula para consultar tu saldo, o escribe **cancelar** para volver al inicio."
+        
+    # Si es el primer mensaje del flujo, verificamos si menciona a un tercero por nombre
     prompt_extract = f"""Del siguiente mensaje de WhatsApp del usuario, determina si está pidiendo consultar el saldo/pago de otra persona mencionando su nombre de forma explícita.
 Si menciona un nombre, responde únicamente con el nombre extraído.
 Si el usuario pregunta por su propio saldo (ej. "cuanto debo", "mi saldo", "mi pago") o no menciona ningún nombre específico, responde únicamente con la palabra "auto".
@@ -242,7 +341,7 @@ Respuesta:"""
     nombre_buscado = "auto"
     try:
         response_ext = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model=CLAUDE_MODEL,
             max_tokens=30,
             temperature=0.0,
             messages=[{"role": "user", "content": prompt_extract}]
@@ -255,15 +354,15 @@ Respuesta:"""
     sugerencias = []
     
     if "auto" in nombre_buscado:
-        # Buscar por el número de celular del remitente
-        numero_limpio = limpiar_numero_whatsapp(numero)
-        cliente = buscar_cliente_por_celular(numero_limpio, db)
-        if not cliente:
-            # Si no se encuentra por celular, pedir el nombre
-            return "No encontré tu número celular registrado en nuestra base de datos. Por favor, indícame tu nombre completo para buscarte en el sistema."
+        # No se especificó nombre de otra persona y tampoco detectamos cédula en este primer mensaje.
+        # Por lo tanto, solicitamos la cédula para iniciar el flujo interactivo.
+        estados_skills[numero] = "consultar_pagos_y_saldos"
+        return "Por favor, ayúdame con tu número de cédula para consultar tu saldo."
     else:
-        # Buscar por el nombre extraído
+        # Búsqueda por el nombre extraído (para compatibilidad de consultas de terceros)
         cliente, sugerencias = buscar_cliente_por_nombre(nombre_buscado, db)
+        # Como es consulta directa por nombre, no mantenemos estado activo del skill
+        estados_skills[numero] = None
         
     if not cliente:
         if sugerencias:
@@ -272,7 +371,7 @@ Respuesta:"""
         else:
             return f"Lo lamento, no encontré ningún cliente con el nombre '{nombre_buscado}' en nuestra base de datos."
             
-    # Si encontramos al cliente, obtenemos sus últimos pagos y saldo
+    # Si encontramos al cliente por nombre, obtenemos sus últimos pagos y saldo
     pagos = db.query(models.Pago).filter(models.Pago.cliente_id == cliente.id).order_by(models.Pago.fecha_pago.desc()).limit(3).all()
     
     # Formatear el historial de pagos
@@ -307,7 +406,7 @@ Reglas:
 """
     try:
         response_sam = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model=CLAUDE_MODEL,
             max_tokens=250,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt_pago}]
@@ -318,34 +417,70 @@ Reglas:
         return f"Hola {cliente.nombre}, tu saldo pendiente es de ${cliente.saldo or 0.00} y tu servicio se encuentra en estado: {cliente.estado}."
 
 # -------------------------------------------------------------
-# SKILL: RECOMENDACIÓN DE PELÍCULAS OPSATV
+# SKILL: RECOMENDACIÓN DE PELÍCULAS Y SERIES OPSATV
 # -------------------------------------------------------------
-PROMPT_PELICULAS = """# Skill: Recomendación de Películas OPSATV
-Eres SAM, especialista en recomendar películas exclusivas de la plataforma OPSATV.
-Reglas:
-- Simula siempre que estás buscando en el catálogo interno de OPSATV.
-- Si te piden recomendaciones, sugiere una película que se encuentre disponible e incluye:
-  1. Título de la película.
-  2. Año de estreno (aproximado).
-  3. Breve sinopsis o descripción (2-3 frases).
-  4. Valoración personal ("Es una excelente producción", etc.).
-- Nunca sugieras películas que no estén disponibles en la plataforma o que no tengan relación con el cine popular.
-- Mantén el tono amigable y divertido.
+PROMPT_PELICULAS = """# Skill: Recomendador Inteligente de Películas y Series — OPSATV
+
+Eres SAM, el Sistema Autónomo Multitarea de OPSATEL, experto en el catálogo de entretenimiento de OPSATV.
+Tu misión es recomendar películas o series de forma personalizada, entusiasta y natural, como si fueras un gran cinéfilo.
+
+## PASO 1 — Analiza el mensaje del usuario y detecta:
+
+### 🎬 Género (si menciona alguno):
+- acción, comedia, drama, terror/horror, ciencia ficción/sci-fi, suspenso, thriller, aventura, animación, romance, documental, misterio/crimen.
+- Si NO menciona género, elige uno al azar que sea popular.
+
+### 📅 Contexto temporal (si menciona alguno):
+- "actual", "reciente", "nuevos", "últimos años" → películas de 2021 en adelante.
+- "2024", "2025", "2026" → estrenos de ese año específico.
+- "mejor valoradas", "clásica", "top" → producciones de alta crítica de cualquier época.
+- Si NO menciona tiempo, mezcla recientes con clásicos bien valorados.
+
+### 🔀 Aleatoriedad OBLIGATORIA:
+- NUNCA repitas siempre las mismas películas.
+- Varía entre diferentes décadas, directores, y países de producción.
+- Selecciona de forma pseudoaleatoria dentro del género pedido.
+
+## PASO 2 — Responde con 2 a 3 recomendaciones concretas y REALES.
+
+Formato para cada recomendación:
+🎬 *[TÍTULO]* ([AÑO]) — [Género]
+📖 [Sinopsis atractiva de 2-3 frases que enganche al usuario]
+⭐ [Tu valoración entusiasta en 1 frase, ej: "Una obra maestra que no puedes perderte" / "Perfecta para una noche de suspenso"]
+
+## PASO 3 — Cierra con una frase invitando a ver más opciones en OPSATV.
+
+## REGLAS IMPORTANTES:
+- Recomienda SOLO películas y series reales que existen en el mundo real (son reconocidas, tienen buenas críticas).
+- Indica siempre título real, año real y género correcto.
+- Mantén el tono amigable, divertido y natural, como si hablaras por WhatsApp.
+- Respuesta máxima de 5-6 líneas por recomendación. Sé conciso.
+- No uses markdown complejo, solo *cursiva* y emojis, que WhatsApp renderiza.
+- Nunca inventes películas. Si no conoces una del género pedido, elige otra real cercana.
 """
 
 def procesar_recomendacion_peliculas(numero: str, mensaje: str, contexto: str) -> str:
     client = get_anthropic_client()
     try:
         response = client.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=400,
-            temperature=0.7,
-            messages=[{"role": "user", "content": f"{PROMPT_PELICULAS}\n\nMensaje del usuario:\n{contexto}"}]
+            model=CLAUDE_MODEL,
+            max_tokens=500,
+            temperature=0.9,
+            messages=[{"role": "user", "content": f"{PROMPT_PELICULAS}\n\nConversación con el usuario:\n{contexto}\n\nMensaje actual del usuario: {mensaje}\n\nResponde directamente con las recomendaciones, sin preámbulos ni encabezados adicionales."}]
         )
         return response.content[0].text.strip()
     except Exception as e:
         print(f"[SAM Chatbot] Error recomendando películas: {e}")
-        return "Te recomiendo revisar la categoría de Acción de OPSATV, ¡está llena de grandes estrenos!"
+        return (
+            "🎬 Te recomiendo estas joyas del cine para hoy:\n\n"
+            "🎬 *Oppenheimer* (2023) — Drama/Historia\n"
+            "📖 La historia del padre de la bomba atómica. Impresionante y profunda.\n"
+            "⭐ Una de las mejores del año, ¡imprescindible!\n\n"
+            "🎬 *Top Gun: Maverick* (2022) — Acción/Aventura\n"
+            "📖 El legendario Maverick vuelve a los cielos en una misión imposible.\n"
+            "⭐ Pura adrenalina de principio a fin. ¡La vas a amar! 🔥\n\n"
+            "Encuéntralas en tu plataforma OPSATV 📺"
+        )
 
 # -------------------------------------------------------------
 # CHAT GENERAL (PERSONALIDAD BÁSICA DE SAM)
@@ -354,18 +489,17 @@ PROMPT_GENERAL = """Eres SAM (Sistema Autónomo Multitarea de OPSATEL), un asist
 Tu personalidad es amable, atenta, rápida y muy profesional.
 Tus respuestas deben ser cortas, directas y optimizadas para leerse en WhatsApp.
 
-Tus funciones principales en este chatbot son:
-1. Ayudar a los usuarios a consultar sus pagos y saldos.
-2. Ayudar a registrar nuevos clientes potenciales (prospectos).
-3. Recomendar películas en OPSATV.
+Si el usuario te hace preguntas generales o te saluda, dale la bienvenida usando siempre el saludo: "Hola soy Sam de opsatel, espero estes teniendo un buen dia en que puedo ayudarte el dia de hoy?" y ofréceles tu ayuda en lo que necesiten.
 
-Si el usuario te hace preguntas generales o te saluda, conversa amigablemente, infórmale sobre tus funciones de manera breve y ofréceles tu ayuda."""
+REGLA IMPORTANTE: Si el usuario te hace una pregunta sobre la que no tienes información suficiente, no la puedes responder con certeza, o está fuera de tus funciones, responde SIEMPRE con el siguiente mensaje exacto:
+"Lamento informarle que no cuento con la información necesaria para responder a su consulta con precisión. Le sugiero verificar esta cuestión con el personal corporativo"
+No inventes datos, no especules. Solo usa la respuesta anterior cuando no puedas responder con certeza."""
 
 def procesar_chat_general(numero: str, mensaje: str, contexto: str) -> str:
     client = get_anthropic_client()
     try:
         response = client.messages.create(
-            model="claude-3-haiku-20240307",
+            model=CLAUDE_MODEL,
             max_tokens=350,
             temperature=0.5,
             messages=[{"role": "user", "content": f"{PROMPT_GENERAL}\n\nConversación:\n{contexto}"}]
@@ -373,7 +507,7 @@ def procesar_chat_general(numero: str, mensaje: str, contexto: str) -> str:
         return response.content[0].text.strip()
     except Exception as e:
         print(f"[SAM Chatbot] Error en chat general: {e}")
-        return "Hola, soy SAM de OPSATEL. ¿En qué te puedo ayudar hoy? (Puedo asistirte con tu saldo de cuenta o registrarte como cliente potencial)."
+        return "Hola soy Sam de opsatel, espero estes teniendo un buen dia en que puedo ayudarte el dia de hoy?"
 
 # -------------------------------------------------------------
 # FUNCIÓN PRINCIPAL DE ENTRADA AL SERVICIO
@@ -392,6 +526,7 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
     
     # 3. Determinar el skill activo o clasificar la intención actual
     skill_activo = estados_skills.get(numero)
+    ya_solicitado = (skill_activo == "consultar_pagos_y_saldos")
     
     if not skill_activo:
         # Si no hay un skill en curso, clasificar la intención del mensaje
@@ -406,9 +541,9 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
         estados_skills[numero] = "registrar_cliente_potencial"
         response_text = procesar_registro_cliente(numero, mensaje, contexto, db)
     elif skill_activo == "consultar_pagos_y_saldos":
-        # Las consultas de pago son de una sola interacción, no guardan estado persistente de skill
-        estados_skills[numero] = None
-        response_text = procesar_consulta_pago(numero, mensaje, contexto, db)
+        # Marcar que este número está en el flujo de consulta de pagos/saldos
+        estados_skills[numero] = "consultar_pagos_y_saldos"
+        response_text = procesar_consulta_pago(numero, mensaje, contexto, db, ya_solicitado)
     elif skill_activo == "recomendacion_peliculas_opsatv":
         estados_skills[numero] = None
         response_text = procesar_recomendacion_peliculas(numero, mensaje, contexto)

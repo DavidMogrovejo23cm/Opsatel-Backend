@@ -15,13 +15,22 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 def format_whatsapp_number(number: str) -> str:
     """
     Cleans a phone number and formats it for WhatsApp.
-    - Removes all non-digit characters.
     - Standardizes Ecuador mobile numbers to start with 593.
+    - Preserves domain suffixes like @lid or @c.us if present.
     """
     if not number:
         return ""
         
-    cleaned = re.sub(r'\D', '', str(number))
+    number_str = str(number).strip()
+    server = ""
+    if "@" in number_str:
+        parts = number_str.split("@", 1)
+        number_part = parts[0]
+        server = "@" + parts[1]
+    else:
+        number_part = number_str
+
+    cleaned = re.sub(r'\D', '', number_part)
     
     # Ecuador mobile numbers starts with 09 (e.g. 0998765432)
     if cleaned.startswith('0') and len(cleaned) == 10:
@@ -30,7 +39,7 @@ def format_whatsapp_number(number: str) -> str:
     elif len(cleaned) == 9 and not cleaned.startswith('593'):
         cleaned = '593' + cleaned
         
-    return cleaned
+    return f"{cleaned}{server}"
 
 def send_whatsapp_message(numero: str, mensaje: str) -> bool:
     """

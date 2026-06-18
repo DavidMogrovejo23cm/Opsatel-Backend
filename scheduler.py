@@ -164,7 +164,7 @@ def iniciar_scheduler():
     )
     
     scheduler.start()
-    print("[Scheduler] ✅ Scheduler iniciado correctamente")
+    print("[Scheduler] [OK] Scheduler iniciado correctamente")
 
 def detener_scheduler():
     """
@@ -173,4 +173,4 @@ def detener_scheduler():
     global scheduler
     if scheduler is not None and scheduler.running:
         scheduler.shutdown()
-        print("[Scheduler] ✅ Scheduler detenido")
+        print("[Scheduler] [OK] Scheduler detenido")

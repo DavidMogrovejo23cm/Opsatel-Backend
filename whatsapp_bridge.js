@@ -19,16 +19,17 @@ function getChromiumPath() {
     if (process.env.PUPPETEER_EXECUTABLE_PATH) {
         return process.env.PUPPETEER_EXECUTABLE_PATH;
     }
-    // 2. Rutas comunes en sistemas Linux / Nix (Railway nixpacks)
+    // 2. Rutas comunes en sistemas Linux / Nix
     const candidates = [
         '/usr/bin/chromium',
         '/usr/bin/chromium-browser',
         '/usr/bin/google-chrome',
         '/usr/bin/google-chrome-stable',
         '/nix/var/nix/profiles/default/bin/chromium',
-        '/run/current-system/sw/bin/chromium',
+        '/run/current-system/sw/bin/chromium'
     ];
     for (const p of candidates) {
+        if (!p) continue;
         try { fs.statSync(p); return p; } catch (_) {}
     }
     // 3. Buscar en PATH
@@ -52,8 +53,6 @@ const client = new Client({
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
-            '--no-zygote',
-            '--single-process',
             '--disable-gpu'
         ]
     }
@@ -188,8 +187,16 @@ app.post('/send', async (req, res) => {
     }
 
     try {
-        // Clean and format phone number
-        let cleanNumber = number.toString().replace(/\D/g, '');
+        // Clean and format phone number, preserving the domain (like @lid or @c.us) if present
+        let cleanNumber = number.toString();
+        let server = 'c.us';
+        if (cleanNumber.includes('@')) {
+            const parts = cleanNumber.split('@');
+            cleanNumber = parts[0].replace(/\D/g, '');
+            server = parts[1];
+        } else {
+            cleanNumber = cleanNumber.replace(/\D/g, '');
+        }
         
         // Ecuador specific formatting
         if (cleanNumber.startsWith('0') && cleanNumber.length === 10) {
@@ -198,8 +205,8 @@ app.post('/send', async (req, res) => {
             cleanNumber = '593' + cleanNumber;
         }
 
-        // If it does not end with @c.us, add it
-        const chatId = cleanNumber.endsWith('@c.us') ? cleanNumber : `${cleanNumber}@c.us`;
+        // Add server suffix
+        const chatId = `${cleanNumber}@${server}`;
 
         console.log(`[WhatsApp Bridge] Enviando mensaje a: ${chatId}`);
         const response = await client.sendMessage(chatId, message);
