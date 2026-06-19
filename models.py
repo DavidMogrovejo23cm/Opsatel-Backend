@@ -17,14 +17,14 @@ class Cliente(Base):
 
     cedula = Column("CEDULA", String(100))
     cedula_tipo = Column("CEDULA_TIPO", String(100))
-    cedula_frontal = Column("CEDULA_FRONTAL", String(500))
-    cedula_posterior = Column("CEDULA_POSTERIOR", String(500))
+    cedula_frontal = Column("CEDULA_FRONTAL", Text)
+    cedula_posterior = Column("CEDULA_POSTERIOR", Text)
 
     celular = Column("CELULAR", String(255))
 
     correo = Column("CORREO", String(255))
 
-    direccion = Column("DIRECCION", String(1000))
+    direccion = Column("DIRECCION", Text)
 
     nodo = Column("NODO", String(255))
     parroquia = Column("PARROQUIA", String(255))
@@ -41,15 +41,15 @@ class Cliente(Base):
 
     puerto = Column("PUERTO", String(100))
 
-    ont = Column("ONT", String(2000))
+    ont = Column("ONT", Text)
 
-    servicio = Column("SERVICIO", String(2000))
+    servicio = Column("SERVICIO", Text)
 
-    breach = Column("BREACH", String(2000))
+    breach = Column("BREACH", Text)
 
     id_port = Column("ID_PORT", String(200))
 
-    service_port = Column("SERVICE PORT", String(2000))
+    service_port = Column("SERVICE PORT", Text)
 
     ip = Column("IP", String(50))
 
@@ -105,9 +105,9 @@ class Cliente(Base):
     plus_pagado = Column("PLUS_PAGADO", Numeric(precision=10, scale=2), default=0.00)
     adicional_pagado = Column("ADICIONAL_PAGADO", Numeric(precision=10, scale=2), default=0.00)
 
-    comentarios = Column("COMENTARIOS", String(2000))
-    observaciones = Column("OBSERVACIONES", String(2000))
-    notas_pago = Column("NOTAS_PAGO", String(2000))
+    comentarios = Column("COMENTARIOS", Text)
+    observaciones = Column("OBSERVACIONES", Text)
+    notas_pago = Column("NOTAS_PAGO", Text)
     tercera_edad = Column("TERCERA_EDAD", Boolean, default=False)
     precio_plan_especial = Column("PRECIO_PLAN_ESPECIAL", Numeric(precision=10, scale=2), default=0.00)
     pago_mensual = Column("PAGO_MENSUAL", Numeric(precision=10, scale=2), default=0.00)
@@ -120,8 +120,8 @@ class Cliente(Base):
     iptv_bouquets = Column("IPTV_BOUQUETS", String(255))
     iptv_exp_date = Column("IPTV_EXP_DATE", String(100))
     iptv_max_conn = Column("IPTV_MAX_CONN", Integer, default=0)
-    iptv_outputs = Column("IPTV_OUTPUTS", String(1255))
-    iptv_notes = Column("IPTV_NOTES", String(2000))
+    iptv_outputs = Column("IPTV_OUTPUTS", Text)
+    iptv_notes = Column("IPTV_NOTES", Text)
     iptv_member_id = Column("IPTV_MEMBER_ID", Integer, default=1)
 
     pagos = relationship("Pago", back_populates="cliente")
@@ -527,4 +527,3 @@ class WhatsAppConfiguracion(Base):
     recurrencia = Column(String(50), default="diario")  # diario, mensual, unico
     job_id = Column(String(200), nullable=True)  # Scheduler job id si es envío puntual
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
-
