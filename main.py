@@ -6,36 +6,50 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import engine, Base
 import models
 import os
+import time
+from sqlalchemy.exc import OperationalError
 from sync_db import sync_schema
 from force_fix import force_fix_columns
 # Iniciar App
 app = FastAPI(title="ISP Management API")
 
 # Función para inicializar la base de datos de forma segura
-def init_db():
-    try:
-        print("Sincronizando esquema...")
-        sync_schema() 
-        print("Aplicando parches de columnas...")
-        force_fix_columns() 
-        print("Creando tablas si no existen...")
-        Base.metadata.create_all(bind=engine)
-        print("Base de datos lista.")
-        
-        # Corregir formatos inconsistentes (.0) en clientes existentes
+def init_db(max_retries=12, retry_interval=5):
+    attempts = 0
+    while True:
         try:
-            from database import SessionLocal
-            from routes.clientes import clean_existing_database_formats
-            db = SessionLocal()
+            print("Sincronizando esquema...")
+            sync_schema()
+            print("Aplicando parches de columnas...")
+            force_fix_columns()
+            print("Creando tablas si no existen...")
+            Base.metadata.create_all(bind=engine)
+            print("Base de datos lista.")
+
+            # Corregir formatos inconsistentes (.0) en clientes existentes
             try:
-                clean_existing_database_formats(db)
-            finally:
-                db.close()
-        except Exception as migration_error:
-            print(f"Error al ejecutar automigración de formatos: {migration_error}")
-            
-    except Exception as e:
-        print(f"Error inicializando base de datos: {e}")
+                from database import SessionLocal
+                from routes.clientes import clean_existing_database_formats
+                db = SessionLocal()
+                try:
+                    clean_existing_database_formats(db)
+                finally:
+                    db.close()
+            except Exception as migration_error:
+                print(f"Error al ejecutar automigración de formatos: {migration_error}")
+            return
+
+        except OperationalError as e:
+            attempts += 1
+            print(f"Error inicializando base de datos ({attempts}/{max_retries}): {e}")
+            if attempts >= max_retries:
+                print("No se pudo inicializar la base de datos después de varios intentos. Revise la conectividad y las credenciales.")
+                return
+            print(f"Reintentando en {retry_interval} segundos...")
+            time.sleep(retry_interval)
+        except Exception as e:
+            print(f"Error inicializando base de datos: {e}")
+            return
 
 # Ejecutar inicialización ANTES de importar rutas
 init_db()
