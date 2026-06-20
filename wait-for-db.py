@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import urllib.parse
 import pymysql
 from pymysql.err import OperationalError
 
@@ -9,6 +10,22 @@ DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("MYSQL_USER", "root")
 DB_PASSWORD = os.getenv("MYSQL_ROOT_PASSWORD", "")
 DB_NAME = os.getenv("MYSQL_DATABASE", "opsatel")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+if DATABASE_URL and not DB_PASSWORD:
+    parsed = urllib.parse.urlparse(DATABASE_URL)
+    if parsed.scheme.startswith("mysql"):
+        if parsed.hostname:
+            DB_HOST = parsed.hostname
+        if parsed.port:
+            DB_PORT = parsed.port
+        if parsed.username:
+            DB_USER = parsed.username
+        if parsed.password:
+            DB_PASSWORD = parsed.password
+        if parsed.path:
+            DB_NAME = parsed.path.lstrip("/")
+
 MAX_ATTEMPTS = int(os.getenv("DB_WAIT_ATTEMPTS", "30"))
 DELAY = int(os.getenv("DB_WAIT_DELAY", "2"))
 
