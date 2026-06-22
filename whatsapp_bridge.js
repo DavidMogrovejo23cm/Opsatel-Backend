@@ -224,6 +224,37 @@ app.post('/send', async (req, res) => {
     }
 });
 
+// Limpiar archivos de bloqueo residuales de Chromium en el volumen montado
+const path = require('path');
+function cleanChromiumLocks(dir) {
+    if (!fs.existsSync(dir)) return;
+    try {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+            const fullPath = path.join(dir, file);
+            try {
+                const stat = fs.lstatSync(fullPath);
+                if (stat.isDirectory()) {
+                    cleanChromiumLocks(fullPath);
+                } else if (file === 'SingletonLock' || file === 'lock') {
+                    console.log(`[WhatsApp Bridge] Eliminando archivo de bloqueo residual: ${fullPath}`);
+                    fs.unlinkSync(fullPath);
+                }
+            } catch (err) {
+                try {
+                    fs.unlinkSync(fullPath);
+                    console.log(`[WhatsApp Bridge] Eliminando enlace simbólico de bloqueo roto: ${fullPath}`);
+                } catch (e) {}
+            }
+        }
+    } catch (e) {
+        console.error('[WhatsApp Bridge] Error al limpiar bloqueos de Chromium:', e);
+    }
+}
+
+console.log('[WhatsApp] Limpiando archivos de bloqueo de Chromium...');
+cleanChromiumLocks('./.wwebjs_auth');
+
 // Initialize Client
 console.log('[WhatsApp] Iniciando cliente...');
 client.initialize().catch(err => {
