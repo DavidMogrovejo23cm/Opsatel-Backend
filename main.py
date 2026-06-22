@@ -18,15 +18,52 @@ app = FastAPI(title="ISP Management API")
 
 # Función para inicializar la base de datos de forma segura
 def wait_for_db(host='db', port=3306, max_attempts=30, delay=2):
+    import urllib.parse
+    
+    db_host = host
+    db_port = port
+    db_user = os.getenv('MYSQL_USER', 'root')
+    db_pass = os.getenv('MYSQL_ROOT_PASSWORD', '')
+    db_name = os.getenv('MYSQL_DATABASE', '')
+    
+    database_url = os.getenv('DATABASE_URL', '')
+    if database_url:
+        try:
+            parsed = urllib.parse.urlparse(database_url)
+            if parsed.scheme.startswith("mysql"):
+                if parsed.hostname:
+                    db_host = parsed.hostname
+                if parsed.port:
+                    db_port = parsed.port
+                if parsed.username:
+                    db_user = parsed.username
+                if parsed.password:
+                    db_pass = parsed.password
+                if parsed.path:
+                    db_name = parsed.path.lstrip("/")
+        except Exception as e:
+            print(f"Error parsing DATABASE_URL in main.py: {e}")
+
+    # Limpiar posibles caracteres de retorno de carro (\r) de Windows
+    if db_host: db_host = str(db_host).strip().replace("\r", "")
+    if db_user: db_user = str(db_user).strip().replace("\r", "")
+    if db_pass: db_pass = str(db_pass).strip().replace("\r", "")
+    if db_name: db_name = str(db_name).strip().replace("\r", "")
+    if db_port:
+        try:
+            db_port = int(str(db_port).strip().replace("\r", ""))
+        except ValueError:
+            db_port = 3306
+
     attempts = 0
     while attempts < max_attempts:
         try:
             conn = pymysql.connect(
-                host=host,
-                user=os.getenv('MYSQL_USER', 'root'),
-                password=os.getenv('MYSQL_ROOT_PASSWORD', ''),
-                database=os.getenv('MYSQL_DATABASE', ''),
-                port=port,
+                host=db_host,
+                user=db_user,
+                password=db_pass,
+                database=db_name,
+                port=db_port,
                 connect_timeout=5
             )
             conn.close()
