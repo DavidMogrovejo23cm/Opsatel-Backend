@@ -292,3 +292,47 @@ def wipe_all(db: Session = Depends(get_db)):
         db.rollback()
         return {"error": str(e)}
 
+# --- Cajas NAP ---
+@router.post("/cajas-nap", response_model=schemas.CajaNapResponse)
+def create_caja_nap(caja: schemas.CajaNapBase, db: Session = Depends(get_db)):
+    db_caja = models.CajaNap(nombre=caja.nombre)
+    db.add(db_caja)
+    try:
+        db.commit()
+        db.refresh(db_caja)
+    except:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Error o caja NAP duplicada")
+    return db_caja
+
+@router.get("/cajas-nap", response_model=List[schemas.CajaNapResponse])
+def get_cajas_nap(db: Session = Depends(get_db)):
+    return db.query(models.CajaNap).all()
+
+@router.delete("/cajas-nap/{caja_id}")
+def delete_caja_nap(caja_id: int, db: Session = Depends(get_db)):
+    caja = db.query(models.CajaNap).filter(models.CajaNap.id == caja_id).first()
+    if not caja:
+        raise HTTPException(status_code=404, detail="Caja NAP no encontrada")
+    db.delete(caja)
+    db.commit()
+    return {"message": "Caja NAP eliminada"}
+
+@router.patch("/cajas-nap/{caja_id}", response_model=schemas.CajaNapResponse)
+def update_caja_nap(caja_id: int, caja_data: schemas.CajaNapUpdate, db: Session = Depends(get_db)):
+    db_caja = db.query(models.CajaNap).filter(models.CajaNap.id == caja_id).first()
+    if not db_caja:
+        raise HTTPException(status_code=404, detail="Caja NAP no encontrada")
+    
+    for key, value in caja_data.dict(exclude_unset=True).items():
+        setattr(db_caja, key, value)
+        
+    try:
+        db.commit()
+        db.refresh(db_caja)
+    except:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Error al actualizar caja NAP")
+    return db_caja
+
+

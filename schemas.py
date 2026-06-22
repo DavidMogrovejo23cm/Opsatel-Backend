@@ -653,4 +653,18 @@ class WhatsAppManualSend(BaseModel):
 class WhatsAppGlobalSend(BaseModel):
     mensaje: str
 
+class CajaNapBase(BaseModel):
+    nombre: str
+
+class CajaNapResponse(CajaNapBase):
+    id: int
+    class Config:
+        from_attributes = True
+
+class CajaNapUpdate(BaseModel):
+    nombre: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+
 

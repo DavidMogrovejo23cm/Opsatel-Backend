@@ -527,3 +527,8 @@ class WhatsAppConfiguracion(Base):
     recurrencia = Column(String(50), default="diario")  # diario, mensual, unico
     job_id = Column(String(200), nullable=True)  # Scheduler job id si es envío puntual
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+
+class CajaNap(Base):
+    __tablename__ = "cajas_nap"
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(100), unique=True, index=True)
