@@ -5,14 +5,21 @@ import urllib.parse
 import pymysql
 from pymysql.err import OperationalError
 
-DB_HOST = os.getenv("DB_HOST", "db")
-DB_PORT = int(os.getenv("DB_PORT", "3306"))
-DB_USER = os.getenv("MYSQL_USER", "root")
-DB_PASSWORD = os.getenv("MYSQL_ROOT_PASSWORD", "")
-DB_NAME = os.getenv("MYSQL_DATABASE", "opsatel")
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+def get_clean_env(name, default=""):
+    val = os.getenv(name, default)
+    if val is not None:
+        val = str(val).strip().replace("\r", "")
+    return val
 
-if DATABASE_URL and not DB_PASSWORD:
+DB_HOST = get_clean_env("DB_HOST", "db")
+DB_PORT_str = get_clean_env("DB_PORT", "3306")
+DB_PORT = int(DB_PORT_str) if DB_PORT_str.isdigit() else 3306
+DB_USER = get_clean_env("MYSQL_USER", "root")
+DB_PASSWORD = get_clean_env("MYSQL_ROOT_PASSWORD", "")
+DB_NAME = get_clean_env("MYSQL_DATABASE", "opsatel")
+DATABASE_URL = get_clean_env("DATABASE_URL", "")
+
+if DATABASE_URL:
     parsed = urllib.parse.urlparse(DATABASE_URL)
     if parsed.scheme.startswith("mysql"):
         if parsed.hostname:
@@ -26,10 +33,13 @@ if DATABASE_URL and not DB_PASSWORD:
         if parsed.path:
             DB_NAME = parsed.path.lstrip("/")
 
-MAX_ATTEMPTS = int(os.getenv("DB_WAIT_ATTEMPTS", "30"))
-DELAY = int(os.getenv("DB_WAIT_DELAY", "2"))
+MAX_ATTEMPTS_str = get_clean_env("DB_WAIT_ATTEMPTS", "30")
+MAX_ATTEMPTS = int(MAX_ATTEMPTS_str) if MAX_ATTEMPTS_str.isdigit() else 30
+DELAY_str = get_clean_env("DB_WAIT_DELAY", "2")
+DELAY = int(DELAY_str) if DELAY_str.isdigit() else 2
 
-print(f"Esperando a MySQL en {DB_HOST}:{DB_PORT}...")
+masked_password = "***" if DB_PASSWORD else "NO PASSWORD"
+print(f"Esperando a MySQL en {DB_HOST}:{DB_PORT} (Usuario: {DB_USER}, DB: {DB_NAME}, Password: {masked_password})...")
 
 attempts = 0
 while attempts < MAX_ATTEMPTS:
