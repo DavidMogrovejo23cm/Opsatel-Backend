@@ -655,14 +655,17 @@ class WhatsAppGlobalSend(BaseModel):
 
 class CajaNapBase(BaseModel):
     nombre: str
+    nodo_id: Optional[int] = None
 
 class CajaNapResponse(CajaNapBase):
     id: int
+    nodo_nombre: Optional[str] = None
     class Config:
         from_attributes = True
 
 class CajaNapUpdate(BaseModel):
     nombre: Optional[str] = None
+    nodo_id: Optional[int] = None
     class Config:
         from_attributes = True
 

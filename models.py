@@ -531,4 +531,5 @@ class WhatsAppConfiguracion(Base):
 class CajaNap(Base):
     __tablename__ = "cajas_nap"
     id = Column(Integer, primary_key=True, index=True)
-    nombre = Column(String(100), unique=True, index=True)
+    nombre = Column(String(100), unique=True, index=True)
+    nodo_id = Column(Integer, ForeignKey("nodos.id"), nullable=True)
