@@ -306,7 +306,7 @@ class PlanInternetBase(BaseModel):
     nombre: str
     megas: Optional[int] = 100
     precio: Optional[float] = 0.0
-    pantallas: Optional[int] = 1
+    pantallas: Optional[int] = 0
 
 class PlanInternetResponse(PlanInternetBase):
     id: int

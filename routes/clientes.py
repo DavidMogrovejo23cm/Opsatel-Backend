@@ -579,7 +579,7 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
             if var == 'iptv_max_conn' and value is not None:
                 # Obtener pantallas base desde la configuración del plan
                 plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
-                base_screens = plan_info.pantallas if plan_info else 1
+                base_screens = (plan_info.pantallas if plan_info.pantallas is not None else 0) if plan_info else 0
                 # Las pantallas incluidas en el plan son gratis, las extras valen $2
                 cliente.plus = str(max(0, (value - base_screens) * 2))
         
@@ -650,7 +650,7 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
             # Sincronizar 'plus' si se cambia 'iptv_max_conn'
             if var == 'iptv_max_conn':
                 plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
-                base_screens = plan_info.pantallas if plan_info else 1
+                base_screens = (plan_info.pantallas if plan_info.pantallas is not None else 0) if plan_info else 0
                 cliente.plus = str(max(0, (value - base_screens) * 2))
             
     sync_cliente_balances(cliente, db)
@@ -759,7 +759,7 @@ def ejecutar_facturacion_mensual(db: Session = Depends(get_db)):
         # 1. Recargo mensual de IPTV PLUS ($2 por pantalla adicional contratada)
         # Obtenemos pantallas base del plan
         plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
-        base_screens = plan_info.pantallas if plan_info else 1
+        base_screens = (plan_info.pantallas if plan_info.pantallas is not None else 0) if plan_info else 0
         
         if (cliente.iptv_max_conn or 0) > base_screens:
             cargo_plus = (cliente.iptv_max_conn - base_screens) * 2
@@ -1183,14 +1183,14 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
         FIELD_MAPPING = {
             "nombre": ["NOMBRE", "NOMBRES", "CLIENTE", "NOMBRE COMPLETO"],
             "cedula": ["CEDULA", "CI", "RUC", "IDENTIFICACION", "DNI"],
-            "cedula_tipo": ["CEDULA_TIPO", "TIPO_CEDULA", "TIPO_IDENTIFICACION"],
+            "cedula_tipo": ["CEDULA_TIPO", "TIPO_CEDULA", "TIPO_IDENTIFICACION", "CEDULA TIPO"],
             "celular": ["CELULAR", "TELEFONO", "MOVIL", "CONTACTO", "CEL"],
             "correo": ["CORREO", "EMAIL", "MAIL"],
             "direccion": ["DIRECCION", "DIR", "DOMICILIO"],
             "nodo": ["NODO", "SECTOR", "NODO_ACCESO"],
             "parroquia": ["PARROQUIA", "CIUDAD", "CANTON", "PARROQUIA/CANTON"],
             "plan": ["PLAN", "VELOCIDAD", "PAQUETE", "PLAN INTERNET"],
-            "fecha_firma": ["FECHA_FIRMA", "FECHA_CONTRATO", "FIRMA", "CONTRATO"],
+            "fecha_firma": ["FECHA_FIRMA", "FECHA_CONTRATO", "FIRMA", "CONTRATO", "FECHA FIRMA"],
             "estado": ["ESTADO", "STATUS", "ESTADO_CLIENTE"],
             "puerto": ["PUERTO", "PORT", "NAP_PORT", "PUERTO_PON"],
             "ont": ["ONT", "SCRIPT_ONT", "COMANDO_ONT"],
@@ -1208,26 +1208,26 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
             "red": ["RED", "VLAN", "SEGMENTO"],
             "clave": ["CLAVE", "PASSWORD_WIFI", "CLAVE_ONT"],
             "mac": ["MAC", "MAC_ADDRESS", "PON_SN", "SERIAL"],
-            "instalation_date": ["INSTALATION_DATE", "FECHA_INSTALACION", "FECHA_ACTIVA"],
+            "instalation_date": ["INSTALATION_DATE", "FECHA_INSTALACION", "FECHA_ACTIVA", "INSTALATION DATE"],
             "tiempo": ["TIEMPO", "DURACION_CONTRATO", "MESES", "CONTRATO_MESES"],
             "arrienda": ["ARRIENDA", "ARRIENDO"],
             "cuenta": ["CUENTA", "NUM_CUENTA"],
             "facturas": ["FACTURAS", "FACTURA", "NUM_FACTURA"],
-            "internet_payment": ["INTERNET_PAYMENT", "INTERNET PAYMENT", "PAGO_INTERNET"],
+            "internet_payment": ["INTERNET_PAYMENT", "INTERNET PAYMENT", "PAGO_INTERNET", "INTERNET PAY"],
             "app": ["APP", "USA_APP"],
             "payment_date": ["PAYMENT_DATE", "PAYMENT DATE", "FECHA_PAGO"],
             "client_payment_date": ["CLIENT_PAYMENT_DATE", "CLIENT PAYMENT DATE"],
             "bank": ["BANK", "BANCO", "ENTIDAD_FINANCIERA"],
             "cod": ["COD", "CODIGO_PAGO", "CODIGO_CLIENTE"],
-            "plus": ["PLUS", "ADICIONAL_MENSUAL", "TV_PLUS", "VALOR_PLUS"],
-            "bank_plus": ["BANK_PLUS", "BANCO_TV"],
+            "plus": ["PLUS", "ADICIONAL_MENSUAL", "TV_PLUS", "VALOR_PLUS", "IPTV"],
+            "bank_plus": ["BANK_PLUS", "BANCO_TV", "BANK PLUS"],
             "adicional": ["ADICIONAL", "MONTO_ADICIONAL", "CARGO_EXTRA"],
             "comentarios": ["COMENTARIOS", "NOTAS", "OBS", "DESCRIPCION"],
             "observaciones": ["OBSERVACIONES"],
             "notas_pago": ["NOTAS_PAGO", "OBSERVACION_PAGO"],
             "tercera_edad": ["TERCERA_EDAD", "DISCAPACIDAD", "MAYOR_EDAD"],
             "precio_plan_especial": ["PRECIO_PLAN_ESPECIAL", "VALOR_ESPECIAL", "TARIFA_REDUCIDA"],
-            "saldo": ["SALDO", "DEUDA", "PENDIENTE", "SALDO_ANTERIOR"],
+            "saldo": ["SALDO", "DEUDA", "PENDIENTE", "SALDO_ANTERIOR", "TOTAL"],
             "pago_mensual": ["PAGO_MENSUAL", "COBRO_MES", "RECAUDACION"],
             "iptv_activar": ["IPTV_ACTIVAR", "ACTIVAR_IPTV"],
             "iptv_user": ["IPTV_USER", "USUARIO_IPTV"],
