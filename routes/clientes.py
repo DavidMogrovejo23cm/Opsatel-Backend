@@ -218,15 +218,21 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         comentarios=cliente.comentarios,
         estado="Pendiente"
     )
-    db.add(db_cliente)
-    db.commit()
-    db.refresh(db_cliente)
-    
-    # Sincronizamos balances para que el total_pago se calcule (Costo Plan + Plus)
-    sync_cliente_balances(db_cliente, db)
-    db.commit()
-    db.refresh(db_cliente)
-    return db_cliente
+    try:
+        db.add(db_cliente)
+        # Sincronizamos balances para que el total_pago se calcule (Costo Plan + Plus)
+        sync_cliente_balances(db_cliente, db)
+        db.commit()
+        db.refresh(db_cliente)
+        return db_cliente
+    except Exception as e:
+        db.rollback()
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error en la base de datos al registrar el cliente: {str(e)}"
+        )
 
 
 @router.post("/{id}/upload-cedula", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
