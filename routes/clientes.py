@@ -284,20 +284,34 @@ def obtener_siguiente_valor_tecnico(
     puerto_num_clean = match.group() if match else "0"
     p_num = int(puerto_num_clean)
 
+    # Convert cliente_id to integer if possible
+    c_id = None
+    if cliente_id:
+        try:
+            c_id = int(cliente_id)
+        except ValueError:
+            pass
+
     # 2. Búsqueda Recursiva de Valores Libres
     id_port_val = 0
     while True:
         service_port_val = p_num * 128 + id_port_val
         
-        id_port_ocupado = db.query(models.Cliente).filter(
+        id_port_query = db.query(models.Cliente).filter(
             models.Cliente.id_port == str(id_port_val),
             models.Cliente.nodo == nodo,
             models.Cliente.puerto == puerto
-        ).first()
+        )
+        if c_id is not None:
+            id_port_query = id_port_query.filter(models.Cliente.id != c_id)
+        id_port_ocupado = id_port_query.first()
 
-        sp_ocupado = db.query(models.Cliente).filter(
+        sp_query = db.query(models.Cliente).filter(
             models.Cliente.service_port == str(service_port_val)
-        ).first()
+        )
+        if c_id is not None:
+            sp_query = sp_query.filter(models.Cliente.id != c_id)
+        sp_ocupado = sp_query.first()
 
         if not id_port_ocupado and not sp_ocupado:
             break
@@ -312,7 +326,10 @@ def obtener_siguiente_valor_tecnico(
     ip_offset = 2
     while True:
         ip_temp = f"{prefijo}.{p_num}.{id_port_val + ip_offset}"
-        ip_ocupada = db.query(models.Cliente).filter(models.Cliente.ip == ip_temp).first()
+        ip_query = db.query(models.Cliente).filter(models.Cliente.ip == ip_temp)
+        if c_id is not None:
+            ip_query = ip_query.filter(models.Cliente.id != c_id)
+        ip_ocupada = ip_query.first()
         if not ip_ocupada:
             ip_sugerida = ip_temp
             break
