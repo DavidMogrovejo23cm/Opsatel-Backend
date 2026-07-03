@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 try:
+    # pyrefly: ignore [missing-import]
     from netmiko import ConnectHandler, NetmikoAuthenticationException, NetmikoTimeoutException
     NETMIKO_AVAILABLE = True
 except ImportError:
@@ -402,10 +403,20 @@ class OLTInterface:
         vlan = payload.get('vlan', payload.get('user_vlan', profile_id))
         user_vlan = payload.get('user_vlan', vlan)
 
+        # Extraer slot/port e interface
+        parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
+        if len(parts) >= 3:
+            interface = f"{parts[0]}/{parts[1]}"
+            port_num = parts[2]
+        else:
+            interface = "0/0"
+            port_num = "0"
+
         return [
-            f"interface gpon {self._get_gpon_interface(gpon_port)}",
-            f'ont add {gpon_port} {ont_id} sn-auth "{mac}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {srvprofile_id} desc "{description}"',
-            f'ont port native-vlan {gpon_port} {ont_id} eth 1 vlan {vlan} priority 0',
+            f"interface gpon {interface}",
+            f'ont add {port_num} {ont_id} sn-auth "{mac}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {srvprofile_id} desc "{description}"',
+            f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {vlan} priority 0',
+            "quit",
             f'service-port {service_port} vlan {vlan} gpon {gpon_port} ont {ont_id} gemport {profile_id} multi-service user-vlan {user_vlan} tag-transform translate',
         ]
 
@@ -517,22 +528,29 @@ class OLTInterface:
         for line in lines:
             if not line.strip():
                 continue
-            if line.strip().startswith(('Port', 'ONT', '-----', 'Total', 'Number', 'OLT')):
+            if any(header in line for header in ('Port', 'ONT', '-----', 'Total', 'Number', 'OLT')):
                 continue
 
-            # Buscar puerto GPON y ont-id al inicio de la línea
-            match_port = re.search(r'^(0/(?:0|1)/\d{1,3})\s+(\d{1,3})', line)
+            # Buscar puerto GPON y ont-id en cualquier parte de la línea
+            match_port = re.search(r'(\d+/\d+/\d+)\s+(\d+)', line)
             if not match_port:
                 continue
 
             gpon_port = match_port.group(1).strip()
             ont_id = match_port.group(2).strip()
 
-            # Buscar MAC en la línea
-            mac_match = re.search(r'([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{12}', line)
-            mac = mac_match.group(0).replace('-', ':').replace('.', ':').upper() if mac_match else None
-            if mac and len(mac) == 12:
-                mac = ':'.join(mac[i:i+2] for i in range(0, 12, 2))
+            # Buscar MAC o GPON SN en la línea
+            mac_match = re.search(r'([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{16}|[A-Za-z]{4}[0-9A-Fa-f]{8}|[0-9A-Fa-f]{12}', line)
+            mac = mac_match.group(0).upper() if mac_match else None
+            
+            # Normalizar MAC si es de 12 caracteres (con o sin separadores)
+            if mac:
+                mac_clean = mac.replace('-', '').replace(':', '').replace('.', '')
+                is_hex = all(c in '0123456789ABCDEF' for c in mac_clean)
+                if len(mac_clean) == 12 and is_hex:
+                    mac = ':'.join(mac_clean[i:i+2] for i in range(0, 12, 2))
+                else:
+                    mac = mac_clean  # Dejar como GPON SN continuo (ej: HWTC12345678 o 48575443B0C1D2E3)
 
             # Buscar estado o texto de activación
             status_match = re.search(r'(?i)(pending|not activated|not-activated|inactive|activated|online|offline|error|unknown)', line)
@@ -551,6 +569,11 @@ class OLTInterface:
         """
         Ejecuta 'display ont autofind all' para listar ONTs detectadas por la OLT.
         """
+        try:
+            self.enter_privileged_mode()
+            self.enter_config_mode()
+        except Exception as e:
+            logger.warning(f"No se pudo entrar a modo privilegiado/config para autofind: {e}")
         response = self.send_command('display ont autofind all', delay_factor=2.0)
         candidates = self.parse_autofind_output(response)
         return candidates
@@ -567,13 +590,30 @@ class OLTInterface:
             Diccionario con {'power': float, 'status': str, 'response': str}
         """
         try:
-            # Comando Huawei para verificar potencia de ONT
+            # Extraer slot/port e interface
+            parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
+            if len(parts) >= 3:
+                interface = f"{parts[0]}/{parts[1]}"
+                port_num = parts[2]
+            else:
+                interface = "0/0"
+                port_num = "0"
+
+            logger.info(f"Verificando potencia ONT {gpon_port} {ont_id}...")
+            
+            # Entrar a la interfaz gpon correspondiente
+            try:
+                self.enter_privileged_mode()
+                self.enter_config_mode()
+                self.send_command(f"interface gpon {interface}", delay_factor=1.2)
+            except Exception as nav_err:
+                logger.warning(f"Error navegando a interfaz gpon para verificar potencia: {nav_err}")
+
             commands = [
-                f"display ont optical-info {gpon_port} {ont_id}",
-                f"display ont info {gpon_port} {ont_id}",
+                f"display ont optical-info {port_num} {ont_id}",
+                f"display ont info {port_num} {ont_id}",
             ]
             
-            logger.info(f"Verificando potencia ONT {gpon_port} {ont_id}...")
             last_response = ""
             for command in commands:
                 try:
@@ -583,6 +623,11 @@ class OLTInterface:
                     status = self.parse_ont_status(response)
                     
                     if power is not None:
+                        # Salir de la interfaz GPON
+                        try:
+                            self.send_command("quit", delay_factor=1.0)
+                        except:
+                            pass
                         return {
                             'power': power,
                             'status': status,
@@ -596,6 +641,12 @@ class OLTInterface:
                     logger.debug(f"Comando {command} falló: {inner_exc}")
                     continue
             
+            # Salir de la interfaz GPON
+            try:
+                self.send_command("quit", delay_factor=1.0)
+            except:
+                pass
+
             return {
                 'power': None,
                 'status': 'unknown',

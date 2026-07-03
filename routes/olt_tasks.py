@@ -358,32 +358,67 @@ def get_mac_candidates(
     """
     try:
         # Primero intentar obtener la OLT activa para el nodo
-        olt_query = db.query(models.OLTConfig).filter(models.OLTConfig.active == True)
+        olt_config = None
         if nodo:
-            olt_query = olt_query.filter(models.OLTConfig.nodo_asociado == nodo)
-        olt_config = olt_query.first()
+            olt_config = db.query(models.OLTConfig).filter(
+                models.OLTConfig.active == True,
+                models.OLTConfig.nodo_asociado == nodo
+            ).first()
+        
+        # Si no se encuentra para ese nodo específico, buscar una genérica (sin nodo asociado)
+        if not olt_config:
+            olt_config = db.query(models.OLTConfig).filter(
+                models.OLTConfig.active == True,
+                or_(
+                    models.OLTConfig.nodo_asociado == None,
+                    models.OLTConfig.nodo_asociado == ""
+                )
+            ).first()
+            
+        # Como último recurso, obtener la primera OLT activa disponible
+        if not olt_config:
+            olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
 
         candidates = []
+        olt_success = False
+        
         if olt_config:
+            logger.info(f"Conectando a OLT {olt_config.nombre} ({olt_config.host}:{olt_config.port})...")
             try:
                 olt = OLTInterface(
                     host=olt_config.host,
-                    port=olt_config.port,
+                    port=olt_config.port or 23,
                     username=olt_config.username,
                     password=olt_config.password,
-                    timeout=olt_config.connection_timeout,
-                    max_retries=olt_config.max_retries,
-                    retry_backoff_base=olt_config.retry_backoff_base
+                    timeout=olt_config.connection_timeout or 30,
+                    max_retries=olt_config.max_retries or 3,
+                    retry_backoff_base=olt_config.retry_backoff_base or 1
                 )
                 olt.connect()
+                logger.info("Ejecutando 'display ont autofind all'...")
                 candidates = olt.display_autofind_all()
+                olt_success = True
+                logger.info(f"✓ OLT retornó {len(candidates)} candidatos")
+                
+                # Filtrar solo equipos con estado "pending" o "not activated"
+                pending = [c for c in candidates if c.get('status', '').lower() in ('pending', 'not activated', 'not-activated', 'inactive')]
+                if pending:
+                    candidates = pending
+                    logger.info(f"✓ Filtrados a {len(candidates)} candidatos pendientes")
+                    
             except Exception as e:
-                logger.warning(f"No se pudo consultar OLT para mac-candidates: {e}")
+                logger.error(f"✗ Error conectando a OLT o ejecutando comando: {e}", exc_info=True)
+                logger.info("Cayendo al fallback de base de datos...")
                 candidates = []
+                olt_success = False
 
-        if not candidates:
-            # Fallback a los MACs en la tabla de clientes
-            q = db.query(models.Cliente).filter(models.Cliente.mac != None)
+        if not olt_success:
+            # Fallback a los MACs en la tabla de clientes PENDIENTES solamente
+            logger.info("Buscando clientes pendientes en base de datos (fallback)...")
+            q = db.query(models.Cliente).filter(
+                models.Cliente.mac != None,
+                models.Cliente.estado.in_(['Pendiente', 'En Activación'])
+            )
             if nodo:
                 q = q.filter(models.Cliente.nodo == nodo)
             if puerto:
@@ -426,7 +461,11 @@ def get_mac_candidates(
                     'instalation_date': getattr(c, 'instalation_date', None)
                 })
 
-        return {'total': len(candidates), 'candidates': candidates}
+        return {
+            'total': len(candidates),
+            'candidates': candidates,
+            'source': 'olt' if olt_success else 'db'
+        }
 
     except Exception as e:
         logger.error(f"Error obteniendo mac-candidates: {e}")

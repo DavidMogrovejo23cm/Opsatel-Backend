@@ -35,7 +35,9 @@ class CommandSanitizer:
     # Expresiones regulares compiladas
     REGEX_MAC = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$')
     REGEX_MAC_NO_SEPARATOR = re.compile(r'^[0-9A-Fa-f]{12}$')
-    REGEX_GPON_PORT = re.compile(r'^0/(0|1)/\d{1,2}$')  # 0/0/X o 0/1/X
+    REGEX_GPON_SN_HEX = re.compile(r'^[0-9A-Fa-f]{16}$')
+    REGEX_GPON_SN_ASCII = re.compile(r'^[A-Za-z]{4}[0-9A-Fa-f]{8}$')
+    REGEX_GPON_PORT = re.compile(r'^0/\d{1,2}/\d{1,2}$')  # 0/SLOT/PORT (ej: 0/2/1)
     REGEX_ONT_ID = re.compile(r'^\d{1,3}$')  # 0-127 (en la práctica)
     REGEX_VLAN_ID = re.compile(r'^[0-9]{1,4}$')  # 0-4095 para VLAN
     REGEX_DESCRIPTION = re.compile(r'^[a-zA-Z0-9\-_\s]{1,31}$')  # Solo alfanuméricos, guion, guion bajo, espacio
@@ -47,33 +49,36 @@ class CommandSanitizer:
     @staticmethod
     def validate_mac(mac: str) -> str:
         """
-        Valida y normaliza direcciones MAC.
-        Acepta: AA:BB:CC:DD:EE:FF, AA-BB-CC-DD-EE-FF, AABBCCDDEEFF
-        Retorna: AABBCCDDEEFF (formato Huawei, sin separadores)
+        Valida y normaliza direcciones MAC o GPON SN.
+        Acepta: AA:BB:CC:DD:EE:FF, AA-BB-CC-DD-EE-FF, AABBCCDDEEFF, GPON SN (16 hex o 4 letras + 8 hex)
+        Retorna: MAC/SN normalizado (sin separadores, uppercase)
         
         Args:
-            mac: Dirección MAC a validar
+            mac: Dirección MAC o SN a validar
             
         Returns:
-            MAC normalizado (sin separadores, uppercase)
+            MAC/SN normalizado (sin separadores, uppercase)
             
         Raises:
-            CommandSanitizationError: Si MAC es inválida
+            CommandSanitizationError: Si MAC/SN es inválida
         """
         if not isinstance(mac, str):
-            raise CommandSanitizationError(f"MAC debe ser string, recibido {type(mac)}")
+            raise CommandSanitizationError(f"MAC/SN debe ser string, recibido {type(mac)}")
         
         mac_clean = mac.strip().upper()
         
         # Intentar parsear con separadores
         if CommandSanitizer.REGEX_MAC.match(mac_clean):
             mac_clean = mac_clean.replace(':', '').replace('-', '')
+            return mac_clean
         # O directo sin separadores
-        elif CommandSanitizer.REGEX_MAC_NO_SEPARATOR.match(mac_clean):
-            pass
+        elif (CommandSanitizer.REGEX_MAC_NO_SEPARATOR.match(mac_clean) or
+              CommandSanitizer.REGEX_GPON_SN_HEX.match(mac_clean) or
+              CommandSanitizer.REGEX_GPON_SN_ASCII.match(mac_clean)):
+            return mac_clean
         else:
             raise CommandSanitizationError(
-                f"MAC '{mac}' inválida. Formato esperado: AA:BB:CC:DD:EE:FF o AABBCCDDEEFF"
+                f"MAC/SN '{mac}' inválido. Debe ser una MAC (AABBCCDDEEFF) o GPON SN (16 hex o 4 letras + 8 hex)"
             )
         
         logger.debug(f"MAC validado: {mac} → {mac_clean}")
@@ -333,14 +338,16 @@ def test_sanitizer():
     print("TESTING: CommandSanitizer")
     print("=" * 60)
     
-    # Test MAC
+    # Test MAC & GPON SN
     try:
         assert CommandSanitizer.validate_mac("AA:BB:CC:DD:EE:FF") == "AABBCCDDEEFF"
         assert CommandSanitizer.validate_mac("AA-BB-CC-DD-EE-FF") == "AABBCCDDEEFF"
         assert CommandSanitizer.validate_mac("AABBCCDDEEFF") == "AABBCCDDEEFF"
-        print("✓ MAC validation OK")
+        assert CommandSanitizer.validate_mac("48575443B0C1D2E3") == "48575443B0C1D2E3"
+        assert CommandSanitizer.validate_mac("HWTCB0C1D2E3") == "HWTCB0C1D2E3"
+        print("✓ MAC/SN validation OK")
     except Exception as e:
-        print(f"✗ MAC validation FAILED: {e}")
+        print(f"✗ MAC/SN validation FAILED: {e}")
     
     # Test GPON
     try:
