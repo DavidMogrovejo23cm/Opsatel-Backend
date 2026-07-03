@@ -1,0 +1,67 @@
+[Unit]
+Description=OPSATEL OLT Provisioning Daemon
+Documentation=https://docs.opsatel.com/olt-provisioning
+After=network.target mysql.service postgresql.service
+
+# Depender del backend web (opcional, descomentar si está en el mismo host)
+# After=opsatel-backend.service
+# PartOf=opsatel-backend.service
+
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opsatel
+Group=opsatel
+
+# Working directory
+WorkingDirectory=/home/opsatel/Opsatel-Backend
+
+# Comando a ejecutar
+ExecStart=/usr/bin/python3 /home/opsatel/Opsatel-Backend/workers/olt_daemon.py
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=600
+StartLimitBurst=5
+
+# Timeouts
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Environment variables
+EnvironmentFile=/home/opsatel/.env
+Environment="PYTHONUNBUFFERED=1"
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=olt-worker
+
+# Security
+PrivateTmp=yes
+NoNewPrivileges=true
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# OOMKillMode
+OOMPolicy=restart
+
+# Preserve environment
+PassEnvironment=PYTHONPATH
+
+# Before stopping, ensure graceful shutdown
+KillMode=process
+KillSignal=SIGTERM
+
+# Health check (restart si muere)
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+Alias=opsatel-olt-provisioning.service

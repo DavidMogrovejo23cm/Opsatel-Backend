@@ -124,7 +124,7 @@ def init_db(max_retries=12, retry_interval=5):
 # Ejecutar inicialización ANTES de importar rutas
 init_db()
 
-from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance, asistencia, whatsapp
+from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance, asistencia, whatsapp, olt_tasks
 import rutas_configuraciones
 
 # ========================================================================
@@ -188,6 +188,7 @@ app.include_router(balance.router)
 app.include_router(rutas_configuraciones.router)
 app.include_router(asistencia.router)
 app.include_router(whatsapp.router)
+app.include_router(olt_tasks.router)
 
 from fastapi.staticfiles import StaticFiles
 os.makedirs("rutas_reportes", exist_ok=True)
