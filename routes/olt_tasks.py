@@ -103,7 +103,7 @@ def create_olt_task(
             payload=json.dumps(validated_payload),
             status='pending',
             priority=0,
-            created_by=current_user.usuario,
+            created_by=current_user.username,
             created_at=datetime.now()
         )
         
@@ -499,7 +499,7 @@ def create_olt_config(
             device_type=device_type,
             nodo_asociado=nodo_asociado,
             active=True,
-            created_by=current_user.usuario
+            created_by=current_user.username
         )
         
         db.add(olt_config)
@@ -564,7 +564,7 @@ def update_olt_config(
         if active is not None:
             config.active = active
         
-        config.updated_by = current_user.usuario
+        config.updated_by = current_user.username
         db.commit()
         db.refresh(config)
         
