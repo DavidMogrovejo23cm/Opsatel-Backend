@@ -353,8 +353,8 @@ def get_mac_candidates(
     current_user = Depends(get_current_user)
 ):
     """
-    Obtiene candidatos reales de ONTs pendientes desde la OLT con 'display ont autofind all'.
-    Si no es posible conectar, retorna fallback desde la base de datos de clientes.
+    Obtiene candidatos reales de ONTs detectados por la OLT con 'display ont autofind all'.
+    SOLO retorna lo que la OLT detecta en tiempo real. No hay fallback a base de datos.
     """
     try:
         # Primero intentar obtener la OLT activa para el nodo
@@ -379,96 +379,56 @@ def get_mac_candidates(
         if not olt_config:
             olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
 
+        # Si no hay OLT configurada, retornar error claro
+        if not olt_config:
+            return {
+                'total': 0,
+                'candidates': [],
+                'source': 'error',
+                'error': 'No hay OLTs activas configuradas. Registra una OLT en Configuraciones → OLTs Huawei.'
+            }
+
         candidates = []
         olt_success = False
-        
-        if olt_config:
-            logger.info(f"Conectando a OLT {olt_config.nombre} ({olt_config.host}:{olt_config.port})...")
-            try:
-                olt = OLTInterface(
-                    host=olt_config.host,
-                    port=olt_config.port or 23,
-                    username=olt_config.username,
-                    password=olt_config.password,
-                    timeout=olt_config.connection_timeout or 30,
-                    max_retries=olt_config.max_retries or 3,
-                    retry_backoff_base=olt_config.retry_backoff_base or 1
-                )
-                olt.connect()
-                logger.info("Ejecutando 'display ont autofind all'...")
-                candidates = olt.display_autofind_all()
-                olt_success = True
-                logger.info(f"✓ OLT retornó {len(candidates)} candidatos")
-                
-                # Filtrar solo equipos con estado "pending" o "not activated"
-                pending = [c for c in candidates if c.get('status', '').lower() in ('pending', 'not activated', 'not-activated', 'inactive')]
-                if pending:
-                    candidates = pending
-                    logger.info(f"✓ Filtrados a {len(candidates)} candidatos pendientes")
-                    
-            except Exception as e:
-                logger.error(f"✗ Error conectando a OLT o ejecutando comando: {e}", exc_info=True)
-                logger.info("Cayendo al fallback de base de datos...")
-                candidates = []
-                olt_success = False
+        error_detail = None
 
-        if not olt_success:
-            # Fallback a los MACs en la tabla de clientes PENDIENTES solamente
-            logger.info("Buscando clientes pendientes en base de datos (fallback)...")
-            q = db.query(models.Cliente).filter(
-                models.Cliente.mac != None,
-                models.Cliente.estado.in_(['Pendiente', 'En Activación'])
+        logger.info(f"Conectando a OLT {olt_config.nombre} ({olt_config.host}:{olt_config.port}) para autofind...")
+        try:
+            olt = OLTInterface(
+                host=olt_config.host,
+                port=olt_config.port or 22,
+                username=olt_config.username,
+                password=olt_config.password,
+                timeout=olt_config.connection_timeout or 30,
+                max_retries=olt_config.max_retries or 2,
+                retry_backoff_base=olt_config.retry_backoff_base or 1
             )
-            if nodo:
-                q = q.filter(models.Cliente.nodo == nodo)
-            if puerto:
-                q = q.filter(models.Cliente.puerto == puerto)
+            olt.connect()
+            logger.info("✓ Conectado. Ejecutando 'display ont autofind all' en modo config...")
+            candidates = olt.display_autofind_all()
+            olt_success = True
+            logger.info(f"✓ OLT retornó {len(candidates)} ONTs detectados")
 
-            q = q.order_by(desc(models.Cliente.id)).limit(limit)
-            rows = q.all()
+            # No filtrar por estado aquí: mostrar TODOS los que autofind reporta
+            # (pending, not-activated, etc.) ya que el admin decide cuál activar
 
-            seen = set()
-            for r in rows:
-                mac = (r.mac or '').strip().upper()
-                if not mac:
-                    continue
-                if mac in seen:
-                    continue
-                seen.add(mac)
-                candidates.append({
-                    'gpon_port': None,
-                    'ont_id': None,
-                    'mac': mac,
-                    'status': 'db-fallback',
-                    'cliente_id': r.id,
-                    'cliente_nombre': r.nombre,
-                    'instalation_date': getattr(r, 'instalation_date', None)
-                })
-
-        # Priorizar la MAC del cliente actual si existe
-        if cliente_id:
-            c = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
-            if c and c.mac:
-                m = c.mac.strip().upper()
-                candidates = [x for x in candidates if x.get('mac', '').upper() != m]
-                candidates.insert(0, {
-                    'gpon_port': None,
-                    'ont_id': None,
-                    'mac': m,
-                    'status': 'cliente-mac',
-                    'cliente_id': c.id,
-                    'cliente_nombre': c.nombre,
-                    'instalation_date': getattr(c, 'instalation_date', None)
-                })
+        except Exception as e:
+            logger.error(f"✗ Error al contactar OLT {olt_config.host}: {e}", exc_info=True)
+            error_detail = str(e)
+            candidates = []
+            olt_success = False
 
         return {
             'total': len(candidates),
             'candidates': candidates,
-            'source': 'olt' if olt_success else 'db'
+            'source': 'olt' if olt_success else 'error',
+            'olt_nombre': olt_config.nombre,
+            'olt_host': olt_config.host,
+            'error': error_detail if not olt_success else None,
         }
 
     except Exception as e:
-        logger.error(f"Error obteniendo mac-candidates: {e}")
+        logger.error(f"Error en get_mac_candidates: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -512,10 +472,11 @@ def list_olt_configs(
 def create_olt_config(
     nombre: str,
     host: str,
-    port: int = 23,
-    username: str = "admin",
+    port: int = 22,
+    username: str = "root",
     password: str = "admin",
     nodo_asociado: Optional[str] = None,
+    device_type: str = "huawei",
     db: Session = Depends(get_db),
     current_user = Depends(require_role(["administrador"]))
 ):
@@ -535,6 +496,7 @@ def create_olt_config(
             port=port,
             username=username,
             password=password,
+            device_type=device_type,
             nodo_asociado=nodo_asociado,
             active=True,
             created_by=current_user.usuario
@@ -550,6 +512,11 @@ def create_olt_config(
             'id': olt_config.id,
             'nombre': olt_config.nombre,
             'host': olt_config.host,
+            'port': olt_config.port,
+            'username': olt_config.username,
+            'device_type': olt_config.device_type,
+            'nodo_asociado': olt_config.nodo_asociado,
+            'active': olt_config.active,
             'message': 'OLT configurada exitosamente'
         }
     
@@ -558,3 +525,91 @@ def create_olt_config(
     except Exception as e:
         logger.error(f"Error creando OLT config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/config/{config_id}")
+def update_olt_config(
+    config_id: int,
+    nombre: Optional[str] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    nodo_asociado: Optional[str] = None,
+    device_type: Optional[str] = None,
+    active: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role(["administrador"]))
+):
+    """Actualiza una configuración de OLT"""
+    try:
+        config = db.query(models.OLTConfig).filter(models.OLTConfig.id == config_id).first()
+        if not config:
+            raise HTTPException(status_code=404, detail=f"OLT config {config_id} no encontrada")
+        
+        if nombre is not None:
+            config.nombre = nombre
+        if host is not None:
+            config.host = host
+        if port is not None:
+            config.port = port
+        if username is not None:
+            config.username = username
+        if password is not None:
+            config.password = password
+        if nodo_asociado is not None:
+            config.nodo_asociado = nodo_asociado
+        if device_type is not None:
+            config.device_type = device_type
+        if active is not None:
+            config.active = active
+        
+        config.updated_by = current_user.usuario
+        db.commit()
+        db.refresh(config)
+        
+        logger.info(f"✓ OLT config {config_id} actualizada")
+        return {
+            'id': config.id,
+            'nombre': config.nombre,
+            'host': config.host,
+            'port': config.port,
+            'username': config.username,
+            'device_type': config.device_type,
+            'nodo_asociado': config.nodo_asociado,
+            'active': config.active,
+            'message': 'OLT actualizada exitosamente'
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error actualizando OLT config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/config/{config_id}")
+def delete_olt_config(
+    config_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role(["administrador"]))
+):
+    """Elimina una configuración de OLT"""
+    try:
+        config = db.query(models.OLTConfig).filter(models.OLTConfig.id == config_id).first()
+        if not config:
+            raise HTTPException(status_code=404, detail=f"OLT config {config_id} no encontrada")
+        
+        nombre = config.nombre
+        db.delete(config)
+        db.commit()
+        
+        logger.info(f"✓ OLT config '{nombre}' eliminada")
+        return {'message': f"OLT '{nombre}' eliminada exitosamente"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error eliminando OLT config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
