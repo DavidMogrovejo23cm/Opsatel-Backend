@@ -38,6 +38,7 @@ sys.path.insert(0, _WORKERS_DIR)
 from database import SessionLocal
 from services.task_processor import TaskProcessor
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 # ============================================================================
 # CONFIGURACIÓN
@@ -181,7 +182,7 @@ class OLTDaemon:
         try:
             self.db = SessionLocal()
             # Test de conexión
-            self.db.execute("SELECT 1")
+            self.db.execute(text("SELECT 1"))
             logger.info("Conexión a BD establecida")
             return True
         except Exception as e:
