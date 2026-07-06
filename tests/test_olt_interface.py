@@ -15,7 +15,7 @@ class OLTInterfaceTests(unittest.TestCase):
         olt = OLTInterface(host='172.25.0.2', username='root', password='admin', port=22)
         config = olt._build_connect_config()
 
-        self.assertEqual(config['device_type'], 'huawei')
+        self.assertEqual(config['device_type'], 'huawei_olt')
         self.assertEqual(config['host'], '172.25.0.2')
         self.assertEqual(config['port'], 22)
         self.assertEqual(config['username'], 'root')

@@ -136,7 +136,9 @@ class OLTInterface:
     
     def _build_connect_config(self) -> Dict[str, Any]:
         """Construye la configuración de conexión para SSH a Huawei OLT."""
-        device_type = 'huawei' if self.device_type in (None, '', 'huawei_olt') else self.device_type
+        device_type = self.device_type or 'huawei_olt'
+        if 'huawei' in device_type.lower():
+            device_type = 'huawei_olt'
         return {
             'device_type': device_type,
             'host': self.host,
