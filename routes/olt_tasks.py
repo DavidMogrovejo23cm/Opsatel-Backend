@@ -528,6 +528,14 @@ def create_olt_config(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class OLTTestParams(BaseModel):
+    host: str
+    port: int = 22
+    username: str = "root"
+    password: str = "admin"
+    device_type: str = "huawei"
+
+
 @router.post("/config/test-raw")
 def test_raw_olt_connection(
     params: OLTTestParams,
@@ -651,12 +659,7 @@ def delete_olt_config(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class OLTTestParams(BaseModel):
-    host: str
-    port: int = 22
-    username: str = "root"
-    password: str = "admin"
-    device_type: str = "huawei"
+
 
 
 @router.post("/config/{config_id}/test")
