@@ -191,6 +191,96 @@ def list_olt_tasks(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+# ============================================================================
+# MAC CANDIDATES (FRONTEND HELPERS)
+# ============================================================================
+@router.get("/mac-candidates")
+def get_mac_candidates(
+    cliente_id: Optional[int] = Query(None, description="ID de cliente para priorizar su MAC"),
+    nodo: Optional[str] = Query(None, description="Filtrar por nodo"),
+    puerto: Optional[str] = Query(None, description="Filtrar por puerto"),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Obtiene candidatos reales de ONTs detectados por la OLT con 'display ont autofind all'.
+    SOLO retorna lo que la OLT detecta en tiempo real. No hay fallback a base de datos.
+    """
+    try:
+        # Primero intentar obtener la OLT activa para el nodo
+        olt_config = None
+        if nodo:
+            olt_config = db.query(models.OLTConfig).filter(
+                models.OLTConfig.active == True,
+                models.OLTConfig.nodo_asociado == nodo
+            ).first()
+        
+        # Si no se encuentra para ese nodo específico, buscar una genérica (sin nodo asociado)
+        if not olt_config:
+            olt_config = db.query(models.OLTConfig).filter(
+                models.OLTConfig.active == True,
+                or_(
+                    models.OLTConfig.nodo_asociado == None,
+                    models.OLTConfig.nodo_asociado == ""
+                )
+            ).first()
+            
+        # Como último recurso, obtener la primera OLT activa disponible
+        if not olt_config:
+            olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
+
+        # Si no hay OLT configurada, retornar error claro
+        if not olt_config:
+            return {
+                'total': 0,
+                'candidates': [],
+                'source': 'error',
+                'error': 'No hay OLTs activas configuradas. Registra una OLT en Configuraciones → OLTs Huawei.'
+            }
+
+        candidates = []
+        olt_success = False
+        error_detail = None
+
+        logger.info(f"Conectando a OLT {olt_config.nombre} ({olt_config.host}:{olt_config.port}) para autofind...")
+        try:
+            olt = OLTInterface(
+                host=olt_config.host,
+                port=olt_config.port or 22,
+                username=olt_config.username,
+                password=olt_config.password,
+                timeout=olt_config.connection_timeout or 30,
+                max_retries=olt_config.max_retries or 2,
+                retry_backoff_base=olt_config.retry_backoff_base or 1
+            )
+            olt.connect()
+            logger.info("Conectado. Ejecutando 'display ont autofind all' en modo config...")
+            candidates = olt.display_autofind_all()
+            olt_success = True
+            logger.info(f"OLT retornó {len(candidates)} ONTs detectados")
+
+        except Exception as e:
+            logger.error(f"Error al contactar OLT {olt_config.host}: {e}", exc_info=True)
+            error_detail = str(e)
+            candidates = []
+            olt_success = False
+
+        return {
+            'total': len(candidates),
+            'candidates': candidates,
+            'source': 'olt' if olt_success else 'error',
+            'olt_nombre': olt_config.nombre,
+            'olt_host': olt_config.host,
+            'error': error_detail if not olt_success else None,
+        }
+
+    except Exception as e:
+        logger.error(f"Error en get_mac_candidates: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{task_id}")
 def get_olt_task(
     task_id: int,
@@ -341,96 +431,6 @@ def get_cliente_olt_status(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============================================================================
-# MAC CANDIDATES (FRONTEND HELPERS)
-# ============================================================================
-@router.get("/mac-candidates")
-def get_mac_candidates(
-    cliente_id: Optional[int] = Query(None, description="ID de cliente para priorizar su MAC"),
-    nodo: Optional[str] = Query(None, description="Filtrar por nodo"),
-    puerto: Optional[str] = Query(None, description="Filtrar por puerto"),
-    limit: int = Query(50, ge=1, le=200),
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """
-    Obtiene candidatos reales de ONTs detectados por la OLT con 'display ont autofind all'.
-    SOLO retorna lo que la OLT detecta en tiempo real. No hay fallback a base de datos.
-    """
-    try:
-        # Primero intentar obtener la OLT activa para el nodo
-        olt_config = None
-        if nodo:
-            olt_config = db.query(models.OLTConfig).filter(
-                models.OLTConfig.active == True,
-                models.OLTConfig.nodo_asociado == nodo
-            ).first()
-        
-        # Si no se encuentra para ese nodo específico, buscar una genérica (sin nodo asociado)
-        if not olt_config:
-            olt_config = db.query(models.OLTConfig).filter(
-                models.OLTConfig.active == True,
-                or_(
-                    models.OLTConfig.nodo_asociado == None,
-                    models.OLTConfig.nodo_asociado == ""
-                )
-            ).first()
-            
-        # Como último recurso, obtener la primera OLT activa disponible
-        if not olt_config:
-            olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
-
-        # Si no hay OLT configurada, retornar error claro
-        if not olt_config:
-            return {
-                'total': 0,
-                'candidates': [],
-                'source': 'error',
-                'error': 'No hay OLTs activas configuradas. Registra una OLT en Configuraciones → OLTs Huawei.'
-            }
-
-        candidates = []
-        olt_success = False
-        error_detail = None
-
-        logger.info(f"Conectando a OLT {olt_config.nombre} ({olt_config.host}:{olt_config.port}) para autofind...")
-        try:
-            olt = OLTInterface(
-                host=olt_config.host,
-                port=olt_config.port or 22,
-                username=olt_config.username,
-                password=olt_config.password,
-                timeout=olt_config.connection_timeout or 30,
-                max_retries=olt_config.max_retries or 2,
-                retry_backoff_base=olt_config.retry_backoff_base or 1
-            )
-            olt.connect()
-            logger.info("✓ Conectado. Ejecutando 'display ont autofind all' en modo config...")
-            candidates = olt.display_autofind_all()
-            olt_success = True
-            logger.info(f"✓ OLT retornó {len(candidates)} ONTs detectados")
-
-            # No filtrar por estado aquí: mostrar TODOS los que autofind reporta
-            # (pending, not-activated, etc.) ya que el admin decide cuál activar
-
-        except Exception as e:
-            logger.error(f"✗ Error al contactar OLT {olt_config.host}: {e}", exc_info=True)
-            error_detail = str(e)
-            candidates = []
-            olt_success = False
-
-        return {
-            'total': len(candidates),
-            'candidates': candidates,
-            'source': 'olt' if olt_success else 'error',
-            'olt_nombre': olt_config.nombre,
-            'olt_host': olt_config.host,
-            'error': error_detail if not olt_success else None,
-        }
-
-    except Exception as e:
-        logger.error(f"Error en get_mac_candidates: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
@@ -526,6 +526,42 @@ def create_olt_config(
     except Exception as e:
         logger.error(f"Error creando OLT config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/config/test-raw")
+def test_raw_olt_connection(
+    params: OLTTestParams,
+    current_user = Depends(require_role(["administrador"]))
+):
+    """Prueba la conexión a una OLT usando credenciales crudas (antes de guardar)"""
+    try:
+        logger.info(f"Probando conexión cruda a OLT: {params.host}:{params.port}")
+        olt = OLTInterface(
+            host=params.host,
+            port=params.port or 22,
+            username=params.username,
+            password=params.password,
+            timeout=10,
+            max_retries=1
+        )
+        success = olt.connect()
+        if success:
+            olt.disconnect()
+            return {
+                'success': True,
+                'message': f"¡Conexión SSH exitosa a {params.host}!"
+            }
+        else:
+            return {
+                'success': False,
+                'message': f"No se pudo conectar a {params.host}."
+            }
+    except Exception as e:
+        logger.error(f"Error probando conexión cruda a OLT: {e}")
+        return {
+            'success': False,
+            'message': f"Error de conexión: {str(e)}"
+        }
 
 
 @router.put("/config/{config_id}")
@@ -659,42 +695,6 @@ def test_olt_config_connection(
             }
     except Exception as e:
         logger.error(f"Error probando conexión a OLT: {e}")
-        return {
-            'success': False,
-            'message': f"Error de conexión: {str(e)}"
-        }
-
-
-@router.post("/config/test-raw")
-def test_raw_olt_connection(
-    params: OLTTestParams,
-    current_user = Depends(require_role(["administrador"]))
-):
-    """Prueba la conexión a una OLT usando credenciales crudas (antes de guardar)"""
-    try:
-        logger.info(f"Probando conexión cruda a OLT: {params.host}:{params.port}")
-        olt = OLTInterface(
-            host=params.host,
-            port=params.port or 22,
-            username=params.username,
-            password=params.password,
-            timeout=10,
-            max_retries=1
-        )
-        success = olt.connect()
-        if success:
-            olt.disconnect()
-            return {
-                'success': True,
-                'message': f"¡Conexión SSH exitosa a {params.host}!"
-            }
-        else:
-            return {
-                'success': False,
-                'message': f"No se pudo conectar a {params.host}."
-            }
-    except Exception as e:
-        logger.error(f"Error probando conexión cruda a OLT: {e}")
         return {
             'success': False,
             'message': f"Error de conexión: {str(e)}"
