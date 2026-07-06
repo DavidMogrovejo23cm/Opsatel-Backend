@@ -523,62 +523,118 @@ class OLTInterface:
 
     def parse_autofind_output(self, response: str) -> list:
         """
-        Parsea la salida de 'display ont autofind all' para obtener ONTs pendientes.
+        Parsea la salida de 'display ont autofind all' en formato de bloques multi-línea.
+
+        Formato real de Huawei OLT:
+        -------------------------------------------------------
+        Number              : 1
+        F/S/L               : 0/7/6
+        Ont SN              : 4754E4E2B3A9187 (GPON-2B3A5187)
+        Password            : 0x01123334353637383930(1234567890)
+        Loid                : 1234567890
+        Checkcode           : 1234567890
+        VendorID            : GPON
+        Ont Version         : V1.0
+        Ont SoftwareVersion : V1.0.2
+        Ont EquipmentID     : 1601
+        Ont Customized Info :
+        Ont autofind time   : 06/07/2026 10:15:08-05:00
+        -------------------------------------------------------
         """
-        lines = response.splitlines()
         candidates = []
-        for line in lines:
-            if not line.strip():
-                continue
-            if any(header in line for header in ('Port', 'ONT', '-----', 'Total', 'Number', 'OLT')):
-                continue
+        # Dividir la respuesta en bloques separados por líneas de guiones
+        blocks = re.split(r'-{10,}', response)
 
-            # Buscar puerto GPON y ont-id en cualquier parte de la línea
-            match_port = re.search(r'(\d+/\d+/\d+)\s+(\d+)', line)
-            if not match_port:
+        for block in blocks:
+            block = block.strip()
+            if not block:
                 continue
 
-            gpon_port = match_port.group(1).strip()
-            ont_id = match_port.group(2).strip()
+            # Extraer F/S/L (frame/slot/port → puerto GPON)
+            fsl_match = re.search(r'F/S/L\s*:\s*(\d+/\d+/\d+)', block, re.IGNORECASE)
+            if not fsl_match:
+                continue
+            gpon_port = fsl_match.group(1).strip()
 
-            # Buscar MAC o GPON SN en la línea
-            mac_match = re.search(r'([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}|[0-9A-Fa-f]{16}|[A-Za-z]{4}[0-9A-Fa-f]{8}|[0-9A-Fa-f]{12}', line)
-            mac = mac_match.group(0).upper() if mac_match else None
-            
-            # Normalizar MAC si es de 12 caracteres (con o sin separadores)
-            if mac:
-                mac_clean = mac.replace('-', '').replace(':', '').replace('.', '')
-                is_hex = all(c in '0123456789ABCDEF' for c in mac_clean)
-                if len(mac_clean) == 12 and is_hex:
-                    mac = ':'.join(mac_clean[i:i+2] for i in range(0, 12, 2))
-                else:
-                    mac = mac_clean  # Dejar como GPON SN continuo (ej: HWTC12345678 o 48575443B0C1D2E3)
+            # Extraer Number (identificador dentro del bloque, no el ONT ID real)
+            number_match = re.search(r'\bNumber\s*:\s*(\d+)', block, re.IGNORECASE)
+            number = number_match.group(1).strip() if number_match else '0'
 
-            # Buscar estado o texto de activación
-            status_match = re.search(r'(?i)(pending|not activated|not-activated|inactive|activated|online|offline|error|unknown)', line)
-            status = status_match.group(0).lower() if status_match else None
+            # Extraer SN del ONT — formato: "47504F4E2B3A5187 (GPON-2B3A5187)"
+            # o directamente solo el SN hexadecimal
+            sn_match = re.search(r'Ont SN\s*:\s*([^\(\n\r]+?)(?:\s*\(([^\)]+)\))?\s*$', block, re.IGNORECASE | re.MULTILINE)
+            sn_raw = None
+            sn_readable = None
+            if sn_match:
+                sn_raw = sn_match.group(1).strip()           # ej: "47504F4E2B3A5187"
+                sn_readable = sn_match.group(2).strip() if sn_match.group(2) else sn_raw  # ej: "GPON-2B3A5187"
+
+            # Extraer Password
+            pwd_match = re.search(r'Password\s*:\s*.+?\(([^)]+)\)', block, re.IGNORECASE)
+            password = pwd_match.group(1).strip() if pwd_match else None
+
+            # Extraer Loid (puede usarse como ID de contrato)
+            loid_match = re.search(r'Loid\s*:\s*(\S+)', block, re.IGNORECASE)
+            loid = loid_match.group(1).strip() if loid_match else None
+
+            # Extraer VendorID
+            vendor_match = re.search(r'VendorID\s*:\s*(\S+)', block, re.IGNORECASE)
+            vendor = vendor_match.group(1).strip() if vendor_match else None
+
+            # Extraer Equipment ID
+            equip_match = re.search(r'Ont EquipmentID\s*:\s*(\S+)', block, re.IGNORECASE)
+            equip_id = equip_match.group(1).strip() if equip_match else None
+
+            # Extraer tiempo de autofind
+            time_match = re.search(r'Ont autofind time\s*:\s*(.+)', block, re.IGNORECASE)
+            autofind_time = time_match.group(1).strip() if time_match else None
+
+            # Usar SN raw como "mac" para compatibilidad con el sistema de activación
+            # Si hay SN readable (ej: GPON-2B3A5187), lo usamos como identificador amigable
+            mac = sn_raw or sn_readable
+
+            if not gpon_port:
+                logger.debug(f"Bloque sin F/S/L válido, ignorado: {block[:80]}")
+                continue
 
             candidates.append({
                 'gpon_port': gpon_port,
-                'ont_id': ont_id,
-                'mac': mac,
-                'status': status,
-                'raw': line.strip()
+                'ont_id': number,           # ID auto-asignado por autofind (no es el ONT ID final)
+                'mac': mac,                 # SN hexadecimal (ej: 47504F4E2B3A5187)
+                'sn': sn_readable,          # SN legible (ej: GPON-2B3A5187)
+                'sn_raw': sn_raw,
+                'password': password,
+                'loid': loid,
+                'vendor': vendor,
+                'equip_id': equip_id,
+                'autofind_time': autofind_time,
+                'status': 'pending',
+                'raw': block.strip()
             })
+            logger.info(f"ONT detectada: Puerto {gpon_port} | SN: {sn_readable} | SN_raw: {sn_raw}")
+
+        logger.info(f"parse_autofind_output: {len(candidates)} ONTs encontradas en respuesta de {len(response)} chars")
         return candidates
 
     def display_autofind_all(self) -> list:
         """
         Ejecuta 'display ont autofind all' para listar ONTs detectadas por la OLT.
+        Debe estar en modo config para que el comando funcione correctamente.
         """
         try:
             self.enter_privileged_mode()
             self.enter_config_mode()
         except Exception as e:
             logger.warning(f"No se pudo entrar a modo privilegiado/config para autofind: {e}")
-        response = self.send_command('display ont autofind all', delay_factor=2.0)
+
+        logger.info("Ejecutando 'display ont autofind all'...")
+        response = self.send_command('display ont autofind all', delay_factor=3.0)
+        logger.info(f"Respuesta cruda autofind ({len(response)} chars):\n{response[:2000]}")
+
         candidates = self.parse_autofind_output(response)
+        logger.info(f"display_autofind_all completado: {len(candidates)} ONTs detectadas")
         return candidates
+
     
     def check_ont_power(self, gpon_port: str, ont_id: str) -> Dict[str, Any]:
         """
