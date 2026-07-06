@@ -422,18 +422,53 @@ class OLTInterface:
             f'service-port {service_port} vlan {vlan} gpon {gpon_port} ont {ont_id} gemport {profile_id} multi-service user-vlan {user_vlan} tag-transform translate',
         ]
 
+    def check_response_for_errors(self, command: str, response: str) -> None:
+        """
+        Analiza la respuesta de la OLT ante un comando específico.
+        Si detecta un error, levanta OLTCommandError con la descripción del error.
+        """
+        resp_lower = response.lower()
+        error_keywords = [
+            'failure:',
+            'error:',
+            'unknown command',
+            'parameter error',
+            'invalid',
+            'no such command',
+            'command not found',
+            'does not exist',
+            'is invalid',
+            'command name is incorrect'
+        ]
+        for kw in error_keywords:
+            if kw in resp_lower:
+                lines = response.split('\n')
+                error_line = next((line.strip() for line in lines if kw in line.lower()), response.strip())
+                logger.error(f"Error detectado en respuesta al comando '{command}': {error_line}")
+                raise OLTCommandError(f"Error OLT en '{command}': {error_line}")
+
     def execute_activation_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Ejecuta el flujo completo de activación: enable -> config -> interface gpon -> comandos ONT."""
+        """Ejecuta el flujo completo de activación de forma secuencial y valida cada paso."""
+        responses = []
         try:
             self.connect()
-            responses = []
 
-            responses.append(('enable', self.enter_privileged_mode()))
-            responses.append(('config', self.enter_config_mode()))
-            responses.append(('interface', self.enter_gpon_interface(payload.get('gpon_port', '0/0/0'))))
+            # 1. Modo Privilegiado
+            resp_enable = self.enter_privileged_mode()
+            self.check_response_for_errors('enable', resp_enable)
+            responses.append(('enable', resp_enable))
 
-            for command in self.build_activation_commands(payload):
-                responses.append((command, self.send_command(command, delay_factor=1.5)))
+            # 2. Modo Configuración
+            resp_config = self.enter_config_mode()
+            self.check_response_for_errors('config', resp_config)
+            responses.append(('config', resp_config))
+
+            # 3. Comandos de Activación
+            commands = self.build_activation_commands(payload)
+            for command in commands:
+                resp_cmd = self.send_command(command, delay_factor=1.5)
+                self.check_response_for_errors(command, resp_cmd)
+                responses.append((command, resp_cmd))
 
             return {
                 'success': True,
@@ -442,11 +477,16 @@ class OLTInterface:
             }
         except Exception as e:
             logger.error(f"Error en execute_activation_sequence: {e}")
+            # Desconectar en caso de error para no dejar la sesión en un estado inconsistente en la caché
+            try:
+                self.disconnect()
+            except:
+                pass
             return {
                 'success': False,
                 'error': str(e),
-                'commands': [],
-                'responses': [],
+                'commands': [cmd for cmd, _ in responses],
+                'responses': [resp for _, resp in responses],
             }
     
     def parse_ont_power(self, response: str) -> Optional[float]:
