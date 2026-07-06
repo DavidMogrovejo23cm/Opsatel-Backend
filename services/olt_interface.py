@@ -136,9 +136,16 @@ class OLTInterface:
     
     def _build_connect_config(self) -> Dict[str, Any]:
         """Construye la configuración de conexión para SSH a Huawei OLT."""
+        import os
         device_type = self.device_type or 'huawei_olt'
         if 'huawei' in device_type.lower():
             device_type = 'huawei_olt'
+        
+        # Ruta absoluta para el archivo de log en la carpeta scratch del proyecto
+        log_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'scratch', 'netmiko_session.log'))
+        # Asegurarse de que exista la carpeta scratch
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
         return {
             'device_type': device_type,
             'host': self.host,
@@ -149,7 +156,7 @@ class OLTInterface:
             'read_timeout_override': self.timeout,
             'global_delay_factor': 1.5,
             'fast_cli': True,
-            'session_log': None,
+            'session_log': log_path,
             'banner_timeout': 15,
             'auth_timeout': 20,
             'session_timeout': 60,
@@ -478,6 +485,130 @@ class OLTInterface:
         except Exception as e:
             logger.error(f"Error en execute_activation_sequence: {e}")
             # Desconectar en caso de error para no dejar la sesión en un estado inconsistente en la caché
+            try:
+                self.disconnect()
+            except:
+                pass
+            return {
+                'success': False,
+                'error': str(e),
+                'commands': [cmd for cmd, _ in responses],
+                'responses': [resp for _, resp in responses],
+            }
+
+    def build_removal_commands(self, payload: Dict[str, Any]) -> List[str]:
+        """Construye la secuencia de comandos Huawei para eliminar un ONT."""
+        gpon_port = payload.get('gpon_port', '0/0/0')
+        ont_id = payload.get('ont_id', '0')
+        
+        # Extraer slot/port e interface
+        parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
+        if len(parts) >= 3:
+            interface = f"{parts[0]}/{parts[1]}"
+            port_num = parts[2]
+        else:
+            interface = "0/0"
+            port_num = "0"
+
+        return [
+            f"interface gpon {interface}",
+            f"ont delete {port_num} {ont_id}",
+            "quit"
+        ]
+
+    def execute_removal_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Ejecuta el flujo completo de eliminación de forma secuencial y valida cada paso."""
+        responses = []
+        try:
+            self.connect()
+
+            # 1. Modo Privilegiado
+            resp_enable = self.enter_privileged_mode()
+            self.check_response_for_errors('enable', resp_enable)
+            responses.append(('enable', resp_enable))
+
+            # 2. Modo Configuración
+            resp_config = self.enter_config_mode()
+            self.check_response_for_errors('config', resp_config)
+            responses.append(('config', resp_config))
+
+            # 3. Comandos de Eliminación
+            commands = self.build_removal_commands(payload)
+            for command in commands:
+                resp_cmd = self.send_command(command, delay_factor=1.5)
+                self.check_response_for_errors(command, resp_cmd)
+                responses.append((command, resp_cmd))
+
+            return {
+                'success': True,
+                'commands': [cmd for cmd, _ in responses],
+                'responses': [resp for _, resp in responses],
+            }
+        except Exception as e:
+            logger.error(f"Error en execute_removal_sequence: {e}")
+            try:
+                self.disconnect()
+            except:
+                pass
+            return {
+                'success': False,
+                'error': str(e),
+                'commands': [cmd for cmd, _ in responses],
+                'responses': [resp for _, resp in responses],
+            }
+
+    def build_set_breach_commands(self, payload: Dict[str, Any]) -> List[str]:
+        """Construye la secuencia de comandos Huawei para cambiar la VLAN nativa (Bridge)."""
+        gpon_port = payload.get('gpon_port', '0/0/0')
+        ont_id = payload.get('ont_id', '0')
+        vlan = payload.get('vlan', payload.get('user_vlan', '100'))
+        priority = payload.get('priority', '0')
+
+        # Extraer slot/port e interface
+        parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
+        if len(parts) >= 3:
+            interface = f"{parts[0]}/{parts[1]}"
+            port_num = parts[2]
+        else:
+            interface = "0/0"
+            port_num = "0"
+
+        return [
+            f"interface gpon {interface}",
+            f"ont port native-vlan {port_num} {ont_id} eth 1 vlan {vlan} priority {priority}",
+            "quit"
+        ]
+
+    def execute_set_breach_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Ejecuta el flujo completo de configuración de VLAN nativa y valida cada paso."""
+        responses = []
+        try:
+            self.connect()
+
+            # 1. Modo Privilegiado
+            resp_enable = self.enter_privileged_mode()
+            self.check_response_for_errors('enable', resp_enable)
+            responses.append(('enable', resp_enable))
+
+            # 2. Modo Configuración
+            resp_config = self.enter_config_mode()
+            self.check_response_for_errors('config', resp_config)
+            responses.append(('config', resp_config))
+
+            # 3. Comandos de Configuración
+            commands = self.build_set_breach_commands(payload)
+            for command in commands:
+                resp_cmd = self.send_command(command, delay_factor=1.5)
+                self.check_response_for_errors(command, resp_cmd)
+                responses.append((command, resp_cmd))
+
+            return {
+                'success': True,
+                'commands': [cmd for cmd, _ in responses],
+                'responses': [resp for _, resp in responses],
+            }
+        except Exception as e:
+            logger.error(f"Error en execute_set_breach_sequence: {e}")
             try:
                 self.disconnect()
             except:

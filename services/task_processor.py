@@ -307,8 +307,14 @@ class TaskProcessor:
             self.db.commit()
             
             # Construir y ejecutar comando
-            if task.action == 'add_ont':
-                result = olt.execute_activation_sequence(validated_payload)
+            if task.action in ['add_ont', 'remove_ont', 'set_breach']:
+                if task.action == 'add_ont':
+                    result = olt.execute_activation_sequence(validated_payload)
+                elif task.action == 'remove_ont':
+                    result = olt.execute_removal_sequence(validated_payload)
+                elif task.action == 'set_breach':
+                    result = olt.execute_set_breach_sequence(validated_payload)
+                
                 success = result.get('success', False)
                 last_response = json.dumps(result, ensure_ascii=False)
                 last_error = result.get('error', '')
