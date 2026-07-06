@@ -28,8 +28,12 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-# Configurar path para importar módulos
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Configurar path para importar módulos del proyecto
+# Agrega el directorio raíz del proyecto (/app) para poder importar database, services, etc.
+_WORKERS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_WORKERS_DIR)
+sys.path.insert(0, _PROJECT_ROOT)
+sys.path.insert(0, _WORKERS_DIR)
 
 from database import SessionLocal
 from services.task_processor import TaskProcessor
