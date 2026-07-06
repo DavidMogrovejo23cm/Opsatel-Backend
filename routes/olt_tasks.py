@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, desc
 
@@ -612,4 +613,91 @@ def delete_olt_config(
     except Exception as e:
         logger.error(f"Error eliminando OLT config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class OLTTestParams(BaseModel):
+    host: str
+    port: int = 22
+    username: str = "root"
+    password: str = "admin"
+    device_type: str = "huawei"
+
+
+@router.post("/config/{config_id}/test")
+def test_olt_config_connection(
+    config_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role(["administrador"]))
+):
+    """Prueba la conexión a una OLT existente"""
+    try:
+        config = db.query(models.OLTConfig).filter(models.OLTConfig.id == config_id).first()
+        if not config:
+            raise HTTPException(status_code=404, detail="Configuración de OLT no encontrada")
+        
+        logger.info(f"Probando conexión a OLT registrada: {config.nombre} ({config.host}:{config.port})")
+        olt = OLTInterface(
+            host=config.host,
+            port=config.port or 22,
+            username=config.username,
+            password=config.password,
+            timeout=10,
+            max_retries=1
+        )
+        
+        success = olt.connect()
+        if success:
+            olt.disconnect()
+            return {
+                'success': True,
+                'message': f"¡Conexión SSH exitosa a la OLT {config.nombre} ({config.host})!"
+            }
+        else:
+            return {
+                'success': False,
+                'message': f"No se pudo conectar a la OLT {config.nombre} ({config.host})."
+            }
+    except Exception as e:
+        logger.error(f"Error probando conexión a OLT: {e}")
+        return {
+            'success': False,
+            'message': f"Error de conexión: {str(e)}"
+        }
+
+
+@router.post("/config/test-raw")
+def test_raw_olt_connection(
+    params: OLTTestParams,
+    current_user = Depends(require_role(["administrador"]))
+):
+    """Prueba la conexión a una OLT usando credenciales crudas (antes de guardar)"""
+    try:
+        logger.info(f"Probando conexión cruda a OLT: {params.host}:{params.port}")
+        olt = OLTInterface(
+            host=params.host,
+            port=params.port or 22,
+            username=params.username,
+            password=params.password,
+            timeout=10,
+            max_retries=1
+        )
+        success = olt.connect()
+        if success:
+            olt.disconnect()
+            return {
+                'success': True,
+                'message': f"¡Conexión SSH exitosa a {params.host}!"
+            }
+        else:
+            return {
+                'success': False,
+                'message': f"No se pudo conectar a {params.host}."
+            }
+    except Exception as e:
+        logger.error(f"Error probando conexión cruda a OLT: {e}")
+        return {
+            'success': False,
+            'message': f"Error de conexión: {str(e)}"
+        }
+
 
