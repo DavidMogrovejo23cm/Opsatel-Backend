@@ -401,11 +401,6 @@ class OLTInterface:
         ont_id = payload.get('ont_id', '0')
         mac = payload.get('mac', '000000000000')
         description = payload.get('description', f'ONT_{ont_id}')
-        profile_id = payload.get('profile_id', '100')
-        srvprofile_id = payload.get('srvprofile_id', profile_id)
-        service_port = payload.get('service_port', str(int(ont_id) + 1000))
-        vlan = payload.get('vlan', payload.get('user_vlan', profile_id))
-        user_vlan = payload.get('user_vlan', vlan)
 
         # Extraer slot/port e interface
         parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
@@ -416,10 +411,48 @@ class OLTInterface:
             interface = "0/0"
             port_num = "0"
 
+        try:
+            puerto_val = int(port_num)
+        except ValueError:
+            puerto_val = 0
+
+        # Calcular valores por defecto basados en el puerto GPON
+        derived_profile = str(100 + puerto_val)   # Ej: 108 para puerto 8
+        derived_vlan = str(300 + puerto_val)      # Ej: 308 para puerto 8
+
+        # Validar y limpiar profile_id
+        profile_id = payload.get('profile_id')
+        if not profile_id or not str(profile_id).isdigit():
+            profile_id = derived_profile
+
+        # Validar y limpiar srvprofile_id
+        srvprofile_id = payload.get('srvprofile_id')
+        if not srvprofile_id or not str(srvprofile_id).isdigit():
+            srvprofile_id = profile_id
+
+        # Validar y limpiar vlan (VLAN de la OLT para service-port)
+        vlan = payload.get('vlan')
+        if not vlan or not str(vlan).isdigit():
+            vlan = derived_vlan
+
+        # Validar y limpiar user_vlan (VLAN nativa del cliente / traducción)
+        user_vlan = payload.get('user_vlan')
+        if not user_vlan or not str(user_vlan).isdigit():
+            user_vlan = profile_id
+
+        # Validar y limpiar service_port
+        service_port = payload.get('service_port')
+        if not service_port or not str(service_port).isdigit():
+            try:
+                ont_val = int(ont_id)
+            except ValueError:
+                ont_val = 0
+            service_port = str(ont_val + 1000)
+
         return [
             f"interface gpon {interface}",
             f'ont add {port_num} {ont_id} sn-auth "{mac}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {srvprofile_id} desc "{description}"',
-            f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {vlan} priority 0',
+            f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {user_vlan} priority 0',
             "quit",
             f'service-port {service_port} vlan {vlan} gpon {gpon_port} ont {ont_id} gemport {profile_id} multi-service user-vlan {user_vlan} tag-transform translate',
         ]
@@ -560,7 +593,6 @@ class OLTInterface:
         """Construye la secuencia de comandos Huawei para cambiar la VLAN nativa (Bridge)."""
         gpon_port = payload.get('gpon_port', '0/0/0')
         ont_id = payload.get('ont_id', '0')
-        vlan = payload.get('vlan', payload.get('user_vlan', '100'))
         priority = payload.get('priority', '0')
 
         # Extraer slot/port e interface
@@ -571,6 +603,16 @@ class OLTInterface:
         else:
             interface = "0/0"
             port_num = "0"
+
+        try:
+            puerto_val = int(port_num)
+        except ValueError:
+            puerto_val = 0
+
+        # Si vlan o user_vlan no son dígitos, se calcula a partir del puerto
+        vlan = payload.get('vlan', payload.get('user_vlan'))
+        if not vlan or not str(vlan).isdigit():
+            vlan = str(100 + puerto_val)
 
         return [
             f"interface gpon {interface}",
