@@ -45,52 +45,75 @@ MIN_POWER_THRESHOLD = -27.0
 class TaskProcessor:
     """
     Procesa tareas OLT de forma secuencial.
-    Cada tarea es ejecutada con validación, reintentos y auditoría completa.
+
+    El caché de conexiones SSH (self.olt_connections) persiste durante toda la vida
+    del daemon — solo se crea UN login SSH por OLT y se reutiliza indefinidamente.
+
+    La sesión de BD (self.db) es inyectada desde el daemon en cada ciclo:
+        processor.db = SessionLocal()
+        processor.process_pending_tasks()
+        processor.db.close()
+        processor.db = None
+    Así la BD siempre tiene una sesión fresca sin recrear el TaskProcessor.
     """
-    
-    def __init__(self, db: Session):
+
+    def __init__(self):
         """
-        Inicializa el procesador de tareas.
-        
-        Args:
-            db: Sesión de SQLAlchemy
+        Inicializa el procesador. NO recibe sesión de BD en el constructor.
+        La sesión se inyecta por ciclo desde el daemon.
         """
-        self.db = db
-        self.olt_connections: Dict[int, OLTInterface] = {}  # Cache de conexiones
+        self.db: Optional[Session] = None
+        self.olt_connections: Dict[int, OLTInterface] = {}  # Caché SSH permanente
         self.current_task = None
         self.current_task_id = None
-        
-        logger.info("TaskProcessor inicializado")
+
+        logger.info("TaskProcessor inicializado (sin sesión BD todavía)")
     
+    def _check_olt_alive(self, olt: OLTInterface) -> bool:
+        """
+        Verifica que la sesión SSH sigue activa enviando un comando inocuo.
+        Netmiko puede reportar is_connected=True aunque Huawei ya cerró la sesión,
+        por lo que hay que comprobarlo activamente.
+        """
+        try:
+            if not olt.connection:
+                return False
+            olt.connection.find_prompt()
+            return True
+        except Exception:
+            return False
+
     def get_olt_connection(self, olt_id: int) -> Optional[OLTInterface]:
         """
         Obtiene o crea una conexión a una OLT específica.
-        Las conexiones se cachean para reutilizarlas.
-        
-        Args:
-            olt_id: ID de la OLT en la tabla olt_config
-            
-        Returns:
-            OLTInterface conectado o None si falla
+        El caché SSH persiste durante toda la vida del daemon.
+        Solo reconecta si la sesión está realmente muerta.
         """
-        # Si ya tenemos conexión en cache, devolverla
+        # Verificar caché
         if olt_id in self.olt_connections:
             conn = self.olt_connections[olt_id]
-            if conn.is_connected:
+            if conn.is_connected and self._check_olt_alive(conn):
+                logger.debug(f"Reutilizando sesión SSH cacheada para OLT {olt_id}")
                 return conn
-        
+            else:
+                logger.warning(f"Sesión SSH para OLT {olt_id} ya no está activa. Reconectando...")
+                try:
+                    conn.disconnect()
+                except Exception:
+                    pass
+                del self.olt_connections[olt_id]
+
         # Obtener configuración de BD
         try:
             olt_config = self.db.query(models.OLTConfig).filter(
                 models.OLTConfig.id == olt_id,
                 models.OLTConfig.active == True
             ).first()
-            
+
             if not olt_config:
                 logger.error(f"OLT config no encontrada: {olt_id}")
                 return None
-            
-            # Crear interfaz
+
             olt = OLTInterface(
                 host=olt_config.host,
                 port=olt_config.port,
@@ -100,16 +123,15 @@ class TaskProcessor:
                 max_retries=olt_config.max_retries,
                 retry_backoff_base=olt_config.retry_backoff_base
             )
-            
-            # Conectar
+
             if olt.connect():
                 self.olt_connections[olt_id] = olt
-                logger.info(f"Conexión OLT {olt_config.nombre} (ID {olt_id}) establecida")
+                logger.info(f"Conexión SSH OLT {olt_config.nombre} (ID {olt_id}) establecida")
                 return olt
             else:
                 logger.error(f"Fallo conectando a OLT {olt_id}")
                 return None
-        
+
         except Exception as e:
             logger.error(f"Error obteniendo conexión OLT: {e}")
             return None

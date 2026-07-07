@@ -108,6 +108,7 @@ class OLTDaemon:
     def __init__(self):
         self.running = True
         self.lock_file_handle = None
+        self.processor = None
         self.cycle_count = 0
         self.processed_count = 0
         self.error_count = 0
@@ -237,6 +238,16 @@ class OLTDaemon:
         
         # Rescatar tareas atascadas de una corrida anterior
         self._rescue_stuck_tasks()
+
+        # Inicializar el procesador de tareas una única vez para preservar caché SSH
+        try:
+            self.processor = TaskProcessor()
+            logger.info("TaskProcessor inicializado")
+        except Exception as e:
+            logger.error(f"Error inicializando TaskProcessor: {e}")
+            self.release_lock()
+            self.remove_pid_file()
+            return False
         
         # Esperar antes de empezar
         logger.info(f"Esperando {STARTUP_DELAY}s antes de iniciar ciclos...")
@@ -258,7 +269,7 @@ class OLTDaemon:
                     
                     # Crear sesión fresca en cada ciclo
                     db = SessionLocal()
-                    processor = TaskProcessor(db)
+                    self.processor.db = db
                     
                     # Contar pendientes (diagnóstico)
                     import models as _m
@@ -270,7 +281,7 @@ class OLTDaemon:
                         logger.info(f"[Ciclo {self.cycle_count}] {pending_count} tarea(s) pendiente(s)")
                     
                     # Procesar
-                    processed = processor.process_pending_tasks(batch_size=BATCH_SIZE)
+                    processed = self.processor.process_pending_tasks(batch_size=BATCH_SIZE)
                     self.processed_count += processed
                     
                     if processed > 0:
@@ -289,12 +300,14 @@ class OLTDaemon:
                         time.sleep(30)
                 
                 finally:
-                    # Siempre cerrar la sesión del ciclo
+                    # Siempre cerrar y limpiar la sesión del ciclo
                     if db is not None:
                         try:
                             db.close()
                         except:
                             pass
+                    if self.processor:
+                        self.processor.db = None
                 
                 # Esperar hasta el siguiente ciclo
                 cycle_duration = time.time() - cycle_start
@@ -326,6 +339,14 @@ class OLTDaemon:
         if self.last_error:
             logger.info(f"Último error: {self.last_error}")
         
+        # Desconectar OLTs
+        if self.processor:
+            try:
+                logger.info("Desconectando OLTs...")
+                self.processor.disconnect_all()
+            except Exception as e:
+                logger.warning(f"Error desconectando: {e}")
+
         # Liberar lock y PID
         self.release_lock()
         self.remove_pid_file()
