@@ -245,35 +245,19 @@ class OLTInterface:
     
     def _cleanup_buffer(self, max_iterations: int = 10):
         """
-        Limpia el buffer de la conexión Telnet.
-        Esto es crítico para sincronizar con el prompt correcto.
+        Limpia el buffer de la conexión SSH.
+        Usa clear_buffer() de Netmiko (compatible con SSH).
+        read_very_eager() era solo para Telnet y lanza AttributeError con SSH.
         
         Args:
-            max_iterations: Máximo de iteraciones para evitar bucles infinitos
+            max_iterations: No usado, mantenido por compatibilidad de firma
         """
         logger.debug("Limpiando buffer del terminal...")
-        
         try:
-            for i in range(max_iterations):
-                try:
-                    # Intentar leer lo que hay sin esperar
-                    output = self.connection.read_very_eager()
-                    
-                    if not output:
-                        logger.debug(f"Buffer limpio después de {i} iteraciones")
-                        return
-                    
-                    logger.debug(f"Buffer garbage {i}: {output[:100]}")
-                    time.sleep(0.1)
-                
-                except EOFError:
-                    logger.debug("Buffer limpio (EOFError)")
-                    return
-            
-            logger.warning("Buffer cleanup alcanzó iteraciones máximas")
-        
+            self.connection.clear_buffer()
+            logger.debug("Buffer limpiado con clear_buffer()")
         except Exception as e:
-            logger.warning(f"Error limpiando buffer: {e}")
+            logger.warning(f"Error limpiando buffer (no crítico): {e}")
     
     def send_command(
         self,
@@ -388,12 +372,21 @@ class OLTInterface:
         return gpon_port
 
     def enter_privileged_mode(self) -> str:
-        """Entra al modo privilegiado de Huawei."""
-        return self.send_command('enable', delay_factor=1.2)
+        """Entra al modo privilegiado de Huawei.
+        
+        Usa expect_string=r'#' para indicarle a Netmiko cuál es el nuevo
+        prompt esperado. Sin esto, Netmiko busca el prompt anterior (>) y
+        lanza 'Pattern not detected' aunque el comando haya funcionado.
+        """
+        return self.send_command('enable', expect_string=r'#', delay_factor=1.2)
 
     def enter_config_mode(self) -> str:
-        """Entra al modo de configuración global."""
-        return self.send_command('config', delay_factor=1.2)
+        """Entra al modo de configuración global.
+        
+        Usa expect_string=r'\(config\)#' para sincronizar con el nuevo
+        prompt OPSATEL_OLT_BANOS(config)# tras ejecutar 'config'.
+        """
+        return self.send_command('config', expect_string=r'\(config\)#', delay_factor=1.2)
 
     def enter_gpon_interface(self, gpon_port: str) -> str:
         """Entra a la interfaz GPON correspondiente (ej. 0/0 o 0/1)."""
