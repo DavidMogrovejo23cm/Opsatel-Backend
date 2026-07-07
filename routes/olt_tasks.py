@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 # SCHEMAS/RESPONSES
 # ============================================================================
 
+class OLTTaskCreate(BaseModel):
+    cliente_id: int
+    action: str
+    payload: dict
+
 class OLTTaskResponse:
     """Respuesta de tarea OLT"""
     pass  # Se usa dict directamente para simplificar
@@ -48,9 +53,7 @@ class OLTTaskResponse:
 
 @router.post("/", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
 def create_olt_task(
-    cliente_id: int,
-    action: str,
-    payload: dict,
+    task_in: OLTTaskCreate,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
@@ -58,13 +61,15 @@ def create_olt_task(
     Crea una nueva tarea OLT en la cola.
     
     Args:
-        cliente_id: ID del cliente a aprovisionarse
-        action: Tipo de acción ('add_ont', 'add_service', etc.)
-        payload: Parámetros de la acción (JSON)
+        task_in: Datos de la tarea a crear (cliente_id, action, payload)
     
     Returns:
         Tarea creada con ID
     """
+    cliente_id = task_in.cliente_id
+    action = task_in.action
+    payload = task_in.payload
+    
     try:
         logger.info(f"Creando tarea OLT para cliente {cliente_id}, acción: {action}")
         
