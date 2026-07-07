@@ -721,8 +721,8 @@ class OLTInterface:
             if not block:
                 continue
 
-            # Extraer F/S/L (frame/slot/port → puerto GPON)
-            fsl_match = re.search(r'F/S/L\s*:\s*(\d+/\d+/\d+)', block, re.IGNORECASE)
+            # Extraer F/S/L o F/S/P (frame/slot/port/line → puerto GPON)
+            fsl_match = re.search(r'F/S/[LPlp]\s*:\s*(\d+/\d+/\d+)', block, re.IGNORECASE)
             if not fsl_match:
                 continue
             gpon_port = fsl_match.group(1).strip()
@@ -732,8 +732,8 @@ class OLTInterface:
             number = number_match.group(1).strip() if number_match else '0'
 
             # Extraer SN del ONT — formato: "47504F4E2B3A5187 (GPON-2B3A5187)"
-            # o directamente solo el SN hexadecimal
-            sn_match = re.search(r'Ont SN\s*:\s*([^\(\n\r]+?)(?:\s*\(([^\)]+)\))?\s*$', block, re.IGNORECASE | re.MULTILINE)
+            # o directamente solo el SN
+            sn_match = re.search(r'Ont SN\s*:\s*([^\s\(\)]+)(?:\s*\(([^)]+)\))?', block, re.IGNORECASE)
             sn_raw = None
             sn_readable = None
             if sn_match:
@@ -790,17 +790,37 @@ class OLTInterface:
     def display_autofind_all(self) -> list:
         """
         Ejecuta 'display ont autofind all' para listar ONTs detectadas por la OLT.
-        Debe estar en modo config para que el comando funcione correctamente.
+        Requiere estar en modo (config)# para que Huawei devuelva resultados.
+
+        IMPORTANTE: El except NO traga el error de enter_privileged_mode/enter_config_mode.
+        Si no se puede entrar al modo correcto, el comando se ejecutaría desde el prompt
+        equivocado (>) y Huawei devolvería vacío o error silencioso.
         """
         try:
+            # Entrar a modo privilegiado — lanza excepción si falla
             self.enter_privileged_mode()
-            self.enter_config_mode()
-        except Exception as e:
-            logger.warning(f"No se pudo entrar a modo privilegiado/config para autofind: {e}")
+            logger.info("Modo privilegiado OK (prompt: #)")
 
-        logger.info("Ejecutando 'display ont autofind all'...")
-        response = self.send_command('display ont autofind all', delay_factor=3.0)
-        logger.info(f"Respuesta cruda autofind ({len(response)} chars):\n{response[:2000]}")
+            # Entrar a modo config — lanza excepción si falla
+            self.enter_config_mode()
+            logger.info("Modo config OK (prompt: (config)#)")
+
+        except Exception as e:
+            logger.error(f"No se pudo entrar a modo config para autofind. Abortando. Error: {e}")
+            return []
+
+        try:
+            logger.info("Ejecutando 'display ont autofind all'...")
+            # read_timeout alto porque la OLT puede tardar en responder con múltiples ONTs
+            response = self.send_command(
+                'display ont autofind all',
+                delay_factor=3.0,
+                expect_string=r'\(config\)#'
+            )
+            logger.info(f"Respuesta cruda autofind ({len(response)} chars):\n{response[:3000]}")
+        except Exception as e:
+            logger.error(f"Error ejecutando 'display ont autofind all': {e}")
+            return []
 
         candidates = self.parse_autofind_output(response)
         logger.info(f"display_autofind_all completado: {len(candidates)} ONTs detectadas")

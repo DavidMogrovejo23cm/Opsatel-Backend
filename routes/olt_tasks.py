@@ -246,7 +246,7 @@ def get_mac_candidates(
 
         logger.info(f"Conectando a OLT {olt_config.nombre} ({olt_config.host}:{olt_config.port}) para autofind...")
         try:
-            olt = OLTInterface(
+            with OLTInterface(
                 host=olt_config.host,
                 port=olt_config.port or 22,
                 username=olt_config.username,
@@ -254,12 +254,11 @@ def get_mac_candidates(
                 timeout=olt_config.connection_timeout or 30,
                 max_retries=olt_config.max_retries or 2,
                 retry_backoff_base=olt_config.retry_backoff_base or 1
-            )
-            olt.connect()
-            logger.info("Conectado. Ejecutando 'display ont autofind all' en modo config...")
-            candidates = olt.display_autofind_all()
-            olt_success = True
-            logger.info(f"OLT retornó {len(candidates)} ONTs detectados")
+            ) as olt:
+                logger.info("Conectado. Ejecutando 'display ont autofind all' en modo config...")
+                candidates = olt.display_autofind_all()
+                olt_success = True
+                logger.info(f"OLT retornó {len(candidates)} ONTs detectados")
 
         except Exception as e:
             logger.error(f"Error al contactar OLT {olt_config.host}: {e}", exc_info=True)
