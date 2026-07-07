@@ -391,9 +391,22 @@ class OLTInterface:
         return self.send_command('config', expect_string=r'\(config\)#', delay_factor=1.2)
 
     def enter_gpon_interface(self, gpon_port: str) -> str:
-        """Entra a la interfaz GPON correspondiente (ej. 0/0 o 0/1)."""
+        """Entra a la interfaz GPON.  El prompt cambia a (config-if-gpon-X/X)#
+        así que indicamos el nuevo prompt con expect_string."""
         interface = self._get_gpon_interface(gpon_port)
-        return self.send_command(f'interface gpon {interface}', delay_factor=1.2)
+        return self.send_command(
+            f'interface gpon {interface}',
+            expect_string=r'\(config-if.*\)#',
+            delay_factor=1.2,
+        )
+
+    def exit_gpon_interface(self) -> str:
+        """Sale de la interfaz GPON con 'quit'. El prompt vuelve a (config)#."""
+        return self.send_command(
+            'quit',
+            expect_string=r'\(config\)#',
+            delay_factor=1.2,
+        )
 
     def build_activation_commands(self, payload: Dict[str, Any]) -> List[str]:
         """Construye la secuencia de comandos Huawei para activar un ONT."""
@@ -449,13 +462,20 @@ class OLTInterface:
                 ont_val = 0
             service_port = str(ont_val + 1000)
 
-        return [
-            f"interface gpon {interface}",
-            f'ont add {port_num} {ont_id} sn-auth "{mac}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {srvprofile_id} desc "{description}"',
-            f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {user_vlan} priority 0',
-            "quit",
-            f'service-port {service_port} vlan {vlan} gpon {gpon_port} ont {ont_id} gemport {profile_id} multi-service user-vlan {user_vlan} tag-transform translate',
-        ]
+        # NOTA: 'interface gpon' y 'quit' NO están aquí.
+        # Las transiciones de prompt las gestiona execute_activation_sequence
+        # usando enter_gpon_interface() y exit_gpon_interface() con expect_string correcto.
+        return {
+            'gpon_commands': [
+                # Comandos ejecutados DENTRO de (config-if-gpon-X/X)#
+                f'ont add {port_num} {ont_id} sn-auth "{mac}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {srvprofile_id} desc "{description}"',
+                f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {user_vlan} priority 0',
+            ],
+            'config_commands': [
+                # Comandos ejecutados DESDE (config)# tras el quit
+                f'service-port {service_port} vlan {vlan} gpon {gpon_port} ont {ont_id} gemport {profile_id} multi-service user-vlan {user_vlan} tag-transform translate',
+            ],
+        }
 
     def check_response_for_errors(self, command: str, response: str) -> None:
         """
@@ -483,32 +503,65 @@ class OLTInterface:
                 raise OLTCommandError(f"Error OLT en '{command}': {error_line}")
 
     def execute_activation_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Ejecuta el flujo completo de activación de forma secuencial y valida cada paso.
+        """Ejecuta el flujo completo de activación con sincronización explícita de prompts.
 
-        NOTA: NO llama a self.connect() — la conexión es gestionada externamente
-        por TaskProcessor, que mantiene la sesión cacheada entre tareas.
+        Transiciones de prompt gestionadas:
+          >  → enable →  #
+          #  → config →  (config)#
+          (config)#  → interface gpon →  (config-if-gpon-X/X)#
+          (config-if-gpon-X/X)#  → quit →  (config)#
+          (config)#  → service-port →  (config)#
+
+        NOTA: NO llama a self.connect() — la conexión es gestionada externamente.
         """
         responses = []
         try:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
 
-            # 1. Modo Privilegiado
-            resp_enable = self.enter_privileged_mode()
-            self.check_response_for_errors('enable', resp_enable)
-            responses.append(('enable', resp_enable))
+            # 1. Modo Privilegiado  (> → #)
+            resp = self.enter_privileged_mode()
+            self.check_response_for_errors('enable', resp)
+            responses.append(('enable', resp))
 
-            # 2. Modo Configuración
-            resp_config = self.enter_config_mode()
-            self.check_response_for_errors('config', resp_config)
-            responses.append(('config', resp_config))
+            # 2. Modo Configuración  (# → (config)#)
+            resp = self.enter_config_mode()
+            self.check_response_for_errors('config', resp)
+            responses.append(('config', resp))
 
-            # 3. Comandos de Activación
-            commands = self.build_activation_commands(payload)
-            for command in commands:
-                resp_cmd = self.send_command(command, delay_factor=1.5)
-                self.check_response_for_errors(command, resp_cmd)
-                responses.append((command, resp_cmd))
+            # 3. Obtener listas de comandos separadas por contexto
+            cmd_groups = self.build_activation_commands(payload)
+            gpon_cmds = cmd_groups['gpon_commands']
+            config_cmds = cmd_groups['config_commands']
+
+            # 4. Entrar a interfaz GPON  ((config)# → (config-if-gpon-X/X)#)
+            resp = self.enter_gpon_interface(payload.get('gpon_port', '0/0/0'))
+            self.check_response_for_errors('interface gpon', resp)
+            responses.append(('interface gpon', resp))
+
+            # 5. Comandos dentro de (config-if-gpon-X/X)#
+            for cmd in gpon_cmds:
+                resp = self.send_command(
+                    cmd,
+                    expect_string=r'\(config-if.*\)#',
+                    delay_factor=1.5,
+                )
+                self.check_response_for_errors(cmd, resp)
+                responses.append((cmd, resp))
+
+            # 6. Salir de interfaz GPON  ((config-if-gpon-X/X)# → (config)#)
+            resp = self.exit_gpon_interface()
+            responses.append(('quit', resp))
+
+            # 7. Comandos desde (config)#  (service-port, etc.)
+            for cmd in config_cmds:
+                resp = self.send_command(
+                    cmd,
+                    expect_string=r'\(config\)#',
+                    delay_factor=1.5,
+                )
+                self.check_response_for_errors(cmd, resp)
+                responses.append((cmd, resp))
 
             return {
                 'success': True,
@@ -517,9 +570,6 @@ class OLTInterface:
             }
         except Exception as e:
             logger.error(f"Error en execute_activation_sequence: {e}")
-            # NO desconectar aquí: TaskProcessor reutiliza la sesión para la siguiente tarea.
-            # Si la sesión está realmente rota, el siguiente send_command fallará
-            # y TaskProcessor eliminará la entrada del caché en ese momento.
             return {
                 'success': False,
                 'error': str(e),
@@ -541,39 +591,49 @@ class OLTInterface:
             interface = "0/0"
             port_num = "0"
 
-        return [
-            f"interface gpon {interface}",
-            f"ont delete {port_num} {ont_id}",
-            "quit"
-        ]
+        # 'interface gpon' y 'quit' se gestionan en execute_removal_sequence
+        return {
+            'gpon_commands': [
+                f"ont delete {port_num} {ont_id}",
+            ],
+        }
 
     def execute_removal_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Ejecuta el flujo completo de eliminación de forma secuencial y valida cada paso.
-
-        NOTA: NO llama a self.connect() — la conexión es gestionada externamente
-        por TaskProcessor, que mantiene la sesión cacheada entre tareas.
-        """
+        """Ejecuta el flujo completo de eliminación con sincronización explícita de prompts."""
         responses = []
         try:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
 
-            # 1. Modo Privilegiado
-            resp_enable = self.enter_privileged_mode()
-            self.check_response_for_errors('enable', resp_enable)
-            responses.append(('enable', resp_enable))
+            # 1. Modo Privilegiado  (> → #)
+            resp = self.enter_privileged_mode()
+            self.check_response_for_errors('enable', resp)
+            responses.append(('enable', resp))
 
-            # 2. Modo Configuración
-            resp_config = self.enter_config_mode()
-            self.check_response_for_errors('config', resp_config)
-            responses.append(('config', resp_config))
+            # 2. Modo Configuración  (# → (config)#)
+            resp = self.enter_config_mode()
+            self.check_response_for_errors('config', resp)
+            responses.append(('config', resp))
 
-            # 3. Comandos de Eliminación
-            commands = self.build_removal_commands(payload)
-            for command in commands:
-                resp_cmd = self.send_command(command, delay_factor=1.5)
-                self.check_response_for_errors(command, resp_cmd)
-                responses.append((command, resp_cmd))
+            # 3. Entrar a interfaz GPON  ((config)# → (config-if-gpon-X/X)#)
+            resp = self.enter_gpon_interface(payload.get('gpon_port', '0/0/0'))
+            self.check_response_for_errors('interface gpon', resp)
+            responses.append(('interface gpon', resp))
+
+            # 4. Comandos dentro de (config-if-gpon-X/X)#
+            cmd_groups = self.build_removal_commands(payload)
+            for cmd in cmd_groups['gpon_commands']:
+                resp = self.send_command(
+                    cmd,
+                    expect_string=r'\(config-if.*\)#',
+                    delay_factor=1.5,
+                )
+                self.check_response_for_errors(cmd, resp)
+                responses.append((cmd, resp))
+
+            # 5. Salir de interfaz GPON  ((config-if-gpon-X/X)# → (config)#)
+            resp = self.exit_gpon_interface()
+            responses.append(('quit', resp))
 
             return {
                 'success': True,
@@ -614,39 +674,49 @@ class OLTInterface:
         if not vlan or not str(vlan).isdigit():
             vlan = str(100 + puerto_val)
 
-        return [
-            f"interface gpon {interface}",
-            f"ont port native-vlan {port_num} {ont_id} eth 1 vlan {vlan} priority {priority}",
-            "quit"
-        ]
+        # 'interface gpon' y 'quit' se gestionan en execute_set_breach_sequence
+        return {
+            'gpon_commands': [
+                f"ont port native-vlan {port_num} {ont_id} eth 1 vlan {vlan} priority {priority}",
+            ],
+        }
 
     def execute_set_breach_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Ejecuta el flujo completo de configuración de VLAN nativa y valida cada paso.
-
-        NOTA: NO llama a self.connect() — la conexión es gestionada externamente
-        por TaskProcessor, que mantiene la sesión cacheada entre tareas.
-        """
+        """Ejecuta el flujo de configuración de VLAN nativa con sincronización explícita de prompts."""
         responses = []
         try:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
 
-            # 1. Modo Privilegiado
-            resp_enable = self.enter_privileged_mode()
-            self.check_response_for_errors('enable', resp_enable)
-            responses.append(('enable', resp_enable))
+            # 1. Modo Privilegiado  (> → #)
+            resp = self.enter_privileged_mode()
+            self.check_response_for_errors('enable', resp)
+            responses.append(('enable', resp))
 
-            # 2. Modo Configuración
-            resp_config = self.enter_config_mode()
-            self.check_response_for_errors('config', resp_config)
-            responses.append(('config', resp_config))
+            # 2. Modo Configuración  (# → (config)#)
+            resp = self.enter_config_mode()
+            self.check_response_for_errors('config', resp)
+            responses.append(('config', resp))
 
-            # 3. Comandos de Configuración
-            commands = self.build_set_breach_commands(payload)
-            for command in commands:
-                resp_cmd = self.send_command(command, delay_factor=1.5)
-                self.check_response_for_errors(command, resp_cmd)
-                responses.append((command, resp_cmd))
+            # 3. Entrar a interfaz GPON  ((config)# → (config-if-gpon-X/X)#)
+            resp = self.enter_gpon_interface(payload.get('gpon_port', '0/0/0'))
+            self.check_response_for_errors('interface gpon', resp)
+            responses.append(('interface gpon', resp))
+
+            # 4. Comandos dentro de (config-if-gpon-X/X)#
+            cmd_groups = self.build_set_breach_commands(payload)
+            for cmd in cmd_groups['gpon_commands']:
+                resp = self.send_command(
+                    cmd,
+                    expect_string=r'\(config-if.*\)#',
+                    delay_factor=1.5,
+                )
+                self.check_response_for_errors(cmd, resp)
+                responses.append((cmd, resp))
+
+            # 5. Salir de interfaz GPON  ((config-if-gpon-X/X)# → (config)#)
+            resp = self.exit_gpon_interface()
+            responses.append(('quit', resp))
 
             return {
                 'success': True,
