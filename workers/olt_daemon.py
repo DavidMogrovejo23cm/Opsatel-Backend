@@ -108,8 +108,6 @@ class OLTDaemon:
     def __init__(self):
         self.running = True
         self.lock_file_handle = None
-        self.db: Session = None
-        self.processor: TaskProcessor = None
         self.cycle_count = 0
         self.processed_count = 0
         self.error_count = 0
@@ -177,17 +175,39 @@ class OLTDaemon:
         except:
             pass
     
-    def connect_db(self) -> bool:
-        """Conecta a la base de datos"""
+    def _test_db_connection(self) -> bool:
+        """Verifica que la conexión a BD esté disponible antes de empezar."""
         try:
-            self.db = SessionLocal()
-            # Test de conexión
-            self.db.execute(text("SELECT 1"))
-            logger.info("Conexión a BD establecida")
+            db = SessionLocal()
+            db.execute(text("SELECT 1"))
+            db.close()
+            logger.info("Conexión a BD verificada")
             return True
         except Exception as e:
             logger.error(f"Error conectando a BD: {e}")
             return False
+
+    def _rescue_stuck_tasks(self):
+        """Al arrancar, rescata tareas atascadas en estado 'processing'.
+        Esto ocurre cuando el worker se cae mientras estaba ejecutando una tarea.
+        Las marca de vuelta a 'pending' para que se reintenten.
+        """
+        try:
+            import models
+            db = SessionLocal()
+            stuck = db.query(models.OLTTask).filter(
+                models.OLTTask.status == 'processing'
+            ).all()
+            if stuck:
+                logger.warning(f"Encontradas {len(stuck)} tarea(s) atascadas en 'processing'. Rescatando...")
+                for t in stuck:
+                    t.status = 'pending'
+                    t.error_message = (t.error_message or '') + ' | Rescatada al reinicio del worker'
+                db.commit()
+                logger.info(f"{len(stuck)} tarea(s) devueltas a 'pending'")
+            db.close()
+        except Exception as e:
+            logger.error(f"Error rescatando tareas: {e}")
     
     def start(self):
         """Inicia el daemon"""
@@ -208,60 +228,77 @@ class OLTDaemon:
         # Escribir PID
         self.write_pid_file()
         
-        # Conectar a BD
-        if not self.connect_db():
+        # Verificar BD
+        if not self._test_db_connection():
             logger.error("No se puede conectar a BD. Abortando.")
             self.release_lock()
             self.remove_pid_file()
             return False
         
-        # Inicializar processor
-        try:
-            self.processor = TaskProcessor(self.db)
-            logger.info("TaskProcessor inicializado")
-        except Exception as e:
-            logger.error(f"Error inicializando TaskProcessor: {e}")
-            self.release_lock()
-            self.remove_pid_file()
-            return False
+        # Rescatar tareas atascadas de una corrida anterior
+        self._rescue_stuck_tasks()
         
-        # Esperar antes de empezar (permite que systemd se estabilice)
+        # Esperar antes de empezar
         logger.info(f"Esperando {STARTUP_DELAY}s antes de iniciar ciclos...")
         time.sleep(STARTUP_DELAY)
         
         # LOOP PRINCIPAL
+        # IMPORTANTE: Se crea una sesión nueva por ciclo para evitar que
+        # una sesión SQLAlchemy estancada bloquee el procesamiento.
         logger.info("Iniciando loop de procesamiento...")
         
         try:
             while self.running:
                 self.cycle_count += 1
                 cycle_start = time.time()
+                db = None
                 
                 try:
-                    # Procesamiento de tareas
-                    processed = self.processor.process_pending_tasks(batch_size=BATCH_SIZE)
+                    logger.debug(f"========== CICLO {self.cycle_count} ==========")
+                    
+                    # Crear sesión fresca en cada ciclo
+                    db = SessionLocal()
+                    processor = TaskProcessor(db)
+                    
+                    # Contar pendientes (diagnóstico)
+                    import models as _m
+                    pending_count = db.query(_m.OLTTask).filter(
+                        _m.OLTTask.status.in_(['pending', 'retry'])
+                    ).count()
+                    
+                    if pending_count > 0:
+                        logger.info(f"[Ciclo {self.cycle_count}] {pending_count} tarea(s) pendiente(s)")
+                    
+                    # Procesar
+                    processed = processor.process_pending_tasks(batch_size=BATCH_SIZE)
                     self.processed_count += processed
                     
                     if processed > 0:
                         logger.info(f"[Ciclo {self.cycle_count}] Procesadas {processed} tarea(s)")
                     
-                    self.error_count = 0  # Reset error counter
+                    self.error_count = 0
                     self.last_error = None
                 
                 except Exception as e:
                     self.error_count += 1
                     self.last_error = str(e)
-                    logger.error(f"[Ciclo {self.cycle_count}] Error en procesamiento: {e}")
+                    logger.exception(f"[Ciclo {self.cycle_count}] Error en procesamiento")
                     
-                    # Si muchos errores seguidos, esperar más tiempo
                     if self.error_count > 5:
                         logger.warning(f"Demasiados errores ({self.error_count}). Esperando 30s...")
                         time.sleep(30)
                 
-                # Wait before next cycle (restando tiempo que tomó procesar)
+                finally:
+                    # Siempre cerrar la sesión del ciclo
+                    if db is not None:
+                        try:
+                            db.close()
+                        except:
+                            pass
+                
+                # Esperar hasta el siguiente ciclo
                 cycle_duration = time.time() - cycle_start
                 wait_time = max(0, POLL_INTERVAL - cycle_duration)
-                
                 if wait_time > 0:
                     time.sleep(wait_time)
         
@@ -288,22 +325,6 @@ class OLTDaemon:
         logger.info(f"Errores: {self.error_count}")
         if self.last_error:
             logger.info(f"Último error: {self.last_error}")
-        
-        # Desconectar OLTs
-        if self.processor:
-            try:
-                logger.info("Desconectando OLTs...")
-                self.processor.disconnect_all()
-            except Exception as e:
-                logger.warning(f"Error desconectando: {e}")
-        
-        # Cerrar BD
-        if self.db:
-            try:
-                logger.info("Cerrando conexión a BD...")
-                self.db.close()
-            except:
-                pass
         
         # Liberar lock y PID
         self.release_lock()
