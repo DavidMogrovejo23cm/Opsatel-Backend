@@ -177,7 +177,9 @@ class OLTInterface:
             logger.debug("Ya conectado a OLT, usando conexión existente")
             return True
         
-        if self.connection:
+        # Solo destruir la conexión si se fuerza reconexión o si realmente no está activa.
+        # No destruir una sesión viva innecesariamente para evitar múltiples autenticaciones SSH.
+        if force_reconnect and self.connection:
             try:
                 self.disconnect()
             except:
@@ -448,10 +450,15 @@ class OLTInterface:
                 raise OLTCommandError(f"Error OLT en '{command}': {error_line}")
 
     def execute_activation_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Ejecuta el flujo completo de activación de forma secuencial y valida cada paso."""
+        """Ejecuta el flujo completo de activación de forma secuencial y valida cada paso.
+
+        NOTA: NO llama a self.connect() — la conexión es gestionada externamente
+        por TaskProcessor, que mantiene la sesión cacheada entre tareas.
+        """
         responses = []
         try:
-            self.connect()
+            if not self.is_connected:
+                raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
 
             # 1. Modo Privilegiado
             resp_enable = self.enter_privileged_mode()
@@ -477,11 +484,9 @@ class OLTInterface:
             }
         except Exception as e:
             logger.error(f"Error en execute_activation_sequence: {e}")
-            # Desconectar en caso de error para no dejar la sesión en un estado inconsistente en la caché
-            try:
-                self.disconnect()
-            except:
-                pass
+            # NO desconectar aquí: TaskProcessor reutiliza la sesión para la siguiente tarea.
+            # Si la sesión está realmente rota, el siguiente send_command fallará
+            # y TaskProcessor eliminará la entrada del caché en ese momento.
             return {
                 'success': False,
                 'error': str(e),
@@ -510,10 +515,15 @@ class OLTInterface:
         ]
 
     def execute_removal_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Ejecuta el flujo completo de eliminación de forma secuencial y valida cada paso."""
+        """Ejecuta el flujo completo de eliminación de forma secuencial y valida cada paso.
+
+        NOTA: NO llama a self.connect() — la conexión es gestionada externamente
+        por TaskProcessor, que mantiene la sesión cacheada entre tareas.
+        """
         responses = []
         try:
-            self.connect()
+            if not self.is_connected:
+                raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
 
             # 1. Modo Privilegiado
             resp_enable = self.enter_privileged_mode()
@@ -539,10 +549,6 @@ class OLTInterface:
             }
         except Exception as e:
             logger.error(f"Error en execute_removal_sequence: {e}")
-            try:
-                self.disconnect()
-            except:
-                pass
             return {
                 'success': False,
                 'error': str(e),
@@ -573,10 +579,15 @@ class OLTInterface:
         ]
 
     def execute_set_breach_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Ejecuta el flujo completo de configuración de VLAN nativa y valida cada paso."""
+        """Ejecuta el flujo completo de configuración de VLAN nativa y valida cada paso.
+
+        NOTA: NO llama a self.connect() — la conexión es gestionada externamente
+        por TaskProcessor, que mantiene la sesión cacheada entre tareas.
+        """
         responses = []
         try:
-            self.connect()
+            if not self.is_connected:
+                raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
 
             # 1. Modo Privilegiado
             resp_enable = self.enter_privileged_mode()
@@ -602,10 +613,6 @@ class OLTInterface:
             }
         except Exception as e:
             logger.error(f"Error en execute_set_breach_sequence: {e}")
-            try:
-                self.disconnect()
-            except:
-                pass
             return {
                 'success': False,
                 'error': str(e),

@@ -315,6 +315,12 @@ class TaskProcessor:
                 elif task.action == 'set_breach':
                     result = olt.execute_set_breach_sequence(validated_payload)
                 
+                # Si la secuencia falló y la sesión SSH quedó rota, limpiar del caché
+                # para que la próxima tarea fuerce una reconexión limpia.
+                if not result.get('success') and not olt.is_connected:
+                    logger.warning(f"Sesión OLT {task.olt_id} rota tras error. Eliminando del caché.")
+                    self.olt_connections.pop(task.olt_id, None)
+                
                 success = result.get('success', False)
                 last_response = json.dumps(result, ensure_ascii=False)
                 last_error = result.get('error', '')
