@@ -397,73 +397,72 @@ class TaskProcessor:
                         logger.info(f"Esperando {wait_time}s antes de reintentar...")
                         time.sleep(wait_time)
 
-            if task.action == 'add_ont':
+            if task.action in ['add_ont', 'remove_ont', 'set_breach']:
                 self._log_attempt(
                     task_id=task_id,
                     attempt=1,
                     status_before='processing',
-                    status_after='completed' if success else 'retry',
+                    status_after='completed' if success else 'failed',
                     command_sent=command,
                     raw_response=last_response[:1000],
                     success=success,
                     error_message=last_error,
                     duration_ms=0
                 )
-            
-            # Actualizar tarea según resultado
+
+            # ── Actualizar tarea según resultado ─────────────────────────────
             task.response = last_response
             task.error_message = last_error
-            
+
             if success:
                 logger.info(f"✓ Comando ejecutado con éxito")
-                
-                # Para 'add_ont' y 'add_service', verificar potencia
+
+                # Marcar tarea como completada de inmediato para no dejar al
+                # frontend en suspenso. La potencia es un dato adicional.
+                task.status = 'completed'
+                task.completed_at = datetime.now()
+
+                # Actualizar cliente a Activo si la acción fue add_ont
+                if task.action == 'add_ont' and task.cliente_id:
+                    cliente = self.db.query(models.Cliente).filter(
+                        models.Cliente.id == task.cliente_id
+                    ).first()
+                    if cliente:
+                        cliente.olt_sync_status = 'synced'
+                        cliente.estado = 'Activo'
+                        logger.info(f"Cliente {cliente.id} marcado como Activo")
+
+                # Verificar potencia de forma NO-BLOQUEANTE (solo añade datos,
+                # no cambia el status ya marcado como 'completed')
                 if task.action in ['add_ont', 'add_service', 'check_power']:
-                    logger.info("Verificando potencia del ONT...")
-                    time.sleep(2)  # Esperar a que se sincronice
-                    
-                    gpon_port = validated_payload.get('gpon_port', '0/0/0')
-                    ont_id = validated_payload.get('ont_id', '0')
-                    
-                    power_check = olt.check_ont_power(gpon_port, ont_id)
-                    
-                    if power_check.get('power') is not None:
-                        power_val = power_check['power']
-                        
-                        if power_val >= MIN_POWER_THRESHOLD:
-                            logger.info(f"✓ Potencia verificada: {power_val} dBm (OK)")
-                            task.response_json = json.dumps(power_check)
-                            task.status = 'completed'
-                            
-                            # Actualizar cliente
-                            cliente = self.db.query(models.Cliente).filter(
-                                models.Cliente.id == task.cliente_id
-                            ).first()
-                            if cliente:
-                                cliente.potencia_verificada = True
-                                cliente.potencia_last_check = datetime.now()
-                                cliente.olt_sync_status = 'synced'
-                                cliente.estado = 'Activo'
-                                logger.info(f"Cliente {cliente.id} marcado como Activo")
-                        else:
-                            logger.warning(f"Potencia fuera de rango: {power_val} dBm (mín: {MIN_POWER_THRESHOLD})")
-                            task.status = 'retry'
-                            task.error_message = f"Power out of range: {power_val} dBm"
-                            task.response_json = json.dumps(power_check)
-                    else:
-                        logger.warning("No se pudo leer potencia del ONT")
-                        task.status = 'retry'
-                        task.error_message = "Could not read ONT power"
+                    try:
+                        logger.info("Verificando potencia del ONT (no-bloqueante)...")
+                        time.sleep(2)  # Esperar a que ONT se sincronice
+                        gpon_port = validated_payload.get('gpon_port', '0/0/0')
+                        ont_id = validated_payload.get('ont_id', '0')
+                        power_check = olt.check_ont_power(gpon_port, ont_id)
+                        power_val = power_check.get('power')
                         task.response_json = json.dumps(power_check)
-                else:
-                    # Otra acción
-                    task.status = 'completed'
+                        if power_val is not None:
+                            logger.info(f"Potencia ONT: {power_val} dBm")
+                            if task.action == 'add_ont' and task.cliente_id:
+                                # Actualizar potencia en cliente si se pudo leer
+                                cliente = self.db.query(models.Cliente).filter(
+                                    models.Cliente.id == task.cliente_id
+                                ).first()
+                                if cliente:
+                                    cliente.potencia_verificada = True
+                                    cliente.potencia_last_check = datetime.now()
+                        else:
+                            logger.warning("No se pudo leer potencia del ONT (no crítico, tarea ya completada)")
+                    except Exception as pw_err:
+                        logger.warning(f"Error en verificación de potencia (no crítico): {pw_err}")
             else:
-                logger.error(f"✗ Comando falló después de reintentos")
+                logger.error(f"✗ Comando falló")
                 task.status = 'failed'
                 task.error_code = 'COMMAND_FAILED'
-            
-            # Finalizar
+
+            # Finalizar — commit único que cierra la transacción
             task.completed_at = datetime.now()
             self.db.commit()
             
