@@ -173,6 +173,9 @@ class TaskProcessor:
             duration_ms: Duración en milisegundos
         """
         try:
+            # Truncar error_message para evitar error de MySQL "Data too long for column" (VARCHAR 500)
+            clean_error = str(error_message)[:450] if error_message else None
+
             log_entry = models.OLTTaskLog(
                 task_id=task_id,
                 attempt=attempt,
@@ -181,7 +184,7 @@ class TaskProcessor:
                 command_sent=command_sent,
                 raw_response=raw_response,
                 success=success,
-                error_message=error_message,
+                error_message=clean_error,
                 duration_ms=duration_ms,
                 log_message=f"[Attempt {attempt}] {'OK' if success else 'FAIL'}"
             )

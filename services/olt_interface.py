@@ -267,7 +267,8 @@ class OLTInterface:
         expect_string: Optional[str] = None,
         delay_factor: float = 1.0,
         strip_prompt: bool = True,
-        strip_command: bool = True
+        strip_command: bool = True,
+        read_timeout: Optional[int] = None
     ) -> str:
         """
         Envía un comando a la OLT y obtiene respuesta.
@@ -278,6 +279,7 @@ class OLTInterface:
             delay_factor: Factor de delay adicional
             strip_prompt: Remover prompt de la respuesta
             strip_command: Remover echo del comando
+            read_timeout: Timeout personalizado en segundos (escalado automático si es None)
             
         Returns:
             Respuesta de la OLT (limpia)
@@ -291,8 +293,18 @@ class OLTInterface:
         self.last_command = command
         start_time = time.time()
         
+        # Escalado automático de timeout para comandos lentos
+        timeout_to_use = read_timeout
+        if timeout_to_use is None:
+            cmd_lower = command.lower().strip()
+            if any(k in cmd_lower for k in ['ont add', 'autofind', 'display ont info', 'optical-power', 'ont delete']):
+                timeout_to_use = 90
+                logger.info(f"Escalando timeout para comando lento a {timeout_to_use}s: '{command}'")
+            else:
+                timeout_to_use = self.timeout
+        
         try:
-            logger.debug(f"Enviando comando: {command}")
+            logger.debug(f"Enviando comando: {command} (timeout={timeout_to_use}s)")
             
             # Enviar comando
             if expect_string:
@@ -302,7 +314,7 @@ class OLTInterface:
                     strip_prompt=strip_prompt,
                     strip_command=strip_command,
                     delay_factor=delay_factor,
-                    read_timeout=self.timeout
+                    read_timeout=timeout_to_use
                 )
             else:
                 response = self.connection.send_command(
@@ -310,7 +322,7 @@ class OLTInterface:
                     strip_prompt=strip_prompt,
                     strip_command=strip_command,
                     delay_factor=delay_factor,
-                    read_timeout=self.timeout
+                    read_timeout=timeout_to_use
                 )
             
             duration_ms = int((time.time() - start_time) * 1000)

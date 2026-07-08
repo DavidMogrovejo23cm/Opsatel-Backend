@@ -500,7 +500,7 @@ class OLTTaskLog(Base):
     raw_response = Column(Text)
     
     success = Column(Boolean)
-    error_message = Column(String(500))
+    error_message = Column(Text)
     
     duration_ms = Column(Integer)
     connection_time_ms = Column(Integer)
