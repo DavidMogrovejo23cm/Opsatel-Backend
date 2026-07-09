@@ -113,6 +113,7 @@ class OLTDaemon:
         self.processed_count = 0
         self.error_count = 0
         self.last_error = None
+        self.last_keepalive_time = 0
         
         # Registrar handlers de señales
         signal.signal(signal.SIGTERM, self._handle_sigterm)
@@ -286,6 +287,15 @@ class OLTDaemon:
                     
                     if processed > 0:
                         logger.info(f"[Ciclo {self.cycle_count}] Procesadas {processed} tarea(s)")
+                    else:
+                        # Si no hay tareas procesadas, ejecutar keepalive silencioso cada 60s
+                        now = time.time()
+                        if now - self.last_keepalive_time >= 60:
+                            try:
+                                self.processor.run_keepalive()
+                            except Exception as ke:
+                                logger.warning(f"Error ejecutando keepalive en daemon: {ke}")
+                            self.last_keepalive_time = now
                     
                     self.error_count = 0
                     self.last_error = None

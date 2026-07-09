@@ -45,6 +45,10 @@ class OLTTimeoutError(Exception):
     """Timeout esperando respuesta de la OLT"""
     pass
 
+class OLTAlreadyExistsError(OLTCommandError):
+    """La entidad (ONT, service-port, etc.) ya existe en la OLT"""
+    pass
+
 # ============================================================================
 # CONFIGURACIÓN ESPECÍFICA PARA HUAWEI OLT
 # ============================================================================
@@ -106,7 +110,7 @@ class OLTInterface:
         self.password = password
         self.timeout = timeout
         self.max_retries = max_retries
-        self.retry_backoff_base = retry_backoff_base
+        self.retry_backoff_base = max(2, retry_backoff_base)
         self.device_type = device_type
         
         self.connection = None
@@ -268,7 +272,8 @@ class OLTInterface:
         delay_factor: float = 1.0,
         strip_prompt: bool = True,
         strip_command: bool = True,
-        read_timeout: Optional[int] = None
+        read_timeout: Optional[int] = None,
+        use_timing: bool = False
     ) -> str:
         """
         Envía un comando a la OLT y obtiene respuesta.
@@ -280,6 +285,7 @@ class OLTInterface:
             strip_prompt: Remover prompt de la respuesta
             strip_command: Remover echo del comando
             read_timeout: Timeout personalizado en segundos (escalado automático si es None)
+            use_timing: Si es True, usa send_command_timing en vez de send_command normal
             
         Returns:
             Respuesta de la OLT (limpia)
@@ -304,26 +310,34 @@ class OLTInterface:
                 timeout_to_use = self.timeout
         
         try:
-            logger.debug(f"Enviando comando: {command} (timeout={timeout_to_use}s)")
+            logger.debug(f"Enviando comando: {command} (timeout={timeout_to_use}s, use_timing={use_timing})")
             
-            # Enviar comando
-            if expect_string:
-                response = self.connection.send_command(
+            if use_timing:
+                response = self.connection.send_command_timing(
                     command,
-                    expect_string=expect_string,
                     strip_prompt=strip_prompt,
                     strip_command=strip_command,
-                    delay_factor=delay_factor,
-                    read_timeout=timeout_to_use
+                    delay_factor=delay_factor
                 )
             else:
-                response = self.connection.send_command(
-                    command,
-                    strip_prompt=strip_prompt,
-                    strip_command=strip_command,
-                    delay_factor=delay_factor,
-                    read_timeout=timeout_to_use
-                )
+                # Enviar comando
+                if expect_string:
+                    response = self.connection.send_command(
+                        command,
+                        expect_string=expect_string,
+                        strip_prompt=strip_prompt,
+                        strip_command=strip_command,
+                        delay_factor=delay_factor,
+                        read_timeout=timeout_to_use
+                    )
+                else:
+                    response = self.connection.send_command(
+                        command,
+                        strip_prompt=strip_prompt,
+                        strip_command=strip_command,
+                        delay_factor=delay_factor,
+                        read_timeout=timeout_to_use
+                    )
             
             duration_ms = int((time.time() - start_time) * 1000)
             self.last_response = response
@@ -336,10 +350,15 @@ class OLTInterface:
         except NetmikoTimeoutException as e:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"✗ Timeout esperando respuesta ({duration_ms}ms): {e}")
+            self.disconnect()
             raise OLTTimeoutError(f"Timeout en comando: {command}")
         
         except Exception as e:
             logger.error(f"✗ Error ejecutando comando: {type(e).__name__}: {e}")
+            # Si es un error de conexión/lectura/SSH, desconectar de forma segura
+            e_str = str(e).lower()
+            if any(k in e_str for k in ["connection", "ssh", "socket", "read", "eof"]):
+                self.disconnect()
             raise OLTCommandError(f"Error ejecutando '{command}': {e}")
     
     def send_config_commands(self, commands: List[str]) -> Tuple[bool, str]:
@@ -386,37 +405,27 @@ class OLTInterface:
         return gpon_port
 
     def enter_privileged_mode(self) -> str:
-        """Entra al modo privilegiado de Huawei.
-        
-        Usa expect_string=r'#' para indicarle a Netmiko cuál es el nuevo
-        prompt esperado. Sin esto, Netmiko busca el prompt anterior (>) y
-        lanza 'Pattern not detected' aunque el comando haya funcionado.
-        """
-        return self.send_command('enable', expect_string=r'#', delay_factor=1.2)
+        """Entra al modo privilegiado de Huawei."""
+        return self.send_command('enable', use_timing=True, delay_factor=1.2)
 
     def enter_config_mode(self) -> str:
-        """Entra al modo de configuración global.
-        
-        Usa expect_string=r'\(config\)#' para sincronizar con el nuevo
-        prompt OPSATEL_OLT_BANOS(config)# tras ejecutar 'config'.
-        """
-        return self.send_command('config', expect_string=r'\(config\)#', delay_factor=1.2)
+        """Entra al modo de configuración global."""
+        return self.send_command('config', use_timing=True, delay_factor=1.2)
 
     def enter_gpon_interface(self, gpon_port: str) -> str:
-        """Entra a la interfaz GPON.  El prompt cambia a (config-if-gpon-X/X)#
-        así que indicamos el nuevo prompt con expect_string."""
+        """Entra a la interfaz GPON."""
         interface = self._get_gpon_interface(gpon_port)
         return self.send_command(
             f'interface gpon {interface}',
-            expect_string=r'\(config-if.*\)#',
+            use_timing=True,
             delay_factor=1.2,
         )
 
     def exit_gpon_interface(self) -> str:
-        """Sale de la interfaz GPON con 'quit'. El prompt vuelve a (config)#."""
+        """Sale de la interfaz GPON con 'quit'."""
         return self.send_command(
             'quit',
-            expect_string=r'\(config\)#',
+            use_timing=True,
             delay_factor=1.2,
         )
 
@@ -493,8 +502,17 @@ class OLTInterface:
         """
         Analiza la respuesta de la OLT ante un comando específico.
         Si detecta un error, levanta OLTCommandError con la descripción del error.
+        Trata los errores de entidad ya existente/duplicada como advertencias no fatales.
         """
         resp_lower = response.lower()
+        
+        non_fatal_keywords = [
+            'already existed',
+            'already exists',
+            'has existed',
+            'exist'
+        ]
+        
         error_keywords = [
             'failure:',
             'error:',
@@ -507,8 +525,14 @@ class OLTInterface:
             'is invalid',
             'command name is incorrect'
         ]
+        
         for kw in error_keywords:
             if kw in resp_lower:
+                # Si el error es de tipo "ya existe", lanzar OLTAlreadyExistsError
+                if any(nf in resp_lower for nf in non_fatal_keywords):
+                    logger.warning(f"Entidad ya existente detectada en respuesta a '{command}': {response.strip()}")
+                    raise OLTAlreadyExistsError(f"Entidad ya existente: {response.strip()}")
+                
                 lines = response.split('\n')
                 error_line = next((line.strip() for line in lines if kw in line.lower()), response.strip())
                 logger.error(f"Error detectado en respuesta al comando '{command}': {error_line}")
@@ -527,6 +551,8 @@ class OLTInterface:
         NOTA: NO llama a self.connect() — la conexión es gestionada externamente.
         """
         responses = []
+        already_exists_detected = False
+        already_exists_msg = ""
         try:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
@@ -553,13 +579,19 @@ class OLTInterface:
 
             # 5. Comandos dentro de (config-if-gpon-X/X)#
             for cmd in gpon_cmds:
-                resp = self.send_command(
-                    cmd,
-                    expect_string=r'\(config-if.*\)#',
-                    delay_factor=1.5,
-                )
-                self.check_response_for_errors(cmd, resp)
-                responses.append((cmd, resp))
+                try:
+                    resp = self.send_command(
+                        cmd,
+                        use_timing=True,
+                        delay_factor=2.5,  # Delay mayor para comandos interactivos y pesados
+                    )
+                    self.check_response_for_errors(cmd, resp)
+                    responses.append((cmd, resp))
+                except OLTAlreadyExistsError as e:
+                    logger.warning(f"Advertencia de duplicidad detectada y capturada en '{cmd}': {e}")
+                    already_exists_detected = True
+                    already_exists_msg = str(e)
+                    responses.append((cmd, f"Warning/Already Exists: {e}"))
 
             # 6. Salir de interfaz GPON  ((config-if-gpon-X/X)# → (config)#)
             resp = self.exit_gpon_interface()
@@ -567,16 +599,33 @@ class OLTInterface:
 
             # 7. Comandos desde (config)#  (service-port, etc.)
             for cmd in config_cmds:
-                resp = self.send_command(
-                    cmd,
-                    expect_string=r'\(config\)#',
-                    delay_factor=1.5,
-                )
-                self.check_response_for_errors(cmd, resp)
-                responses.append((cmd, resp))
+                try:
+                    resp = self.send_command(
+                        cmd,
+                        use_timing=True,
+                        delay_factor=2.0,
+                    )
+                    self.check_response_for_errors(cmd, resp)
+                    responses.append((cmd, resp))
+                except OLTAlreadyExistsError as e:
+                    logger.warning(f"Advertencia de duplicidad detectada y capturada en '{cmd}': {e}")
+                    already_exists_detected = True
+                    already_exists_msg = str(e)
+                    responses.append((cmd, f"Warning/Already Exists: {e}"))
+
+            if already_exists_detected:
+                return {
+                    'success': True,
+                    'status': 'ALREADY_EXISTS',
+                    'message': f"La ONT o parte de la configuración ya existía en la OLT: {already_exists_msg}",
+                    'commands': [cmd for cmd, _ in responses],
+                    'responses': [resp for _, resp in responses],
+                }
 
             return {
                 'success': True,
+                'status': 'SUCCESS',
+                'message': 'ONT activada exitosamente en la OLT.',
                 'commands': [cmd for cmd, _ in responses],
                 'responses': [resp for _, resp in responses],
             }
@@ -584,6 +633,7 @@ class OLTInterface:
             logger.error(f"Error en execute_activation_sequence: {e}")
             return {
                 'success': False,
+                'status': 'ERROR',
                 'error': str(e),
                 'commands': [cmd for cmd, _ in responses],
                 'responses': [resp for _, resp in responses],
@@ -613,6 +663,8 @@ class OLTInterface:
     def execute_removal_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Ejecuta el flujo completo de eliminación con sincronización explícita de prompts."""
         responses = []
+        already_exists_detected = False
+        already_exists_msg = ""
         try:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
@@ -635,20 +687,37 @@ class OLTInterface:
             # 4. Comandos dentro de (config-if-gpon-X/X)#
             cmd_groups = self.build_removal_commands(payload)
             for cmd in cmd_groups['gpon_commands']:
-                resp = self.send_command(
-                    cmd,
-                    expect_string=r'\(config-if.*\)#',
-                    delay_factor=1.5,
-                )
-                self.check_response_for_errors(cmd, resp)
-                responses.append((cmd, resp))
+                try:
+                    resp = self.send_command(
+                        cmd,
+                        use_timing=True,
+                        delay_factor=2.0,
+                    )
+                    self.check_response_for_errors(cmd, resp)
+                    responses.append((cmd, resp))
+                except OLTAlreadyExistsError as e:
+                    logger.warning(f"Advertencia de duplicidad/existente detectada y capturada en '{cmd}': {e}")
+                    already_exists_detected = True
+                    already_exists_msg = str(e)
+                    responses.append((cmd, f"Warning/Already Exists: {e}"))
 
             # 5. Salir de interfaz GPON  ((config-if-gpon-X/X)# → (config)#)
             resp = self.exit_gpon_interface()
             responses.append(('quit', resp))
 
+            if already_exists_detected:
+                return {
+                    'success': True,
+                    'status': 'ALREADY_EXISTS',
+                    'message': f"La ONT o parte de la configuración ya estaba eliminada o no existía: {already_exists_msg}",
+                    'commands': [cmd for cmd, _ in responses],
+                    'responses': [resp for _, resp in responses],
+                }
+
             return {
                 'success': True,
+                'status': 'SUCCESS',
+                'message': 'ONT eliminada exitosamente de la OLT.',
                 'commands': [cmd for cmd, _ in responses],
                 'responses': [resp for _, resp in responses],
             }
@@ -656,6 +725,7 @@ class OLTInterface:
             logger.error(f"Error en execute_removal_sequence: {e}")
             return {
                 'success': False,
+                'status': 'ERROR',
                 'error': str(e),
                 'commands': [cmd for cmd, _ in responses],
                 'responses': [resp for _, resp in responses],
@@ -696,6 +766,8 @@ class OLTInterface:
     def execute_set_breach_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Ejecuta el flujo de configuración de VLAN nativa con sincronización explícita de prompts."""
         responses = []
+        already_exists_detected = False
+        already_exists_msg = ""
         try:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
@@ -718,20 +790,37 @@ class OLTInterface:
             # 4. Comandos dentro de (config-if-gpon-X/X)#
             cmd_groups = self.build_set_breach_commands(payload)
             for cmd in cmd_groups['gpon_commands']:
-                resp = self.send_command(
-                    cmd,
-                    expect_string=r'\(config-if.*\)#',
-                    delay_factor=1.5,
-                )
-                self.check_response_for_errors(cmd, resp)
-                responses.append((cmd, resp))
+                try:
+                    resp = self.send_command(
+                        cmd,
+                        use_timing=True,
+                        delay_factor=1.5,
+                    )
+                    self.check_response_for_errors(cmd, resp)
+                    responses.append((cmd, resp))
+                except OLTAlreadyExistsError as e:
+                    logger.warning(f"Advertencia de duplicidad/existente detectada y capturada en '{cmd}': {e}")
+                    already_exists_detected = True
+                    already_exists_msg = str(e)
+                    responses.append((cmd, f"Warning/Already Exists: {e}"))
 
             # 5. Salir de interfaz GPON  ((config-if-gpon-X/X)# → (config)#)
             resp = self.exit_gpon_interface()
             responses.append(('quit', resp))
 
+            if already_exists_detected:
+                return {
+                    'success': True,
+                    'status': 'ALREADY_EXISTS',
+                    'message': f"La VLAN nativa o el puerto ya estaban configurados: {already_exists_msg}",
+                    'commands': [cmd for cmd, _ in responses],
+                    'responses': [resp for _, resp in responses],
+                }
+
             return {
                 'success': True,
+                'status': 'SUCCESS',
+                'message': 'VLAN nativa cambiada exitosamente en la OLT.',
                 'commands': [cmd for cmd, _ in responses],
                 'responses': [resp for _, resp in responses],
             }
@@ -739,6 +828,7 @@ class OLTInterface:
             logger.error(f"Error en execute_set_breach_sequence: {e}")
             return {
                 'success': False,
+                'status': 'ERROR',
                 'error': str(e),
                 'commands': [cmd for cmd, _ in responses],
                 'responses': [resp for _, resp in responses],

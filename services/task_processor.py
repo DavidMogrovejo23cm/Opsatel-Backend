@@ -175,6 +175,7 @@ class TaskProcessor:
         try:
             # Truncar error_message para evitar error de MySQL "Data too long for column" (VARCHAR 500)
             clean_error = str(error_message)[:450] if error_message else None
+            clean_response = str(raw_response)[:1000] if raw_response else ""
 
             log_entry = models.OLTTaskLog(
                 task_id=task_id,
@@ -182,7 +183,7 @@ class TaskProcessor:
                 status_before=status_before,
                 status_after=status_after,
                 command_sent=command_sent,
-                raw_response=raw_response,
+                raw_response=clean_response,
                 success=success,
                 error_message=clean_error,
                 duration_ms=duration_ms,
@@ -347,8 +348,14 @@ class TaskProcessor:
                     self.olt_connections.pop(task.olt_id, None)
                 
                 success = result.get('success', False)
+                result_status = result.get('status', 'SUCCESS')
                 last_response = json.dumps(result, ensure_ascii=False)
-                last_error = result.get('error', '')
+                
+                if result_status == 'ALREADY_EXISTS':
+                    last_error = result.get('message', 'La ONT o parte de la configuración ya existía en la OLT.')
+                else:
+                    last_error = result.get('error', '')
+                
                 command = '; '.join(result.get('commands', []))
             else:
                 command = self._build_command_from_action(task.action, validated_payload)
@@ -364,6 +371,7 @@ class TaskProcessor:
                 success = False
                 last_response = ""
                 last_error = ""
+                result_status = 'SUCCESS'
                 
                 for attempt in range(1, 4):
                     success_attempt, response, error = self._execute_command_with_retry(
@@ -381,7 +389,7 @@ class TaskProcessor:
                         status_before='processing',
                         status_after='completed' if success_attempt else 'retry',
                         command_sent=command,
-                        raw_response=response[:1000],  # Limitar tamaño
+                        raw_response=response,
                         success=success_attempt,
                         error_message=error,
                         duration_ms=0  # Calculado en OLTInterface
@@ -404,23 +412,28 @@ class TaskProcessor:
                     status_before='processing',
                     status_after='completed' if success else 'failed',
                     command_sent=command,
-                    raw_response=last_response[:1000],
+                    raw_response=last_response,
                     success=success,
                     error_message=last_error,
                     duration_ms=0
                 )
 
             # ── Actualizar tarea según resultado ─────────────────────────────
-            task.response = last_response
-            task.error_message = last_error
+            task.response = last_response[:1000]
+            task.error_message = last_error[:1000]
 
             if success:
-                logger.info(f"✓ Comando ejecutado con éxito")
+                logger.info(f"✓ Comando ejecutado con éxito. Estado: {result_status}")
 
                 # Marcar tarea como completada de inmediato para no dejar al
                 # frontend en suspenso. La potencia es un dato adicional.
                 task.status = 'completed'
                 task.completed_at = datetime.now()
+                
+                if result_status == 'ALREADY_EXISTS':
+                    task.error_code = 'ALREADY_EXISTS'
+                else:
+                    task.error_code = None
 
                 # Actualizar cliente a Activo si la acción fue add_ont
                 if task.action == 'add_ont' and task.cliente_id:
@@ -520,6 +533,29 @@ class TaskProcessor:
         except Exception as e:
             logger.error(f"Error en process_pending_tasks: {e}")
             return 0
+
+    def run_keepalive(self):
+        """
+        Envía un comando ligero ('display clock') a todas las sesiones SSH en caché
+        para evitar que expiren por inactividad.
+        """
+        if not self.olt_connections:
+            return
+        
+        logger.debug(f"Ejecutando keepalive en {len(self.olt_connections)} conexiones OLT cacheables...")
+        for olt_id, olt in list(self.olt_connections.items()):
+            try:
+                if olt.is_connected and olt.connection:
+                    # Enviar comando ligero en vez de \n
+                    olt.send_command("display clock", use_timing=True, delay_factor=1.0)
+                    logger.debug(f"✓ Keepalive ('display clock') enviado exitosamente a OLT ID {olt_id}")
+            except Exception as e:
+                logger.warning(f"✗ Error en keepalive para OLT ID {olt_id}: {e}. Desconectando y removiendo de caché.")
+                try:
+                    olt.disconnect()
+                except Exception:
+                    pass
+                self.olt_connections.pop(olt_id, None)
 
 
 # ============================================================================
