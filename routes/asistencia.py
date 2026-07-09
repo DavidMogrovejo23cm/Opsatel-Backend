@@ -65,16 +65,16 @@ def estado_asistencia_hoy(
             "puede_salir": False
         }
 
-    # Verificar restricción de 2 minutos (antes 4 horas)
+    # Verificar restricción de 8 horas
     try:
         hora_ent = datetime.strptime(f"{hoy} {asistencia.hora_entrada}", "%Y-%m-%d %H:%M:%S")
         diff = ahora_ec - hora_ent
-        restriccion_segundos = 28,000 # 8 horas
+        restriccion_segundos = 28000 # 8 horas
         puede_salir = diff.total_seconds() >= restriccion_segundos
         
         segundos_restantes = round(restriccion_segundos - diff.total_seconds())
         mensaje = None if puede_salir else "Aún no acabas tu jornada laboral"
-    except:
+    except (ValueError, TypeError):
         puede_salir = True
         mensaje = None
 
@@ -106,12 +106,12 @@ def registrar_salida(
     if asistencia.hora_salida:
         raise HTTPException(status_code=400, detail="Ya has registrado salida hoy.")
 
-    # Validar 2 minutos (antes 4 horas)
+    # Validar 8 horas
     try:
         hora_ent = datetime.strptime(f"{hoy} {asistencia.hora_entrada}", "%Y-%m-%d %H:%M:%S")
-        if (ahora_ec - hora_ent).total_seconds() < 14400:
+        if (ahora_ec - hora_ent).total_seconds() < 28000:
             raise HTTPException(status_code=400, detail="Aún no acabas tu jornada laboral")
-    except Exception as e:
+    except ValueError:
         pass # Si falla el parseo por algún motivo, permitimos el paso
 
     asistencia.hora_salida = data.hora_dispositivo if data.hora_dispositivo else ahora_ec.strftime("%H:%M:%S")
