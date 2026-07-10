@@ -69,7 +69,7 @@ def estado_asistencia_hoy(
     try:
         hora_ent = datetime.strptime(f"{hoy} {asistencia.hora_entrada}", "%Y-%m-%d %H:%M:%S")
         diff = ahora_ec - hora_ent
-        restriccion_segundos = 28000 # 8 horas
+        restriccion_segundos = 35850 # 8 horas
         puede_salir = diff.total_seconds() >= restriccion_segundos
         
         segundos_restantes = round(restriccion_segundos - diff.total_seconds())
