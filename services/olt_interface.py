@@ -339,6 +339,26 @@ class OLTInterface:
                         read_timeout=timeout_to_use
                     )
             
+            # Auto-responder logic for interactive prompts
+            if response:
+                resp_lower = response.lower()
+                if any(q in resp_lower for q in ["are you sure", "y/n", "confirm to", "confirm"]):
+                    logger.info("Confirmación interactiva detectada. Enviando 'y'...")
+                    response += "\n" + self.connection.send_command_timing(
+                        "y",
+                        strip_prompt=strip_prompt,
+                        strip_command=strip_command,
+                        delay_factor=delay_factor
+                    )
+                elif "}:" in response:
+                    logger.info("Indicador interactivo '}:' detectado. Enviando Enter...")
+                    response += "\n" + self.connection.send_command_timing(
+                        "",
+                        strip_prompt=strip_prompt,
+                        strip_command=strip_command,
+                        delay_factor=delay_factor
+                    )
+            
             duration_ms = int((time.time() - start_time) * 1000)
             self.last_response = response
             self.command_count += 1
@@ -429,8 +449,15 @@ class OLTInterface:
             delay_factor=1.2,
         )
 
-    def build_activation_commands(self, payload: Dict[str, Any]) -> List[str]:
-        """Construye la secuencia de comandos Huawei para activar un ONT."""
+    def build_activation_commands(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Construye la secuencia de comandos Huawei para activar un ONT.
+        
+        Returns:
+            Diccionario con las claves:
+              - 'gpon_commands': lista de comandos para ejecutar en (config-if-gpon-X/X)#
+              - 'config_commands': lista de comandos para ejecutar en (config)#
+              - 'metadata': todos los valores calculados para persistencia posterior
+        """
         gpon_port = payload.get('gpon_port', '0/0/0')
         ont_id = payload.get('ont_id', '0')
         mac = payload.get('mac', '000000000000')
@@ -483,19 +510,41 @@ class OLTInterface:
                 ont_val = 0
             service_port = str(ont_val + 1000)
 
+        # Construir los comandos individuales como strings
+        cmd_ont = f'ont add {port_num} {ont_id} sn-auth "{mac}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {srvprofile_id} desc "{description}"'
+        cmd_breach = f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {user_vlan} priority 0'
+        cmd_servicio = f'service-port {service_port} vlan {vlan} gpon {gpon_port} ont {ont_id} gemport {profile_id} multi-service user-vlan {user_vlan} tag-transform translate'
+
         # NOTA: 'interface gpon' y 'quit' NO están aquí.
         # Las transiciones de prompt las gestiona execute_activation_sequence
         # usando enter_gpon_interface() y exit_gpon_interface() con expect_string correcto.
         return {
             'gpon_commands': [
                 # Comandos ejecutados DENTRO de (config-if-gpon-X/X)#
-                f'ont add {port_num} {ont_id} sn-auth "{mac}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {srvprofile_id} desc "{description}"',
-                f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {user_vlan} priority 0',
+                cmd_ont,
+                cmd_breach,
             ],
             'config_commands': [
                 # Comandos ejecutados DESDE (config)# tras el quit
-                f'service-port {service_port} vlan {vlan} gpon {gpon_port} ont {ont_id} gemport {profile_id} multi-service user-vlan {user_vlan} tag-transform translate',
+                cmd_servicio,
             ],
+            # Metadatos completos del aprovisionamiento para persistencia en DB
+            'metadata': {
+                'gpon_port': gpon_port,
+                'port_num': port_num,
+                'puerto_val': puerto_val,
+                'ont_id': ont_id,
+                'mac': mac,
+                'service_port': service_port,
+                'vlan': vlan,
+                'user_vlan': user_vlan,
+                'profile_id': profile_id,
+                'srvprofile_id': srvprofile_id,
+                'description': description,
+                'cmd_ont': cmd_ont,
+                'cmd_breach': cmd_breach,
+                'cmd_servicio': cmd_servicio,
+            }
         }
 
     def check_response_for_errors(self, command: str, response: str) -> None:
@@ -538,6 +587,34 @@ class OLTInterface:
                 logger.error(f"Error detectado en respuesta al comando '{command}': {error_line}")
                 raise OLTCommandError(f"Error OLT en '{command}': {error_line}")
 
+    def _reset_to_base_prompt(self) -> None:
+        """
+        Asegura que el prompt esté en el modo base '>' antes de iniciar una secuencia.
+        Si la sesión SSH ya está en un submodo (como config o config-if),
+        envía 'quit' secuencialmente hasta retornar a '>'.
+        """
+        if not self.is_connected or not self.connection:
+            return
+        
+        logger.info("Detectando y reseteando estado del prompt a '>'...")
+        try:
+            current = self.connection.find_prompt()
+            logger.info(f"Prompt actual detectado: {current}")
+            
+            for _ in range(5):
+                if current.endswith('>') and '(' not in current:
+                    logger.info("Prompt ya está en el modo base '>'")
+                    break
+                
+                if current.endswith('#') or '(' in current:
+                    logger.info("Prompt en submodo o habilitado. Enviando 'quit'...")
+                    current = self.connection.send_command_timing('quit', delay_factor=1.0)
+                    logger.info(f"Nuevo prompt: {current}")
+                else:
+                    current = self.connection.send_command_timing('\n', delay_factor=1.0)
+        except Exception as e:
+            logger.warning(f"No se pudo resetear el prompt al modo base: {e}")
+
     def execute_activation_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Ejecuta el flujo completo de activación con sincronización explícita de prompts.
 
@@ -548,6 +625,12 @@ class OLTInterface:
           (config-if-gpon-X/X)#  → quit →  (config)#
           (config)#  → service-port →  (config)#
 
+        Returns:
+            Diccionario enriquecido con todos los datos del aprovisionamiento:
+            success, status, message, commands, responses, y todos los campos
+            técnicos (port_num, ont_id, service_port, mac, vlan, etc.) listos
+            para ser persistidos directamente en el modelo Cliente.
+
         NOTA: NO llama a self.connect() — la conexión es gestionada externamente.
         """
         responses = []
@@ -556,6 +639,9 @@ class OLTInterface:
         try:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
+
+            # Resetear prompt al estado base antes de iniciar
+            self._reset_to_base_prompt()
 
             # 1. Modo Privilegiado  (> → #)
             resp = self.enter_privileged_mode()
@@ -568,9 +654,12 @@ class OLTInterface:
             responses.append(('config', resp))
 
             # 3. Obtener listas de comandos separadas por contexto
+            #    build_activation_commands ahora retorna también 'metadata' con todos
+            #    los valores calculados para facilitar la persistencia en DB.
             cmd_groups = self.build_activation_commands(payload)
             gpon_cmds = cmd_groups['gpon_commands']
             config_cmds = cmd_groups['config_commands']
+            meta = cmd_groups['metadata']  # Todos los valores calculados
 
             # 4. Entrar a interfaz GPON  ((config)# → (config-if-gpon-X/X)#)
             resp = self.enter_gpon_interface(payload.get('gpon_port', '0/0/0'))
@@ -613,21 +702,40 @@ class OLTInterface:
                     already_exists_msg = str(e)
                     responses.append((cmd, f"Warning/Already Exists: {e}"))
 
+            # Base del resultado enriquecido — incluye todos los datos técnicos
+            # que el task_processor necesita para persistir en el modelo Cliente.
+            enriched_base = {
+                'commands': [cmd for cmd, _ in responses],
+                'responses': [resp for _, resp in responses],
+                # ─── Datos técnicos del aprovisionamiento ───────────────────
+                'gpon_port':    meta['gpon_port'],
+                'port_num':     meta['port_num'],
+                'ont_id':       meta['ont_id'],
+                'mac':          meta['mac'],
+                'service_port': meta['service_port'],
+                'vlan':         meta['vlan'],
+                'user_vlan':    meta['user_vlan'],
+                'profile_id':   meta['profile_id'],
+                'description':  meta['description'],
+                # Comandos OLT listos para mostrar al frontend / guardar en DB
+                'cmd_ont':      meta['cmd_ont'],
+                'cmd_breach':   meta['cmd_breach'],
+                'cmd_servicio': meta['cmd_servicio'],
+            }
+
             if already_exists_detected:
                 return {
+                    **enriched_base,
                     'success': True,
                     'status': 'ALREADY_EXISTS',
                     'message': f"La ONT o parte de la configuración ya existía en la OLT: {already_exists_msg}",
-                    'commands': [cmd for cmd, _ in responses],
-                    'responses': [resp for _, resp in responses],
                 }
 
             return {
+                **enriched_base,
                 'success': True,
                 'status': 'SUCCESS',
                 'message': 'ONT activada exitosamente en la OLT.',
-                'commands': [cmd for cmd, _ in responses],
-                'responses': [resp for _, resp in responses],
             }
         except Exception as e:
             logger.error(f"Error en execute_activation_sequence: {e}")
@@ -668,6 +776,9 @@ class OLTInterface:
         try:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
+
+            # Resetear prompt al estado base antes de iniciar
+            self._reset_to_base_prompt()
 
             # 1. Modo Privilegiado  (> → #)
             resp = self.enter_privileged_mode()
@@ -771,6 +882,9 @@ class OLTInterface:
         try:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
+
+            # Resetear prompt al estado base antes de iniciar
+            self._reset_to_base_prompt()
 
             # 1. Modo Privilegiado  (> → #)
             resp = self.enter_privileged_mode()

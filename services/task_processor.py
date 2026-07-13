@@ -68,6 +68,19 @@ class TaskProcessor:
         self.current_task_id = None
 
         logger.info("TaskProcessor inicializado (sin sesión BD todavía)")
+
+    def pre_connect_active_olts(self, db: Session):
+        """Pre-conecta a todas las OLTs activas al iniciar el worker"""
+        self.db = db
+        try:
+            active_olts = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).all()
+            for config in active_olts:
+                logger.info(f"Pre-conectando a OLT {config.nombre} (ID {config.id})...")
+                self.get_olt_connection(config.id)
+        except Exception as e:
+            logger.error(f"Error en pre-conexión de OLTs: {e}")
+        finally:
+            self.db = None
     
     def _check_olt_alive(self, olt: OLTInterface) -> bool:
         """
@@ -76,10 +89,13 @@ class TaskProcessor:
         por lo que hay que comprobarlo activamente.
         """
         try:
-            if not olt.connection:
+            if not olt.connection or not olt.is_connected:
                 return False
-            olt.connection.find_prompt()
-            return True
+            # Enviar un newline como keepalive silencioso y rápido
+            prompt = olt.connection.send_command_timing("\n", delay_factor=0.5)
+            if prompt:
+                return True
+            return False
         except Exception:
             return False
 
@@ -435,18 +451,88 @@ class TaskProcessor:
                 else:
                     task.error_code = None
 
-                # Actualizar cliente a Activo si la acción fue add_ont
+                # ── Guardar result enriquecido en response_json AHORA ────────
+                # El frontend puede leer todos los datos técnicos en cuanto la
+                # tarea pasa a 'completed', sin esperar al power-check.
+                if task.action in ['add_ont', 'remove_ont', 'set_breach']:
+                    safe_result = {
+                        k: v for k, v in result.items()
+                        if k not in ('commands', 'responses')
+                    }
+                    task.response_json = safe_result
+
+                # ── Persistir datos de aprovisionamiento en el cliente ────────
                 if task.action == 'add_ont' and task.cliente_id:
                     cliente = self.db.query(models.Cliente).filter(
                         models.Cliente.id == task.cliente_id
                     ).first()
                     if cliente:
-                        cliente.olt_sync_status = 'synced'
+                        try:
+                            cliente.olt_sync_status = 'synced'
+                        except Exception:
+                            pass
                         cliente.estado = 'Activo'
-                        logger.info(f"Cliente {cliente.id} marcado como Activo")
+                        cliente.instalation_date = datetime.now().strftime("%Y-%m-%d")
+
+                        # puerto: número del puerto GPON (ej: "Puerto 8")
+                        port_num = result.get('port_num')
+                        if port_num is not None:
+                            cliente.puerto = f"Puerto {port_num}"
+
+                        # id_port: ONT ID asignado en la OLT
+                        ont_id_val = result.get('ont_id')
+                        if ont_id_val is not None:
+                            cliente.id_port = str(ont_id_val)
+
+                        # service_port: número de service-port OLT
+                        sp_val = result.get('service_port')
+                        if sp_val is not None:
+                            cliente.service_port = str(sp_val)
+
+                        # mac: SN / MAC del equipo procesado
+                        mac_val = result.get('mac')
+                        if mac_val is not None:
+                            cliente.mac = str(mac_val)
+
+                        # ont: comando ont add completo (para referencia en ONT.jsx)
+                        cmd_ont = result.get('cmd_ont')
+                        if cmd_ont:
+                            cliente.ont = cmd_ont
+
+                        # servicio: comando service-port completo
+                        cmd_servicio = result.get('cmd_servicio')
+                        if cmd_servicio:
+                            cliente.servicio = cmd_servicio
+
+                        # breach: comando ont port native-vlan
+                        cmd_breach = result.get('cmd_breach')
+                        if cmd_breach:
+                            cliente.breach = cmd_breach
+
+                        # ip: IP asignada
+                        ip_val = validated_payload.get('ip') or result.get('ip')
+                        if ip_val:
+                            cliente.ip = str(ip_val)
+
+                        # dispositivo: marca/modelo/ONU
+                        disp_val = validated_payload.get('dispositivo') or result.get('dispositivo')
+                        if disp_val:
+                            cliente.dispositivo = str(disp_val)
+
+                        # nap: Caja NAP
+                        nap_val = validated_payload.get('nap') or result.get('nap')
+                        if nap_val:
+                            cliente.nap = str(nap_val)
+                        
+                        logger.info(
+                            f"Cliente {cliente.id} actualizado: "
+                            f"puerto=Puerto {port_num}, id_port={ont_id_val}, "
+                            f"service_port={sp_val}, mac={mac_val}, ip={ip_val}, "
+                            f"dispositivo={disp_val}, nap={nap_val}, estado=Activo"
+                        )
 
                 # Verificar potencia de forma NO-BLOQUEANTE (solo añade datos,
-                # no cambia el status ya marcado como 'completed')
+                # no reemplaza el response_json completo ya guardado)
                 if task.action in ['add_ont', 'add_service', 'check_power']:
                     try:
                         logger.info("Verificando potencia del ONT (no-bloqueante)...")
@@ -455,7 +541,14 @@ class TaskProcessor:
                         ont_id = validated_payload.get('ont_id', '0')
                         power_check = olt.check_ont_power(gpon_port, ont_id)
                         power_val = power_check.get('power')
-                        task.response_json = json.dumps(power_check)
+                        # Añadir potencia al response_json ya guardado sin sobreescribir
+                        if isinstance(task.response_json, dict):
+                            updated_json = dict(task.response_json)
+                            updated_json['potencia'] = power_val
+                            updated_json['estado_ont'] = power_check.get('status')
+                            task.response_json = updated_json
+                        else:
+                            task.response_json = power_check
                         if power_val is not None:
                             logger.info(f"Potencia ONT: {power_val} dBm")
                             if task.action == 'add_ont' and task.cliente_id:
@@ -464,8 +557,12 @@ class TaskProcessor:
                                     models.Cliente.id == task.cliente_id
                                 ).first()
                                 if cliente:
-                                    cliente.potencia_verificada = True
-                                    cliente.potencia_last_check = datetime.now()
+                                    cliente.potencia = str(power_val)
+                                    try:
+                                        cliente.potencia_verificada = True
+                                        cliente.potencia_last_check = datetime.now()
+                                    except Exception:
+                                        pass  # Columnas opcionales, ignorar si no existen
                         else:
                             logger.warning("No se pudo leer potencia del ONT (no crítico, tarea ya completada)")
                     except Exception as pw_err:
@@ -487,12 +584,22 @@ class TaskProcessor:
         
         except Exception as e:
             logger.error(f"✗ Error crítico procesando tarea: {type(e).__name__}: {e}")
-            if task:
-                task.status = 'failed'
-                task.error_message = f"Critical error: {e}"
-                task.error_code = 'CRITICAL_ERROR'
-                task.completed_at = datetime.now()
-                self.db.commit()
+            try:
+                self.db.rollback()
+            except Exception as rb_err:
+                logger.error(f"Error haciendo rollback en process_task: {rb_err}")
+            
+            try:
+                # Volver a consultar la tarea en la sesión limpia para marcarla como fallida
+                task = self.db.query(models.OLTTask).filter(models.OLTTask.id == task_id).first()
+                if task:
+                    task.status = 'failed'
+                    task.error_message = f"Critical error: {e}"
+                    task.error_code = 'CRITICAL_ERROR'
+                    task.completed_at = datetime.now()
+                    self.db.commit()
+            except Exception as commit_err:
+                logger.error(f"No se pudo registrar estado fallido de la tarea: {commit_err}")
             return False
     
     def process_pending_tasks(self, batch_size: int = 1) -> int:
@@ -545,17 +652,35 @@ class TaskProcessor:
         logger.debug(f"Ejecutando keepalive en {len(self.olt_connections)} conexiones OLT cacheables...")
         for olt_id, olt in list(self.olt_connections.items()):
             try:
-                if olt.is_connected and olt.connection:
-                    # Enviar comando ligero en vez de \n
+                # Comprobar si la sesión está viva enviando newline (rápido/silencioso)
+                if olt.is_connected and olt.connection and self._check_olt_alive(olt):
+                    # Enviar comando ligero
                     olt.send_command("display clock", use_timing=True, delay_factor=1.0)
                     logger.debug(f"✓ Keepalive ('display clock') enviado exitosamente a OLT ID {olt_id}")
-            except Exception as e:
-                logger.warning(f"✗ Error en keepalive para OLT ID {olt_id}: {e}. Desconectando y removiendo de caché.")
+                    continue
+                
+                logger.warning(f"✗ Keepalive falló para OLT ID {olt_id} (sin respuesta). Reconectando...")
+                self.olt_connections.pop(olt_id, None)
                 try:
                     olt.disconnect()
                 except Exception:
                     pass
+                
+                # Intentar reconectar si la base de datos está disponible
+                if self.db:
+                    self.get_olt_connection(olt_id)
+            except Exception as e:
+                logger.warning(f"✗ Error en keepalive para OLT ID {olt_id}: {e}. Intentando reconectar...")
                 self.olt_connections.pop(olt_id, None)
+                try:
+                    olt.disconnect()
+                except Exception:
+                    pass
+                if self.db:
+                    try:
+                        self.get_olt_connection(olt_id)
+                    except Exception as re_err:
+                        logger.error(f"No se pudo reconectar OLT {olt_id} durante keepalive: {re_err}")
 
 
 # ============================================================================

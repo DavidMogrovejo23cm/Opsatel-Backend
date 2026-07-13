@@ -244,6 +244,14 @@ class OLTDaemon:
         try:
             self.processor = TaskProcessor()
             logger.info("TaskProcessor inicializado")
+            
+            # Pre-conectar a todas las OLTs activas en segundo plano
+            try:
+                db_session = SessionLocal()
+                self.processor.pre_connect_active_olts(db_session)
+                db_session.close()
+            except Exception as pe:
+                logger.error(f"Error en pre-conexión de OLTs: {pe}")
         except Exception as e:
             logger.error(f"Error inicializando TaskProcessor: {e}")
             self.release_lock()

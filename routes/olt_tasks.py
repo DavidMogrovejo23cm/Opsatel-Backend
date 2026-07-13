@@ -114,6 +114,7 @@ def create_olt_task(
         )
         
         db.add(task)
+        db.flush() # Generar el ID autoincremental de la tarea antes de usarlo
         
         # Actualizar estado del cliente
         cliente.olt_sync_status = 'in_queue'
@@ -409,6 +410,16 @@ def get_cliente_olt_status(
             'potencia': cliente.potencia,
             'potencia_verificada': cliente.potencia_verificada,
             'potencia_last_check': cliente.potencia_last_check.isoformat() if cliente.potencia_last_check else None,
+            # Campos técnicos adicionales solicitados
+            'puerto': cliente.puerto,
+            'ont': cliente.ont,
+            'servicio': cliente.servicio,
+            'breach': cliente.breach,
+            'id_port': cliente.id_port,
+            'service_port': cliente.service_port,
+            'ip': cliente.ip,
+            'dispositivo': cliente.dispositivo,
+            'nap': cliente.nap,
             'last_task': None
         }
         
