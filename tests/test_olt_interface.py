@@ -120,6 +120,48 @@ class OLTInterfaceTests(unittest.TestCase):
         self.assertEqual(candidates[1]['ont_id'], '2')
         self.assertIsNotNone(candidates[1]['mac'])
 
+    def test_connect_authentication_exception_does_not_retry(self):
+        """
+        NetmikoAuthenticationException should fail immediately (no retry)
+        to prevent OLT user account lockouts.
+        """
+        from unittest.mock import patch
+        from netmiko import NetmikoAuthenticationException
+        from services.olt_interface import OLTConnectionError
+
+        olt = OLTInterface(host='172.25.0.2', username='root', password='admin', max_retries=3)
+
+        with patch('services.olt_interface.ConnectHandler', side_effect=NetmikoAuthenticationException("Auth failed")) as mock_connect:
+            with self.assertRaises(OLTConnectionError) as ctx:
+                olt.connect()
+
+            self.assertIn("Error de autenticación", str(ctx.exception))
+            # Should only be called once, not retried 3 times
+            mock_connect.assert_called_once()
+            self.assertFalse(olt.is_connected)
+
+    def test_connect_timeout_exception_retries_and_fails(self):
+        """
+        NetmikoTimeoutException should retry up to max_retries times, waiting with backoff.
+        """
+        from unittest.mock import patch
+        from netmiko import NetmikoTimeoutException
+        from services.olt_interface import OLTConnectionError
+
+        olt = OLTInterface(host='172.25.0.2', username='root', password='admin', max_retries=2, retry_backoff_base=2)
+
+        with patch('services.olt_interface.ConnectHandler', side_effect=NetmikoTimeoutException("Timeout")) as mock_connect:
+            with patch('time.sleep') as mock_sleep:  # Mock sleep so we don't actually wait
+                with self.assertRaises(OLTConnectionError) as ctx:
+                    olt.connect()
+
+                self.assertIn("Timeout", str(ctx.exception))
+                # Should be called max_retries (2) times
+                self.assertEqual(mock_connect.call_count, 2)
+                self.assertFalse(olt.is_connected)
+                # Should sleep once between the 2 attempts
+                mock_sleep.assert_called_once_with(2)
+
 
 if __name__ == '__main__':
     unittest.main()

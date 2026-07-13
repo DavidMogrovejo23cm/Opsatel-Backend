@@ -214,20 +214,24 @@ class OLTInterface:
                 
                 return True
                 
-            except (NetmikoAuthenticationException, NetmikoTimeoutException) as e:
-                logger.warning(f"[Intento {attempt}] Error de conexión: {e}")
+            except NetmikoAuthenticationException as e:
+                logger.error(f"✗ Error de autenticación crítico (credenciales inválidas) en {self.host}:{self.port}: {e}")
+                self.is_connected = False
+                raise OLTConnectionError(f"Error de autenticación: Credenciales inválidas para {self.username} en {self.host}:{self.port}")
                 
+            except NetmikoTimeoutException as e:
+                logger.warning(f"[Intento {attempt}] Timeout de conexión: {e}")
                 if attempt < self.max_retries:
                     backoff = self._calculate_backoff(attempt)
                     logger.info(f"Esperando {backoff}s antes de reintentar...")
                     time.sleep(backoff)
                 else:
-                    logger.error(f"✗ Fallo conexión a OLT después de {self.max_retries} intentos")
+                    logger.error(f"✗ Fallo conexión a OLT por timeout después de {self.max_retries} intentos")
                     self.is_connected = False
-                    raise OLTConnectionError(f"No se puede conectar a {self.host}:{self.port}: {e}")
+                    raise OLTConnectionError(f"No se puede conectar a {self.host}:{self.port} (Timeout): {e}")
             
             except Exception as e:
-                logger.error(f"[Intento {attempt}] Error inesperado: {type(e).__name__}: {e}")
+                logger.error(f"[Intento {attempt}] Error inesperado de conexión: {type(e).__name__}: {e}")
                 if attempt < self.max_retries:
                     backoff = self._calculate_backoff(attempt)
                     time.sleep(backoff)

@@ -64,6 +64,7 @@ class TaskProcessor:
         """
         self.db: Optional[Session] = None
         self.olt_connections: Dict[int, OLTInterface] = {}  # Caché SSH permanente
+        self.failed_olts_this_run = set()  # Evita reintentar conexiones SSH fallidas en el mismo ciclo
         self.current_task = None
         self.current_task_id = None
 
@@ -105,6 +106,11 @@ class TaskProcessor:
         El caché SSH persiste durante toda la vida del daemon.
         Solo reconecta si la sesión está realmente muerta.
         """
+        # Evitar reintentar si ya falló en esta ejecución
+        if olt_id in self.failed_olts_this_run:
+            logger.warning(f"Saltando intento de conexión a OLT {olt_id} porque ya falló previamente en esta ejecución")
+            return None
+
         # Verificar caché
         if olt_id in self.olt_connections:
             conn = self.olt_connections[olt_id]
@@ -128,6 +134,7 @@ class TaskProcessor:
 
             if not olt_config:
                 logger.error(f"OLT config no encontrada: {olt_id}")
+                self.failed_olts_this_run.add(olt_id)
                 return None
 
             olt = OLTInterface(
@@ -146,10 +153,12 @@ class TaskProcessor:
                 return olt
             else:
                 logger.error(f"Fallo conectando a OLT {olt_id}")
+                self.failed_olts_this_run.add(olt_id)
                 return None
 
         except Exception as e:
-            logger.error(f"Error obteniendo conexión OLT: {e}")
+            logger.error(f"Error obteniendo conexión OLT {olt_id}: {e}")
+            self.failed_olts_this_run.add(olt_id)
             return None
     
     def disconnect_all(self):
@@ -613,6 +622,9 @@ class TaskProcessor:
             Número de tareas procesadas
         """
         try:
+            # Limpiar caché de fallos para esta ejecución
+            self.failed_olts_this_run.clear()
+
             # Obtener tareas pendientes (ordenadas por prioridad y fecha)
             pending_tasks = self.db.query(models.OLTTask).filter(
                 models.OLTTask.status.in_(['pending', 'retry'])
