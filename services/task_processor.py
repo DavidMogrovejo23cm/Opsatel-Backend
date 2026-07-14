@@ -68,6 +68,12 @@ class TaskProcessor:
         self.current_task = None
         self.current_task_id = None
 
+        # Backoff persistente entre ciclos para conexiones SSH fallidas.
+        # Clave: olt_id → número de fallos consecutivos
+        self.olt_connection_failures: Dict[int, int] = {}
+        # Clave: olt_id → timestamp (time.time()) mínimo para el próximo intento
+        self.olt_next_retry_time: Dict[int, float] = {}
+
         logger.info("TaskProcessor inicializado (sin sesión BD todavía)")
 
     def pre_connect_active_olts(self, db: Session):
@@ -100,15 +106,47 @@ class TaskProcessor:
         except Exception:
             return False
 
+    def _get_backoff_seconds(self, failures: int) -> int:
+        """Retorna segundos de espera según el número de fallos SSH consecutivos.
+        
+        Args:
+            failures: Número de fallos SSH acumulados para esta OLT.
+            
+        Returns:
+            Segundos a esperar antes del próximo intento de conexión.
+        """
+        if failures <= 1:
+            return 30
+        elif failures == 2:
+            return 60
+        else:
+            return 120
+
     def get_olt_connection(self, olt_id: int) -> Optional[OLTInterface]:
         """
         Obtiene o crea una conexión a una OLT específica.
         El caché SSH persiste durante toda la vida del daemon.
         Solo reconecta si la sesión está realmente muerta.
+
+        Respeta el backoff 30s/60s/120s entre fallos SSH consecutivos
+        para evitar saturar el mecanismo anti-lockout de la OLT Huawei.
         """
         # Evitar reintentar si ya falló en esta ejecución
         if olt_id in self.failed_olts_this_run:
             logger.warning(f"Saltando intento de conexión a OLT {olt_id} porque ya falló previamente en esta ejecución")
+            return None
+
+        # Verificar throttle de backoff persistente entre ciclos
+        now = time.time()
+        next_retry = self.olt_next_retry_time.get(olt_id, 0)
+        if now < next_retry:
+            remaining = int(next_retry - now)
+            failures = self.olt_connection_failures.get(olt_id, 0)
+            logger.warning(
+                f"OLT {olt_id} en backoff ({failures} fallos consecutivos). "
+                f"Próximo intento en {remaining}s."
+            )
+            self.failed_olts_this_run.add(olt_id)
             return None
 
         # Verificar caché
@@ -148,14 +186,37 @@ class TaskProcessor:
             )
 
             if olt.connect():
+                # Conexión exitosa: resetear contadores de fallo para esta OLT
+                self.olt_connection_failures.pop(olt_id, None)
+                self.olt_next_retry_time.pop(olt_id, None)
                 self.olt_connections[olt_id] = olt
                 logger.info(f"Conexión SSH OLT {olt_config.nombre} (ID {olt_id}) establecida")
                 return olt
             else:
-                logger.error(f"Fallo conectando a OLT {olt_id}")
+                # Fallo: incrementar contador y calcular próximo intento
+                failures = self.olt_connection_failures.get(olt_id, 0) + 1
+                self.olt_connection_failures[olt_id] = failures
+                backoff = self._get_backoff_seconds(failures)
+                self.olt_next_retry_time[olt_id] = time.time() + backoff
+                logger.error(
+                    f"Fallo conectando a OLT {olt_id} (fallo #{failures}). "
+                    f"Esperando {backoff}s antes del próximo intento."
+                )
                 self.failed_olts_this_run.add(olt_id)
                 return None
 
+        except OLTConnectionError as e:
+            # Auth error u otro error crítico — también aplica backoff
+            failures = self.olt_connection_failures.get(olt_id, 0) + 1
+            self.olt_connection_failures[olt_id] = failures
+            backoff = self._get_backoff_seconds(failures)
+            self.olt_next_retry_time[olt_id] = time.time() + backoff
+            logger.error(
+                f"Error de conexión SSH OLT {olt_id}: {e}. "
+                f"Fallo #{failures}, próximo intento en {backoff}s."
+            )
+            self.failed_olts_this_run.add(olt_id)
+            return None
         except Exception as e:
             logger.error(f"Error obteniendo conexión OLT {olt_id}: {e}")
             self.failed_olts_this_run.add(olt_id)

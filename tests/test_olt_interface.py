@@ -5,21 +5,21 @@ from services.olt_interface import OLTInterface
 
 class OLTInterfaceTests(unittest.TestCase):
     def test_extract_gpon_interface(self):
-        olt = OLTInterface(host='172.25.0.2', username='root', password='admin')
+        olt = OLTInterface(host='172.25.0.2', username='opsatel', password='admin123')
 
         self.assertEqual(olt._get_gpon_interface('0/0/3'), '0/0')
         self.assertEqual(olt._get_gpon_interface('0/1/8'), '0/1')
         self.assertEqual(olt._get_gpon_interface('0/0'), '0/0')
 
     def test_build_connect_config_uses_ssh(self):
-        olt = OLTInterface(host='172.25.0.2', username='root', password='admin', port=22)
+        olt = OLTInterface(host='172.25.0.2', username='opsatel', password='admin123', port=22)
         config = olt._build_connect_config()
 
         self.assertEqual(config['device_type'], 'huawei_olt')
         self.assertEqual(config['host'], '172.25.0.2')
         self.assertEqual(config['port'], 22)
-        self.assertEqual(config['username'], 'root')
-        self.assertEqual(config['password'], 'admin')
+        self.assertEqual(config['username'], 'opsatel')
+        self.assertEqual(config['password'], 'admin123')
 
     def test_build_activation_commands(self):
         """
@@ -28,7 +28,7 @@ class OLTInterfaceTests(unittest.TestCase):
           - config_commands: list of commands to run inside (config)#
           - metadata: dict with all computed provisioning values
         """
-        olt = OLTInterface(host='172.25.0.2', username='root', password='admin')
+        olt = OLTInterface(host='172.25.0.2', username='opsatel', password='admin123')
         payload = {
             'mac': 'AABBCCDDEEFF',
             'gpon_port': '0/0/3',
@@ -74,7 +74,7 @@ class OLTInterfaceTests(unittest.TestCase):
         """
         parse_autofind_output parses Huawei multi-line block format separated by dashes.
         """
-        olt = OLTInterface(host='172.25.0.2', username='root', password='admin')
+        olt = OLTInterface(host='172.25.0.2', username='opsatel', password='admin123')
 
         # Simulated real Huawei OLT output (multi-line block format)
         sample_output = """
@@ -126,10 +126,11 @@ class OLTInterfaceTests(unittest.TestCase):
         to prevent OLT user account lockouts.
         """
         from unittest.mock import patch
+        # pyrefly: ignore [missing-import]
         from netmiko import NetmikoAuthenticationException
         from services.olt_interface import OLTConnectionError
 
-        olt = OLTInterface(host='172.25.0.2', username='root', password='admin', max_retries=3)
+        olt = OLTInterface(host='172.25.0.2', username='opsatel', password='admin123', max_retries=3)
 
         with patch('services.olt_interface.ConnectHandler', side_effect=NetmikoAuthenticationException("Auth failed")) as mock_connect:
             with self.assertRaises(OLTConnectionError) as ctx:
@@ -145,10 +146,11 @@ class OLTInterfaceTests(unittest.TestCase):
         NetmikoTimeoutException should retry up to max_retries times, waiting with backoff.
         """
         from unittest.mock import patch
+        # pyrefly: ignore [missing-import]
         from netmiko import NetmikoTimeoutException
         from services.olt_interface import OLTConnectionError
 
-        olt = OLTInterface(host='172.25.0.2', username='root', password='admin', max_retries=2, retry_backoff_base=2)
+        olt = OLTInterface(host='172.25.0.2', username='opsatel', password='admin123', max_retries=2, retry_backoff_base=2)
 
         with patch('services.olt_interface.ConnectHandler', side_effect=NetmikoTimeoutException("Timeout")) as mock_connect:
             with patch('time.sleep') as mock_sleep:  # Mock sleep so we don't actually wait
@@ -159,8 +161,8 @@ class OLTInterfaceTests(unittest.TestCase):
                 # Should be called max_retries (2) times
                 self.assertEqual(mock_connect.call_count, 2)
                 self.assertFalse(olt.is_connected)
-                # Should sleep once between the 2 attempts
-                mock_sleep.assert_called_once_with(2)
+                # Con la nueva política fija, el primer fallo espera 30s
+                mock_sleep.assert_called_once_with(30)
 
 
 if __name__ == '__main__':

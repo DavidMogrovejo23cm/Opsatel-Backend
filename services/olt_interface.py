@@ -84,8 +84,8 @@ class OLTInterface:
         self,
         host: str,
         port: int = 23,
-        username: str = 'admin',
-        password: str = 'admin',
+        username: str = 'opsatel',
+        password: str = 'admin123',
         timeout: int = 30,
         max_retries: int = 3,
         retry_backoff_base: int = 1,
@@ -124,19 +124,25 @@ class OLTInterface:
     
     def _calculate_backoff(self, attempt: int) -> int:
         """
-        Calcula tiempo de espera con exponential backoff.
-        Ejemplo: base=1, attempt=1 → 1s, attempt=2 → 2s, attempt=3 → 4s
-        
+        Calcula tiempo de espera para reintentos SSH según política fija:
+          - 1er fallo → 30 segundos de espera
+          - 2do fallo → 60 segundos de espera
+          - 3er fallo en adelante → 120 segundos de espera (cap permanente)
+
+        Esta política evita saturar el mecanismo anti-lockout de la OLT Huawei.
+
         Args:
-            attempt: Número de intento (1-based)
-            
+            attempt: Número de intento fallido (1-based)
+
         Returns:
             Tiempo de espera en segundos
         """
-        backoff_seconds = self.retry_backoff_base * (2 ** (attempt - 1))
-        # Cap máximo de 30 segundos
-        backoff_seconds = min(backoff_seconds, 30)
-        return backoff_seconds
+        if attempt == 1:
+            return 30
+        elif attempt == 2:
+            return 60
+        else:
+            return 120
     
     def _build_connect_config(self) -> Dict[str, Any]:
         """Construye la configuración de conexión para SSH a Huawei OLT."""
@@ -163,7 +169,7 @@ class OLTInterface:
             'session_log': log_path,
             'banner_timeout': 15,
             'auth_timeout': 20,
-            'session_timeout': 60,
+            'session_timeout': 300,  # 5 minutos — mantener sesión viva entre tareas
             'conn_timeout': self.timeout,
         }
 
