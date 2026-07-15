@@ -8,6 +8,7 @@ import models, schemas
 from database import get_db
 from datetime import datetime
 from .auth import get_current_user, require_role
+from services.smart_parser import parse_unstructured_client_data
 
 router = APIRouter(prefix="/clientes", tags=["clientes"])
 
@@ -183,6 +184,28 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             
     return {"internet": internet, "plus": plus, "finanzas_globales": finanzas_globales}
 
+@router.post("/parse-smart", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
+def parse_smart_client_data(request: schemas.SmartParseRequest, db: Session = Depends(get_db)):
+    try:
+        # Obtener entidades de la base de datos para fuzzy mapping
+        valid_nodos = [n[0] for n in db.query(models.Nodo.nombre).filter(models.Nodo.nombre != None).all()]
+        valid_parroquias = [p[0] for p in db.query(models.Parroquia.nombre).filter(models.Parroquia.nombre != None).all()]
+        valid_planes = [pl[0] for pl in db.query(models.PlanInternet.nombre).filter(models.PlanInternet.nombre != None).all()]
+        
+        parsed_data = parse_unstructured_client_data(
+            text=request.text,
+            valid_nodos=valid_nodos,
+            valid_parroquias=valid_parroquias,
+            valid_planes=valid_planes
+        )
+        return parsed_data
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al interpretar los datos con Inteligencia Artificial: {str(e)}"
+        )
 
 @router.post("/", response_model=schemas.ClienteResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db)):

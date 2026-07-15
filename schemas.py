@@ -669,5 +669,8 @@ class CajaNapUpdate(BaseModel):
     class Config:
         from_attributes = True
 
+class SmartParseRequest(BaseModel):
+    text: str
+
 
 

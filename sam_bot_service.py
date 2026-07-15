@@ -109,46 +109,60 @@ Tu tarea: Responde únicamente con el nombre de la intención ("registrar_client
 # -------------------------------------------------------------
 # SKILL: REGISTRAR CLIENTE POTENCIAL
 # -------------------------------------------------------------
-PROMPT_REGISTRO_CLIENTE = """# Skill: Registrar Cliente Potencial
-Eres SAM, la IA encargada de recopilar los datos para registrar un cliente potencial de forma organizada.
-Debes mantener un tono amigable, claro, profesional y dar respuestas cortas.
-Siempre menciona que eres SAM, el Sistema Autónomo Multitarea de OPSATEL y que vas a recopilar datos para registrar un cliente potencial si es el inicio.
-
-Los datos obligatorios que debes conseguir son:
-* nombre
-* telefono
-* empresa
-* plan_actual (decimal en dólares que paga actualmente)
-* antiguedad_anios (entero en años)
-* latitud
-* longitud
-* notas (comentarios adicionales)
-
-Reglas:
-- No inventes datos.
-- Si falta algún dato, pídelo amigablemente de uno en uno o en grupo de forma muy clara.
-- Muestra los datos recopilados estructurados así para que el usuario vea el avance:
-Nombre: <valor o (pendiente)>
-Teléfono: <valor o (pendiente)>
-Empresa: <valor o (pendiente)>
-Plan actual: <valor o (pendiente)>
-Antigüedad: <valor o (pendiente)>
-Latitud: <valor o (pendiente)>
-Longitud: <valor o (pendiente)>
-Notas: <valor o (pendiente)>
-
-- Cuando TODOS los datos estén completos, pídele confirmación explícita al usuario mostrando la ficha completa.
-- Únicamente cuando el usuario confirme (diciendo "sí", "correcto", "confirmado", "ok"), genera un JSON final de una sola línea, sin explicaciones ni texto antes o después.
-
-Formato exacto del JSON final:
-{"nombre": "", "telefono": "", "empresa": "", "plan_actual": 0.0, "antiguedad_anios": 0, "latitud": 0.0, "longitud": 0.0, "notas": ""}
+PROMPT_REGISTRO_CLIENTE = """# Skill: Registrar Cliente
+Eres SAM, la IA encargada de recopilar los datos para registrar un nuevo cliente en el sistema de OPSATEL.
 """
 
 def procesar_registro_cliente(numero: str, mensaje: str, contexto: str, db: Session) -> str:
     client = get_anthropic_client()
     
+    # Obtener entidades de la base de datos para fuzzy mapping
+    valid_nodos = [n[0] for n in db.query(models.Nodo.nombre).filter(models.Nodo.nombre != None).all()]
+    valid_planes = [pl[0] for pl in db.query(models.PlanInternet.nombre).filter(models.PlanInternet.nombre != None).all()]
+
+    prompt_dinamico = f"""# Skill: Registrar Cliente
+Eres SAM, la IA encargada de recopilar los datos para registrar un nuevo cliente en el sistema de OPSATEL.
+Debes mantener un tono amigable, claro, profesional y dar respuestas cortas.
+Siempre menciona que eres SAM, el Sistema Autónomo Multitarea de OPSATEL y que vas a recopilar datos para registrar un cliente.
+
+Los datos que debes conseguir son:
+* nombre: Nombre completo del cliente.
+* cedula: Cédula o RUC (10 o 13 dígitos).
+* celular: Teléfono de contacto.
+* direccion: Dirección domiciliaria.
+* plan: Plan de internet elegido (debe mapearse a uno de los PLANES VÁLIDOS).
+* nodo: Sector o Nodo de red (debe mapearse a uno de los NODOS VÁLIDOS).
+* parroquia: Parroquia.
+* latitud: Latitud GPS (opcional, si se conoce).
+* longitud: Longitud GPS (opcional, si se conoce).
+* comentarios: Notas adicionales (opcional).
+
+PLANES VÁLIDOS en el sistema: {json.dumps(valid_planes, ensure_ascii=False)}
+NODOS VÁLIDOS en el sistema: {json.dumps(valid_nodos, ensure_ascii=False)}
+
+Reglas:
+- No inventes datos.
+- Si falta algún dato obligatorio (nombre, cedula, celular, direccion, plan, nodo), pídelo amigablemente. Puedes pedir varios datos juntos para agilizar.
+- Muestra el avance estructurado para que el usuario lo vea de esta forma:
+Nombre: <valor o (pendiente)>
+Cédula: <valor o (pendiente)>
+Celular: <valor o (pendiente)>
+Dirección: <valor o (pendiente)>
+Plan: <valor o (pendiente)>
+Nodo: <valor o (pendiente)>
+Parroquia: <valor o (pendiente)>
+Coordenadas GPS: <latitud, longitud o (pendiente)>
+Comentarios: <valor o (pendiente)>
+
+- Cuando TODOS los datos obligatorios estén listos, muestra la ficha y pide confirmación explícita.
+- Únicamente cuando el usuario confirme diciendo "sí", "correcto", "confirmado", "ok", etc., genera un JSON final de una sola línea, sin preámbulos ni explicaciones.
+
+Formato exacto del JSON final:
+{{"nombre": "", "cedula": "", "celular": "", "direccion": "", "plan": "", "nodo": "", "parroquia": "", "latitud": 0.0, "longitud": 0.0, "comentarios": ""}}
+"""
+
     messages = [
-        {"role": "user", "content": f"{PROMPT_REGISTRO_CLIENTE}\n\nConversación hasta ahora:\n{contexto}"}
+        {"role": "user", "content": f"{prompt_dinamico}\n\nConversación hasta ahora:\n{contexto}"}
     ]
     
     try:
@@ -161,26 +175,47 @@ def procesar_registro_cliente(numero: str, mensaje: str, contexto: str, db: Sess
         res_text = response.content[0].text.strip()
         
         # Verificar si la IA generó el JSON final
-        # Buscamos patrones {...} que parezcan JSON
         json_match = re.search(r'\{.*"nombre".*\}', res_text)
         if json_match:
             try:
                 data = json.loads(json_match.group(0))
                 
-                # Crear cliente en la tabla real hoja_de_c__lculo_sin_t__tulo (Cliente)
-                # Mapeamos los campos a la base de datos de Opsatel
-                ubicacion_gps = f"{data.get('latitud', 0.0)}, {data.get('longitud', 0.0)}"
-                comentarios_detallados = f"Empresa: {data.get('empresa')}. Antigüedad: {data.get('antiguedad_anios')} años. Notas: {data.get('notas')}"
+                # Crear cliente en la tabla real (hoja_de_c__lculo_sin_t__tulo)
+                ubicacion_gps = f"{data.get('latitud') or 0.0}, {data.get('longitud') or 0.0}"
                 
+                # Normalización de cédula y celular
+                cedula = str(data.get("cedula") or "").strip()
+                if cedula.isdigit() and len(cedula) == 9:
+                    cedula = "0" + cedula
+                    
+                celular = str(data.get("celular") or "").strip()
+                if celular.isdigit() and len(celular) == 9 and celular.startswith("9"):
+                    celular = "0" + celular
+
+                # Lógica para reutilizar IDs (Encontrar el primer hueco disponible)
+                ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
+                ids = [i[0] for i in ids_query]
+                
+                nuevo_id = 1
+                for current_id in ids:
+                    if current_id == nuevo_id:
+                        nuevo_id += 1
+                    elif current_id > nuevo_id:
+                        break # Encontramos un hueco
+
                 nuevo_cliente = models.Cliente(
+                    id=nuevo_id,
                     nombre=data.get("nombre"),
-                    celular=data.get("telefono"),
-                    plan=f"Plan actual: ${data.get('plan_actual')}",
-                    pago_mensual=data.get("plan_actual", 0.0),
-                    saldo=0.00,
-                    estado="Pendiente", # Se registra como prospecto/pendiente
+                    cedula=cedula,
+                    celular=celular,
+                    direccion=data.get("direccion"),
+                    plan=data.get("plan"),
+                    nodo=data.get("nodo"),
+                    parroquia=data.get("parroquia"),
                     ubicacion=ubicacion_gps,
-                    comentarios=comentarios_detallados
+                    comentarios=data.get("comentarios"),
+                    estado="Pendiente",
+                    saldo=0.00
                 )
                 
                 db.add(nuevo_cliente)
@@ -192,16 +227,16 @@ def procesar_registro_cliente(numero: str, mensaje: str, contexto: str, db: Sess
                 if numero in historial_conversaciones:
                     historial_conversaciones[numero] = []
                     
-                return f"✅ ¡Perfecto! He registrado los datos de *{data.get('nombre')}* como cliente potencial en el sistema de OPSATEL exitosamente."
+                return f"✅ ¡Perfecto! He registrado a *{data.get('nombre')}* en el sistema de OPSATEL en estado Pendiente exitosamente."
             except Exception as db_err:
-                print(f"[SAM Chatbot] Error guardando cliente potencial: {db_err}")
+                print(f"[SAM Chatbot] Error guardando cliente: {db_err}")
                 db.rollback()
-                return "Hubo un inconveniente al guardar los datos del cliente potencial en la base de datos. Por favor, reintente en unos momentos."
+                return "Hubo un inconveniente al guardar los datos del cliente en la base de datos. Por favor, reintente en unos momentos."
         else:
             return res_text
     except Exception as e:
         print(f"[SAM Chatbot] Error en skill registrar cliente: {e}")
-        return "Disculpa, tuve un problema al procesar el registro de cliente potencial. ¿Podrías indicarme los datos nuevamente?"
+        return "Disculpa, tuve un problema al procesar el registro de cliente. ¿Podrías indicarme los datos nuevamente?"
 
 # -------------------------------------------------------------
 # SKILL: CONSULTAR PAGOS Y SALDOS

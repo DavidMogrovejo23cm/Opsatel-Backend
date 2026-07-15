@@ -144,3 +144,22 @@ Se añadió un sistema para gestionar y visualizar la liquidez real de las cuent
 *   **Nuevos Endpoints (`/configuraciones/finanzas-base`):** Rutas integradas para permitir a los administradores fijar valores base de arranque de caja.
 *   **Cálculo Asíncrono en Dashboard (`GET /clientes/dashboard-stats`):** El backend suma automáticamente todos los ingresos registrados y los acumula a los valores preconfigurados, entregando el parámetro consolidado de `finanzas_globales`.
 *   **Representación Visual:** Implementación de un gráfico `BarChart` en el panel de control del cliente que grafica de manera interactiva el saldo total acumulado de cada institución bancaria en el momento, optimizando la visibilidad de cuentas.
+
+---
+
+## 🆕 10. Clasificación Inteligente de Datos (v1.3)
+
+Se implementó una capa de Inteligencia Artificial (IA) capaz de procesar textos desestructurados o datos crudos semi-estructurados y clasificarlos automáticamente a los campos correspondientes de la base de datos de clientes:
+
+### A. Endpoint `/clientes/parse-smart` (IA Inteligente)
+*   **Método:** `POST /clientes/parse-smart`
+*   **Payload:** `{"text": "texto crudo a interpretar"}`
+*   **Funcionamiento:**
+    1. Consulta dinámicamente la lista de Nodos, Parroquias y Planes de Internet vigentes en la base de datos.
+    2. Envía el texto a Claude (`claude-3-5-haiku-20241022`) junto con estas listas utilizando un prompt optimizado para extracción de entidades.
+    3. Normaliza automáticamente campos críticos:
+        *   **Cédula:** Elimina guiones y puntos, valida longitud, agrega ceros iniciales si es necesario.
+        *   **Teléfono:** Limpia formatos de celular.
+        *   **Booleans:** Detecta automáticamente si califica para tercera edad/discapacidad o si tiene IPTV activado.
+        *   **Fuzzy Mapping:** Mapea variaciones de texto (ej: "sayausi", "30 megas") al nombre exacto del Nodo o Plan registrado en la base de datos para evitar discrepancias.
+    4. Devuelve un objeto JSON estructurado con todos los campos listos para poblar el formulario del frontend.
