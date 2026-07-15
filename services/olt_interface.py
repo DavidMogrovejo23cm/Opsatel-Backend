@@ -757,29 +757,51 @@ class OLTInterface:
                 'responses': [resp for _, resp in responses],
             }
 
-    def build_removal_commands(self, payload: Dict[str, Any]) -> List[str]:
-        """Construye la secuencia de comandos Huawei para eliminar un ONT."""
+    def build_removal_commands(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Construye la secuencia de comandos Huawei para eliminar un ONT.
+        
+        Secuencia:
+          1. (config)# undo service-port <service_port>   -- libera el service-port
+          2. interface gpon X/X
+          3. (config-if-gpon-X/X)# ont delete <port_num> <ont_id>
+        """
         gpon_port = payload.get('gpon_port', '0/0/0')
         ont_id = payload.get('ont_id', '0')
+        service_port = str(payload.get('service_port', '')).strip()
         
         # Extraer slot/port e interface
         parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
         if len(parts) >= 3:
-            interface = f"{parts[0]}/{parts[1]}"
             port_num = parts[2]
         else:
-            interface = "0/0"
             port_num = "0"
+
+        # Comandos de config antes de entrar a la interfaz GPON
+        config_commands_before = []
+        if service_port and service_port.isdigit():
+            config_commands_before.append(f"undo service-port {service_port}")
+        else:
+            logger.warning(f"service_port inválido o vacío ('{service_port}'), se omite undo service-port")
 
         # 'interface gpon' y 'quit' se gestionan en execute_removal_sequence
         return {
+            'config_commands_before': config_commands_before,
             'gpon_commands': [
                 f"ont delete {port_num} {ont_id}",
             ],
         }
 
     def execute_removal_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Ejecuta el flujo completo de eliminación con sincronización explícita de prompts."""
+        """Ejecuta el flujo completo de eliminación con sincronización explícita de prompts.
+        
+        Secuencia:
+          > → enable → #
+          # → config → (config)#
+          (config)# → undo service-port <sp>      (liberar service-port)
+          (config)# → interface gpon X/X → (config-if-gpon-X/X)#
+          (config-if-gpon-X/X)# → ont delete <port> <id>
+          (config-if-gpon-X/X)# → quit → (config)#
+        """
         responses = []
         already_exists_detected = False
         already_exists_msg = ""
@@ -800,13 +822,37 @@ class OLTInterface:
             self.check_response_for_errors('config', resp)
             responses.append(('config', resp))
 
-            # 3. Entrar a interfaz GPON  ((config)# → (config-if-gpon-X/X)#)
+            # 3. Obtener grupos de comandos
+            cmd_groups = self.build_removal_commands(payload)
+
+            # 4. Ejecutar undo service-port desde (config)#  ANTES de entrar a la interfaz
+            for cmd in cmd_groups.get('config_commands_before', []):
+                try:
+                    logger.info(f"Ejecutando en (config)#: {cmd}")
+                    resp = self.send_command(
+                        cmd,
+                        use_timing=True,
+                        delay_factor=2.0,
+                    )
+                    self.check_response_for_errors(cmd, resp)
+                    responses.append((cmd, resp))
+                    logger.info(f"✓ {cmd} ejecutado OK")
+                except OLTAlreadyExistsError as e:
+                    logger.warning(f"service-port ya eliminado o no existía al ejecutar '{cmd}': {e}")
+                    already_exists_detected = True
+                    already_exists_msg = str(e)
+                    responses.append((cmd, f"Warning/Already removed: {e}"))
+                except OLTCommandError as e:
+                    # Si el service-port no existe, continuar igual para borrar la ONT
+                    logger.warning(f"Error no crítico al ejecutar '{cmd}' (posiblemente ya eliminado): {e}")
+                    responses.append((cmd, f"Warning: {e}"))
+
+            # 5. Entrar a interfaz GPON  ((config)# → (config-if-gpon-X/X)#)
             resp = self.enter_gpon_interface(payload.get('gpon_port', '0/0/0'))
             self.check_response_for_errors('interface gpon', resp)
             responses.append(('interface gpon', resp))
 
-            # 4. Comandos dentro de (config-if-gpon-X/X)#
-            cmd_groups = self.build_removal_commands(payload)
+            # 6. Comandos dentro de (config-if-gpon-X/X)# (ont delete)
             for cmd in cmd_groups['gpon_commands']:
                 try:
                     resp = self.send_command(
@@ -822,7 +868,7 @@ class OLTInterface:
                     already_exists_msg = str(e)
                     responses.append((cmd, f"Warning/Already Exists: {e}"))
 
-            # 5. Salir de interfaz GPON  ((config-if-gpon-X/X)# → (config)#)
+            # 7. Salir de interfaz GPON  ((config-if-gpon-X/X)# → (config)#)
             resp = self.exit_gpon_interface()
             responses.append(('quit', resp))
 
@@ -838,7 +884,7 @@ class OLTInterface:
             return {
                 'success': True,
                 'status': 'SUCCESS',
-                'message': 'ONT eliminada exitosamente de la OLT.',
+                'message': 'ONT y service-port eliminados exitosamente de la OLT.',
                 'commands': [cmd for cmd, _ in responses],
                 'responses': [resp for _, resp in responses],
             }

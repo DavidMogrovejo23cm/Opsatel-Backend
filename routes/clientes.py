@@ -418,6 +418,118 @@ def pasar_a_activacion(id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Cliente pasado a etapa de activación", "estado": cliente.estado}
 
+
+@router.post("/{id}/borrar-de-olt", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
+def borrar_cliente_de_olt(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """
+    Borra al cliente de la OLT Huawei y lo regresa al estado 'En Activación'.
+
+    Secuencia OLT ejecutada por el worker:
+      1. (config)# undo service-port <service_port>
+      2. interface gpon 0/0
+      3. (config-if-gpon-0/0)# ont delete <puerto_num> <id_port>
+
+    Tras encolar la tarea, el cliente queda en 'En Activación' con sus
+    campos OLT borrados para que pueda ser re-activado correctamente.
+    """
+    import json as _json
+    from sqlalchemy import or_ as _or
+
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    # Validar que el cliente tenga datos OLT para poder borrar
+    if not cliente.id_port and not cliente.service_port:
+        raise HTTPException(
+            status_code=400,
+            detail="El cliente no tiene datos OLT registrados (id_port / service_port). No se puede borrar de la OLT."
+        )
+
+    # Extraer número de puerto desde campo "Puerto 8" → "8"
+    puerto_raw = str(cliente.puerto or "0")
+    import re as _re
+    m = _re.search(r'\d+', puerto_raw)
+    puerto_num = m.group() if m else "0"
+
+    # Construir gpon_port a partir del puerto numérico
+    # Por defecto la OLT de Baños usa 0/0/X; si el nodo es SAYAUSI usa 0/1/X
+    is_sayausi = str(cliente.nodo or "").upper() == "SAYAUSI"
+    if is_sayausi:
+        gpon_port = f"0/1/{puerto_num}"
+    else:
+        gpon_port = f"0/0/{puerto_num}"
+
+    ont_id = str(cliente.id_port or "0").strip()
+    service_port = str(cliente.service_port or "").strip()
+
+    # Obtener OLT configurada para el nodo del cliente
+    olt_config = db.query(models.OLTConfig).filter(
+        _or(
+            models.OLTConfig.nodo_asociado == cliente.nodo,
+            models.OLTConfig.nodo_asociado == None
+        ),
+        models.OLTConfig.active == True
+    ).first()
+
+    if not olt_config:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No hay OLT activa configurada para el nodo '{cliente.nodo}'. Configura una OLT primero."
+        )
+
+    # Construir payload para la tarea remove_ont
+    payload = {
+        "gpon_port": gpon_port,
+        "ont_id": ont_id,
+        "service_port": service_port,
+        # mac es requerido por el sanitizador para algunas acciones; para remove_ont se ignora
+        # pero lo pasamos vacío para no romper validaciones genéricas
+        "mac": str(cliente.mac or "000000000000").replace(":", "").replace("-", "") or "000000000000",
+    }
+
+    # Crear la tarea en la cola OLT
+    task = models.OLTTask(
+        cliente_id=id,
+        olt_id=olt_config.id,
+        action="remove_ont",
+        payload=_json.dumps(payload),
+        status="pending",
+        priority=10,  # Alta prioridad para borrar rápido
+        created_by=current_user.username,
+        created_at=datetime.now(),
+    )
+    db.add(task)
+    db.flush()  # Obtener el ID generado
+
+    # ── Resetear cliente a "En Activación" y limpiar campos OLT ──────────
+    cliente.estado = "En Activación"
+    cliente.service_port = None
+    cliente.id_port = None
+    cliente.ont = None
+    cliente.servicio = None
+    cliente.breach = None
+    cliente.mac = None
+    cliente.ip = None
+    cliente.potencia = None
+    cliente.instalation_date = None
+
+    db.commit()
+    db.refresh(task)
+
+    return {
+        "message": (
+            f"✅ Tarea de borrado encolada (ID tarea: {task.id}). "
+            f"El cliente '{cliente.nombre}' fue regresado a 'En Activación'. "
+            f"La OLT ejecutará: undo service-port {service_port} → ont delete {puerto_num} {ont_id}."
+        ),
+        "task_id": task.id,
+        "cliente_estado": cliente.estado,
+        "gpon_port": gpon_port,
+        "ont_id": ont_id,
+        "service_port": service_port,
+    }
+
 @router.get("/test-db")
 def test_database_tables(db: Session = Depends(get_db)):
     models_to_test = [
