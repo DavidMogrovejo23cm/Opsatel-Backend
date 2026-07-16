@@ -164,6 +164,51 @@ class OLTInterfaceTests(unittest.TestCase):
                 # Con la nueva política fija, el primer fallo espera 30s
                 mock_sleep.assert_called_once_with(30)
 
+    def test_get_existing_ont_ids(self):
+        from unittest.mock import patch
+        olt = OLTInterface(host='172.25.0.2', username='opsatel', password='admin123')
+        
+        sample_display_output = """
+  -----------------------------------------------------------------------------
+  ONT      Class SN-auth            Password-auth        Run      Config  Vlan
+  ID                                                     state    state   mode
+  -----------------------------------------------------------------------------
+     0     GPON  4857544301020304   -                    online   active  -
+     1     GPON  4857544305060708   -                    offline  active  -
+     5     GPON  4857544305060709   -                    offline  active  -
+  -----------------------------------------------------------------------------
+  Total: 3
+        """
+        with patch.object(olt, 'enter_gpon_interface') as mock_enter, \
+             patch.object(olt, 'exit_gpon_interface') as mock_exit, \
+             patch.object(olt, 'send_command', return_value=sample_display_output) as mock_send:
+            
+            existing_ids = olt.get_existing_ont_ids('0/0/15')
+            
+            mock_enter.assert_called_once_with('0/0/15')
+            mock_send.assert_called_once_with('display ont info 15 all', use_timing=True, delay_factor=1.5)
+            mock_exit.assert_called_once()
+            self.assertEqual(existing_ids, [0, 1, 5])
+
+    def test_is_service_port_free(self):
+        from unittest.mock import patch
+        olt = OLTInterface(host='172.25.0.2', username='opsatel', password='admin123')
+        
+        # Test free service port (does not exist)
+        with patch.object(olt, 'send_command', return_value="Failure: The service-port does not exist") as mock_send:
+            self.assertTrue(olt.is_service_port_free(1024))
+            mock_send.assert_called_once_with('display service-port 1024', use_timing=True, delay_factor=1.2)
+            
+        # Test busy service port
+        busy_output = """
+  -----------------------------------------------------------------------------
+  INDEX vlan-type vlan-id rx-cls tx-cls state
+  -----------------------------------------------------------------------------
+  1024  common    315     ...
+        """
+        with patch.object(olt, 'send_command', return_value=busy_output):
+            self.assertFalse(olt.is_service_port_free(1024))
+
 
 if __name__ == '__main__':
     unittest.main()

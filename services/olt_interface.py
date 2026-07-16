@@ -425,6 +425,85 @@ class OLTInterface:
             logger.error(f"✗ Error en configuración: {e}")
             return False, str(e)
 
+    def get_existing_ont_ids(self, gpon_port: str) -> List[int]:
+        """
+        Consulta la OLT para obtener los ONT IDs ya registrados en el puerto GPON especificado.
+        
+        Args:
+            gpon_port: Puerto GPON (ej: "0/0/15")
+            
+        Returns:
+            Lista de ONT IDs existentes (enteros)
+        """
+        # Extraer slot/port e interface
+        parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
+        if len(parts) >= 3:
+            interface = f"{parts[0]}/{parts[1]}"
+            port_num = parts[2]
+        else:
+            interface = "0/0"
+            port_num = "0"
+            
+        # Entrar a la interfaz gpon correspondiente
+        # Nota: Asumimos que ya estamos en modo config
+        self.enter_gpon_interface(gpon_port)
+        
+        cmd = f"display ont info {port_num} all"
+        logger.info(f"Consultando ONT IDs existentes con comando: {cmd}")
+        response = self.send_command(cmd, use_timing=True, delay_factor=1.5)
+        
+        # Volver a modo config
+        self.exit_gpon_interface()
+        
+        existing_ids = set()
+        for line in response.splitlines():
+            line_strip = line.strip()
+            if not line_strip:
+                continue
+            
+            # Caso 1: Fila de tabla que comienza con el ONT ID (ej: "   0     GPON ...")
+            match_table = re.match(r'^(\d+)\b', line_strip)
+            if match_table:
+                val = int(match_table.group(1))
+                if 0 <= val <= 127:
+                    existing_ids.add(val)
+                    continue
+            
+            # Caso 2: Formato etiqueta-valor (ej: "ONTID : 1" o "ONT ID: 2")
+            match_lbl = re.search(r'(?:ONT\s*ID|ONTID)\s*[:\s]\s*(\d+)', line_strip, re.IGNORECASE)
+            if match_lbl:
+                val = int(match_lbl.group(1))
+                if 0 <= val <= 127:
+                    existing_ids.add(val)
+                    
+        sorted_ids = sorted(list(existing_ids))
+        logger.info(f"ONT IDs detectados en GPON {gpon_port}: {sorted_ids}")
+        return sorted_ids
+
+    def is_service_port_free(self, service_port: int) -> bool:
+        """
+        Comprueba si un ID de service-port está libre en la OLT.
+        """
+        # Nota: Asumimos que ya estamos en modo config o privilegiado
+        cmd = f"display service-port {service_port}"
+        try:
+            response = self.send_command(cmd, use_timing=True, delay_factor=1.2)
+            resp_lower = response.lower()
+            if "does not exist" in resp_lower or "not exist" in resp_lower:
+                return True
+            # Si contiene información del service port, no está libre
+            if str(service_port) in resp_lower and "vlan" in resp_lower:
+                return False
+            # Si la OLT da "Failure: ...", dependemos de si dice no existe,
+            # pero por seguridad si contiene "failure" o "does not exist", lo consideramos libre
+            if "failure" in resp_lower:
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"Error comprobando service-port {service_port}: {e}")
+            # Si falla el comando, asumimos que está ocupado para no arriesgar colisión
+            return False
+
     def _get_gpon_interface(self, gpon_port: str) -> str:
         """Convierte un puerto GPON tipo 0/0/3 en la interfaz de configuración 0/0."""
         if not gpon_port:
