@@ -427,82 +427,91 @@ class OLTInterface:
 
     def get_existing_ont_ids(self, gpon_port: str) -> List[int]:
         """
-        Consulta la OLT para obtener los ONT IDs ya registrados en el puerto GPON especificado.
-        
+        Consulta la OLT para obtener los ONT IDs ya registrados en el puerto GPON
+        especificado.  DEBE llamarse cuando el prompt ya está en (config)#.
+
+        Flujo interno:
+            (config)#  →  interface gpon X/X  →  display ont info <port> all  →  quit
+
+        NO ejecuta enable ni config — esas transiciones son responsabilidad del
+        llamador (TaskProcessor / execute_activation_sequence).
+
         Args:
-            gpon_port: Puerto GPON (ej: "0/0/15")
-            
+            gpon_port: Puerto GPON completo, ej. "0/0/15".
+
         Returns:
-            Lista de ONT IDs existentes (enteros)
+            Lista ordenada de ONT IDs existentes (enteros 0-127).
         """
-        # Extraer slot/port e interface
         parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
         if len(parts) >= 3:
-            interface = f"{parts[0]}/{parts[1]}"
             port_num = parts[2]
         else:
-            interface = "0/0"
             port_num = "0"
-            
-        # Entrar a la interfaz gpon correspondiente
-        # Nota: Asumimos que ya estamos en modo config
+
+        # ── 1. Entrar a la interfaz GPON ──────────────────────────────────
         self.enter_gpon_interface(gpon_port)
-        
+
+        # ── 2. Consultar ONTs registrados en el puerto ─────────────────────
         cmd = f"display ont info {port_num} all"
-        logger.info(f"Consultando ONT IDs existentes con comando: {cmd}")
-        response = self.send_command(cmd, use_timing=True, delay_factor=1.5)
-        
-        # Volver a modo config
+        logger.info(f"[AutoScale] Ejecutando: {cmd}")
+        response = self.send_command(cmd, use_timing=True, delay_factor=2.0)
+
+        # ── 3. Salir de la interfaz GPON → volver a (config)# ─────────────
         self.exit_gpon_interface()
-        
-        existing_ids = set()
+
+        # ── 4. Parsear la respuesta ────────────────────────────────────────
+        existing_ids: set = set()
         for line in response.splitlines():
             line_strip = line.strip()
             if not line_strip:
                 continue
-            
-            # Caso 1: Fila de tabla que comienza con el ONT ID (ej: "   0     GPON ...")
-            match_table = re.match(r'^(\d+)\b', line_strip)
+
+            # Formato tabla Huawei: "  0  GPON  485754430102...  online  active"
+            # La primera columna es el ONT ID.
+            match_table = re.match(r'^(\d{1,3})\s+(?:GPON|EPON)', line_strip, re.IGNORECASE)
             if match_table:
                 val = int(match_table.group(1))
                 if 0 <= val <= 127:
                     existing_ids.add(val)
-                    continue
-            
-            # Caso 2: Formato etiqueta-valor (ej: "ONTID : 1" o "ONT ID: 2")
-            match_lbl = re.search(r'(?:ONT\s*ID|ONTID)\s*[:\s]\s*(\d+)', line_strip, re.IGNORECASE)
+                continue
+
+            # Formato alternativo etiqueta-valor: "ONT ID : 3" o "ONTID : 3"
+            match_lbl = re.search(
+                r'(?:ONT\s*ID|ONTID)\s*[:\s]\s*(\d+)', line_strip, re.IGNORECASE
+            )
             if match_lbl:
                 val = int(match_lbl.group(1))
                 if 0 <= val <= 127:
                     existing_ids.add(val)
-                    
-        sorted_ids = sorted(list(existing_ids))
-        logger.info(f"ONT IDs detectados en GPON {gpon_port}: {sorted_ids}")
+
+        sorted_ids = sorted(existing_ids)
+        logger.info(f"[AutoScale] ONT IDs en uso en {gpon_port}: {sorted_ids}")
         return sorted_ids
 
     def is_service_port_free(self, service_port: int) -> bool:
         """
-        Comprueba si un ID de service-port está libre en la OLT.
+        Comprueba si un service-port está libre en la OLT.
+        DEBE llamarse cuando el prompt ya está en (config)# (NO dentro de
+        una interfaz GPON — salir con quit antes de llamar este método).
         """
-        # Nota: Asumimos que ya estamos en modo config o privilegiado
         cmd = f"display service-port {service_port}"
         try:
-            response = self.send_command(cmd, use_timing=True, delay_factor=1.2)
+            response = self.send_command(cmd, use_timing=True, delay_factor=1.5)
             resp_lower = response.lower()
+            # Huawei responde "does not exist" / "not exist" cuando el SP está libre
             if "does not exist" in resp_lower or "not exist" in resp_lower:
                 return True
-            # Si contiene información del service port, no está libre
+            # Si la respuesta incluye datos del SP (INDEX / vlan) → está ocupado
             if str(service_port) in resp_lower and "vlan" in resp_lower:
                 return False
-            # Si la OLT da "Failure: ...", dependemos de si dice no existe,
-            # pero por seguridad si contiene "failure" o "does not exist", lo consideramos libre
+            # "Failure" genérico sin contexto de existencia → asumir libre
             if "failure" in resp_lower:
                 return True
+            # Silencio inesperado → asumir ocupado para ser conservadores
             return False
-        except Exception as e:
-            logger.warning(f"Error comprobando service-port {service_port}: {e}")
-            # Si falla el comando, asumimos que está ocupado para no arriesgar colisión
-            return False
+        except Exception as exc:
+            logger.warning(f"[AutoScale] Error comprobando service-port {service_port}: {exc}")
+            return False  # Conservador: asumir ocupado
 
     def _get_gpon_interface(self, gpon_port: str) -> str:
         """Convierte un puerto GPON tipo 0/0/3 en la interfaz de configuración 0/0."""
@@ -704,23 +713,67 @@ class OLTInterface:
         except Exception as e:
             logger.warning(f"No se pudo resetear el prompt al modo base: {e}")
 
+    def _ensure_config_mode(self) -> None:
+        """
+        Asegura que el prompt esté en (config)# de la forma más directa posible,
+        sin enviar comandos redundantes que provoquen 'Unknown command'.
+
+        Reglas:
+          - Si ya está en (config)#          → no hace nada.
+          - Si está en (config-if-...)#       → envía 'quit' hasta llegar a (config)#.
+          - Si está en #  (privilegiado)      → envía 'config'.
+          - Si está en >  (usuario normal)    → envía 'enable' luego 'config'.
+        """
+        if not self.is_connected or not self.connection:
+            raise OLTConnectionError("No hay sesión activa.")
+
+        try:
+            prompt = self.connection.find_prompt()
+            logger.info(f"[_ensure_config_mode] Prompt actual: '{prompt}'")
+        except Exception as exc:
+            raise OLTConnectionError(f"No se pudo leer el prompt: {exc}")
+
+        # Salir de sub-interfaces hasta llegar a (config)# o #
+        for _ in range(6):
+            prompt = self.connection.find_prompt()
+            # Ya estamos en (config)#
+            if '(config)' in prompt and prompt.endswith('#'):
+                logger.info("[_ensure_config_mode] Ya en (config)#. No se hacen cambios.")
+                return
+            # Dentro de una sub-interfaz → quit
+            if '(' in prompt and prompt.endswith('#') and '(config)' not in prompt:
+                logger.info(f"[_ensure_config_mode] En sub-interfaz '{prompt}', enviando quit...")
+                self.send_command('quit', use_timing=True, delay_factor=1.0)
+                continue
+            # Prompt privilegiado (#) sin paréntesis → entrar a config
+            if prompt.endswith('#') and '(' not in prompt:
+                logger.info(f"[_ensure_config_mode] En modo privilegiado, enviando config...")
+                resp = self.send_command('config', use_timing=True, delay_factor=1.2)
+                self.check_response_for_errors('config', resp)
+                return
+            # Prompt de usuario (>) → enable + config
+            if prompt.endswith('>'):
+                logger.info(f"[_ensure_config_mode] En modo usuario, enviando enable + config...")
+                resp = self.send_command('enable', use_timing=True, delay_factor=1.2)
+                self.check_response_for_errors('enable', resp)
+                resp = self.send_command('config', use_timing=True, delay_factor=1.2)
+                self.check_response_for_errors('config', resp)
+                return
+            # Cualquier otro estado → quit e iterar
+            self.send_command('quit', use_timing=True, delay_factor=1.0)
+
+        logger.warning("[_ensure_config_mode] No se pudo alcanzar (config)# en 6 intentos.")
+
     def execute_activation_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Ejecuta el flujo completo de activación con sincronización explícita de prompts.
 
-        Transiciones de prompt gestionadas:
-          >  → enable →  #
-          #  → config →  (config)#
+        Transiciones de prompt gestionadas de forma adaptativa:
+          Cualquier estado → _ensure_config_mode() → (config)#
           (config)#  → interface gpon →  (config-if-gpon-X/X)#
           (config-if-gpon-X/X)#  → quit →  (config)#
           (config)#  → service-port →  (config)#
 
-        Returns:
-            Diccionario enriquecido con todos los datos del aprovisionamiento:
-            success, status, message, commands, responses, y todos los campos
-            técnicos (port_num, ont_id, service_port, mac, vlan, etc.) listos
-            para ser persistidos directamente en el modelo Cliente.
-
-        NOTA: NO llama a self.connect() — la conexión es gestionada externamente.
+        NOTA: No llama self.connect(). No llama enable/config si ya estamos ahí.
         """
         responses = []
         already_exists_detected = False
@@ -729,18 +782,8 @@ class OLTInterface:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
 
-            # Resetear prompt al estado base antes de iniciar
-            self._reset_to_base_prompt()
-
-            # 1. Modo Privilegiado  (> → #)
-            resp = self.enter_privileged_mode()
-            self.check_response_for_errors('enable', resp)
-            responses.append(('enable', resp))
-
-            # 2. Modo Configuración  (# → (config)#)
-            resp = self.enter_config_mode()
-            self.check_response_for_errors('config', resp)
-            responses.append(('config', resp))
+            # 1. Llegar a (config)# sin importar el estado actual del prompt
+            self._ensure_config_mode()
 
             # 3. Obtener listas de comandos separadas por contexto
             #    build_activation_commands ahora retorna también 'metadata' con todos

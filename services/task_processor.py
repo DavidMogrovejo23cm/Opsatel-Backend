@@ -421,29 +421,35 @@ class TaskProcessor:
             # Construir y ejecutar comando
             if task.action in ['add_ont', 'remove_ont', 'set_breach']:
                 if task.action == 'add_ont':
-                    # --- AUTO-SELECCIÓN DE ONT ID Y SERVICE PORT DINÁMICOS DESDE LA OLT ---
+                    # -------------------------------------------------------
+                    # AUTO-ESCALA: Calcular ont_id y service_port en tiempo real
+                    # consultando la OLT para evitar colisiones.
+                    # -------------------------------------------------------
                     try:
                         gpon_port = validated_payload.get('gpon_port', '0/0/0')
-                        mac = validated_payload.get('mac')
-                        
-                        logger.info(f"[AutoScale] Iniciando cálculo dinámico de ONT ID y Service Port en la OLT para GPON {gpon_port}...")
-                        
-                        # Asegurar estado base y modo config
-                        olt._reset_to_base_prompt()
-                        olt.enter_privileged_mode()
-                        olt.enter_config_mode()
-                        
-                        # 1. Obtener ONT IDs que ya existen en la OLT para este puerto GPON
+
+                        logger.info(
+                            f"[AutoScale] Calculando ONT ID y Service Port para GPON {gpon_port}..."
+                        )
+
+                        # ── Garantizar (config)# antes de consultar la OLT ──
+                        # _ensure_config_mode detecta el estado real del prompt y
+                        # solo envía enable/config si son necesarios.
+                        olt._ensure_config_mode()
+
+                        # ── 1. ONT IDs en uso en la OLT (requiere estar en config) ──
+                        # get_existing_ont_ids hace: interface gpon X/X →
+                        # display ont info <port> all → quit (vuelve a config).
                         existing_ont_ids = olt.get_existing_ont_ids(gpon_port)
-                        
-                        # 2. Obtener ONT IDs y Service Ports en tareas pendientes/procesándose
+
+                        # ── 2. IDs reservados en la cola de tareas pendientes ──
                         pending_tasks = self.db.query(models.OLTTask).filter(
                             models.OLTTask.status.in_(['pending', 'processing', 'retry']),
                             models.OLTTask.id != task.id
                         ).all()
-                        
-                        reserved_ont_ids = set()
-                        reserved_sps = set()
+
+                        reserved_ont_ids: set = set()
+                        reserved_sps: set = set()
                         for t in pending_tasks:
                             try:
                                 p = json.loads(t.payload)
@@ -455,53 +461,69 @@ class TaskProcessor:
                                 if sp and str(sp).isdigit():
                                     reserved_sps.add(int(sp))
                             except Exception as parse_e:
-                                logger.warning(f"Error parseando payload de tarea {t.id}: {parse_e}")
-                        
-                        # Encontrar el primer ONT ID libre en el rango 0 a 127
+                                logger.warning(
+                                    f"[AutoScale] Error parseando payload tarea {t.id}: {parse_e}"
+                                )
+
+                        # ── 3. Primer ONT ID libre (0-127) ──
                         calculated_ont_id = None
                         for i in range(128):
                             if i not in existing_ont_ids and i not in reserved_ont_ids:
                                 calculated_ont_id = i
                                 break
-                        
+
                         if calculated_ont_id is None:
-                            raise OLTCommandError(f"No hay ONT IDs disponibles en el puerto GPON {gpon_port} (rango 0-127 ocupado)")
-                        
-                        logger.info(f"[AutoScale] Seleccionado ONT ID: {calculated_ont_id}")
-                        
-                        # 3. Obtener el máximo service_port registrado en la Base de Datos
+                            raise OLTCommandError(
+                                f"No hay ONT IDs disponibles en {gpon_port} (rango 0-127 agotado)"
+                            )
+
+                        logger.info(f"[AutoScale] ONT ID seleccionado: {calculated_ont_id}")
+
+                        # ── 4. Primer service_port libre ──
+                        # Partir del máximo existente en la BD o de 1000 como mínimo.
                         clients_sp = self.db.query(models.Cliente.service_port).all()
-                        sp_nums = []
-                        for (sp,) in clients_sp:
-                            if sp and str(sp).isdigit():
-                                sp_nums.append(int(sp))
-                        max_sp = max(sp_nums) if sp_nums else 999
-                        start_sp = max(1000, max_sp + 1)
-                        
-                        # Buscar el primer service port que no esté reservado en cola ni usado en la OLT
+                        sp_nums = [
+                            int(sp) for (sp,) in clients_sp
+                            if sp and str(sp).isdigit()
+                        ]
+                        start_sp = max(1000, max(sp_nums) + 1) if sp_nums else 1000
+
+                        # El cursor ya está en (config)# (get_existing_ont_ids
+                        # terminó con quit).  is_service_port_free hace
+                        # display service-port <id> desde (config)#.
                         calculated_sp = start_sp
-                        while calculated_sp in reserved_sps or not olt.is_service_port_free(calculated_sp):
+                        while (
+                            calculated_sp in reserved_sps
+                            or not olt.is_service_port_free(calculated_sp)
+                        ):
                             calculated_sp += 1
-                        
-                        logger.info(f"[AutoScale] Seleccionado Service Port: {calculated_sp}")
-                        
-                        # Inyectar en validated_payload
+                            if calculated_sp > 65535:
+                                raise OLTCommandError("No hay service-ports libres disponibles")
+
+                        logger.info(f"[AutoScale] Service Port seleccionado: {calculated_sp}")
+
+                        # ── 5. Inyectar en payload y persistir ──
                         validated_payload['ont_id'] = str(calculated_ont_id)
                         validated_payload['service_port'] = str(calculated_sp)
-                        
-                        # Guardar el payload actualizado en la base de datos para la tarea
                         task.payload = json.dumps(validated_payload)
                         self.db.commit()
-                        logger.info(f"[AutoScale] Tarea {task.id} actualizada con ont_id={calculated_ont_id} y service_port={calculated_sp}")
-                        
+                        logger.info(
+                            f"[AutoScale] Tarea {task.id}: ont_id={calculated_ont_id}, "
+                            f"service_port={calculated_sp}"
+                        )
+
                     except Exception as autoscale_err:
-                        logger.error(f"Error fatal durante auto-escala de ONT/ServicePort: {autoscale_err}")
+                        logger.error(
+                            f"[AutoScale] Error fatal: {autoscale_err}"
+                        )
                         task.status = 'failed'
-                        task.error_message = f"Auto-scale calculation failed: {autoscale_err}"
+                        task.error_message = f"AutoScale failed: {autoscale_err}"
                         task.error_code = 'AUTOSCALE_FAILED'
                         self.db.commit()
                         return True
-                    
+
+                    # execute_activation_sequence llama _ensure_config_mode internamente
+                    # y detecta que ya estamos en (config)# → no reenvía enable/config.
                     result = olt.execute_activation_sequence(validated_payload)
                 elif task.action == 'remove_ont':
                     result = olt.execute_removal_sequence(validated_payload)
