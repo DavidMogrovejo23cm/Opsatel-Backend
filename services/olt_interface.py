@@ -608,20 +608,28 @@ class OLTInterface:
                 ont_val = 0
             service_port = str(ont_val + 1000)
 
+        # Determinar el tipo de aprovisionamiento (por defecto 'bridge' si no se especifica)
+        provision_type = payload.get('provision_type', 'bridge')
+        if isinstance(provision_type, str):
+            provision_type = provision_type.strip().lower()
+        if provision_type not in ('ont', 'bridge'):
+            provision_type = 'bridge'
+
         # Construir los comandos individuales como strings
         cmd_ont = f'ont add {port_num} {ont_id} sn-auth "{mac}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {srvprofile_id} desc "{description}"'
         cmd_breach = f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {user_vlan} priority 0'
         cmd_servicio = f'service-port {service_port} vlan {vlan} gpon {gpon_port} ont {ont_id} gemport {profile_id} multi-service user-vlan {user_vlan} tag-transform translate'
 
+        if provision_type == 'ont':
+            gpon_commands = [cmd_ont]
+        else:
+            gpon_commands = [cmd_ont, cmd_breach]
+
         # NOTA: 'interface gpon' y 'quit' NO están aquí.
         # Las transiciones de prompt las gestiona execute_activation_sequence
         # usando enter_gpon_interface() y exit_gpon_interface() con expect_string correcto.
         return {
-            'gpon_commands': [
-                # Comandos ejecutados DENTRO de (config-if-gpon-X/X)#
-                cmd_ont,
-                cmd_breach,
-            ],
+            'gpon_commands': gpon_commands,
             'config_commands': [
                 # Comandos ejecutados DESDE (config)# tras el quit
                 cmd_servicio,
@@ -640,8 +648,9 @@ class OLTInterface:
                 'srvprofile_id': srvprofile_id,
                 'description': description,
                 'cmd_ont': cmd_ont,
-                'cmd_breach': cmd_breach,
+                'cmd_breach': cmd_breach if provision_type == 'bridge' else None,
                 'cmd_servicio': cmd_servicio,
+                'provision_type': provision_type,
             }
         }
 

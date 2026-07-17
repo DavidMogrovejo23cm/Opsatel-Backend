@@ -41,6 +41,7 @@ class OLTInterfaceTests(unittest.TestCase):
             'user_vlan': '200',
         }
 
+        # Case 1: Default / Bridge
         result = olt.build_activation_commands(payload)
 
         # Verify the return type is a dict with the expected structure
@@ -69,6 +70,20 @@ class OLTInterfaceTests(unittest.TestCase):
         self.assertEqual(metadata['service_port'], '100')
         self.assertEqual(metadata['vlan'], '200')
         self.assertEqual(metadata['user_vlan'], '200')
+        self.assertEqual(metadata['provision_type'], 'bridge')
+
+        # Case 2: Provision type 'ont'
+        payload_ont = payload.copy()
+        payload_ont['provision_type'] = 'ont'
+        result_ont = olt.build_activation_commands(payload_ont)
+        gpon_cmds_ont = result_ont['gpon_commands']
+        metadata_ont = result_ont['metadata']
+
+        # gpon_commands: ONLY ont add
+        self.assertEqual(len(gpon_cmds_ont), 1)
+        self.assertIn('ont add 3 5 sn-auth', gpon_cmds_ont[0])
+        self.assertEqual(metadata_ont['cmd_breach'], None)
+        self.assertEqual(metadata_ont['provision_type'], 'ont')
 
     def test_parse_autofind_output(self):
         """
