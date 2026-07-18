@@ -513,6 +513,58 @@ class OLTInterface:
             logger.warning(f"[AutoScale] Error comprobando service-port {service_port}: {exc}")
             return False  # Conservador: asumir ocupado
 
+    def get_existing_service_ports(self, gpon_port: str) -> List[int]:
+        """
+        Consulta la OLT directamente para obtener todos los service-ports existentes
+        en el puerto GPON especificado.
+
+        La OLT es la ÚNICA fuente de verdad — nunca se usa la base de datos.
+        DEBE llamarse cuando el prompt ya está en (config)#.
+
+        Flujo interno:
+            (config)# → display service-port port 0/0/X → parseo → retorno
+
+        Args:
+            gpon_port: Puerto GPON completo, ej. "0/0/15".
+
+        Returns:
+            Conjunto de service-port IDs existentes en ese puerto (enteros).
+        """
+        parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
+        port_num = parts[2] if len(parts) >= 3 else "0"
+
+        cmd = f"display service-port port {gpon_port}"
+        logger.info(f"[AutoScale-SP] Consultando service-ports en OLT para {gpon_port}: {cmd}")
+
+        existing_sps: set = set()
+        try:
+            response = self.send_command(cmd, use_timing=True, delay_factor=2.0)
+            logger.debug(f"[AutoScale-SP] Respuesta OLT:\n{response[:500]}")
+
+            for line in response.splitlines():
+                line_strip = line.strip()
+                if not line_strip:
+                    continue
+
+                # Formato tabla Huawei: "  1920  VLAN 308  gpon 0/0/15  ont 3 gemport ..."
+                # La primera columna numérica es el índice del service-port.
+                match = re.match(r'^(\d+)\s+', line_strip)
+                if match:
+                    sp_val = int(match.group(1))
+                    # Validar que el SP está dentro de algún rango GPON válido (0-2047)
+                    if 0 <= sp_val <= 2047:
+                        existing_sps.add(sp_val)
+
+        except Exception as exc:
+            logger.warning(
+                f"[AutoScale-SP] Error consultando service-ports en {gpon_port}: {exc}. "
+                f"Se continuará con lista vacía (conservador: el primer SP del rango será elegido)."
+            )
+
+        sorted_sps = sorted(existing_sps)
+        logger.info(f"[AutoScale-SP] Service-ports en uso en {gpon_port}: {sorted_sps}")
+        return sorted_sps
+
     def _get_gpon_interface(self, gpon_port: str) -> str:
         """Convierte un puerto GPON tipo 0/0/3 en la interfaz de configuración 0/0."""
         if not gpon_port:

@@ -479,28 +479,47 @@ class TaskProcessor:
 
                         logger.info(f"[AutoScale] ONT ID seleccionado: {calculated_ont_id}")
 
-                        # ── 4. Primer service_port libre ──
-                        # Partir del máximo existente en la BD o de 1000 como mínimo.
-                        clients_sp = self.db.query(models.Cliente.service_port).all()
-                        sp_nums = [
-                            int(sp) for (sp,) in clients_sp
-                            if sp and str(sp).isdigit()
-                        ]
-                        start_sp = max(1000, max(sp_nums) + 1) if sp_nums else 1000
+                        # ── 4. Primer service_port libre usando rangos por puerto GPON ──
+                        # Cada puerto GPON tiene un bloque fijo de 128 service-ports:
+                        #   puerto P → rango [P*128 .. P*128+127]
+                        # Ej: puerto 15 → [1920..2047], puerto 0 → [0..127]
+                        # La OLT ES LA ÚNICA fuente de verdad — nunca usamos la BD.
 
-                        # El cursor ya está en (config)# (get_existing_ont_ids
-                        # terminó con quit).  is_service_port_free hace
-                        # display service-port <id> desde (config)#.
-                        calculated_sp = start_sp
-                        while (
-                            calculated_sp in reserved_sps
-                            or not olt.is_service_port_free(calculated_sp)
-                        ):
-                            calculated_sp += 1
-                            if calculated_sp > 65535:
-                                raise OLTCommandError("No hay service-ports libres disponibles")
+                        # Extraer número de puerto del gpon_port (ej: "0/0/15" → 15)
+                        gpon_parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
+                        try:
+                            port_index = int(gpon_parts[2]) if len(gpon_parts) >= 3 else 0
+                        except (ValueError, IndexError):
+                            port_index = 0
 
-                        logger.info(f"[AutoScale] Service Port seleccionado: {calculated_sp}")
+                        sp_range_start = port_index * 128
+                        sp_range_end   = sp_range_start + 127
+
+                        logger.info(
+                            f"[AutoScale-SP] Puerto GPON {port_index} → "
+                            f"rango service-port [{sp_range_start}..{sp_range_end}]"
+                        )
+
+                        # Consultar la OLT directamente
+                        olt_occupied_sps = set(olt.get_existing_service_ports(gpon_port))
+
+                        # Combinar con SPs reservados en tareas pendientes
+                        all_occupied_sps = olt_occupied_sps | reserved_sps
+
+                        # Recorrer el rango y elegir el primer libre (reutiliza huecos)
+                        calculated_sp = None
+                        for sp_candidate in range(sp_range_start, sp_range_end + 1):
+                            if sp_candidate not in all_occupied_sps:
+                                calculated_sp = sp_candidate
+                                break
+
+                        if calculated_sp is None:
+                            raise OLTCommandError(
+                                f"No hay service-ports libres en el rango "
+                                f"[{sp_range_start}..{sp_range_end}] para el puerto GPON {port_index}"
+                            )
+
+                        logger.info(f"[AutoScale-SP] Service Port seleccionado: {calculated_sp}")
 
                         # ── 5. Inyectar en payload y persistir ──
                         validated_payload['ont_id'] = str(calculated_ont_id)
