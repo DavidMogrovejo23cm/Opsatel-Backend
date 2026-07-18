@@ -454,38 +454,83 @@ class OLTInterface:
         # ── 2. Consultar ONTs registrados en el puerto ─────────────────────
         cmd = f"display ont info {port_num} all"
         logger.info(f"[AutoScale] Ejecutando: {cmd}")
-        response = self.send_command(cmd, use_timing=True, delay_factor=2.0)
+        # Usar send_command con read_timeout extendido (no timing) para que Netmiko
+        # espere el prompt final completo y no corte la tabla a mitad.
+        response = self.send_command(cmd, delay_factor=3.0, read_timeout=60)
 
         # ── 3. Salir de la interfaz GPON → volver a (config)# ─────────────
         self.exit_gpon_interface()
 
-        # ── 4. Parsear la respuesta ────────────────────────────────────────
+        # ── 4. Parsear la respuesta con múltiples patrones Huawei ──────────
+        #
+        # Formato A — tabla F/S/P (MA5608/MA5683, el más común):
+        #   0/ 0/10   0  485754432B464242   active  online   matched
+        #   0/ 0/10   1  485754434F5E56B0   active  online   matched
+        #
+        # Formato B — columna GPON/EPON:
+        #   0  GPON  485754430102...  online  active
+        #
+        # Formato C — etiqueta-valor:
+        #   ONT ID : 0
+        #
+        # Formato D — ID + SN hexadecimal 16 dígitos (sin columna GPON):
+        #   3  485754434F5E56B0  active  online  ...
+        #
         existing_ids: set = set()
+
         for line in response.splitlines():
             line_strip = line.strip()
             if not line_strip:
                 continue
 
-            # Formato tabla Huawei: "  0  GPON  485754430102...  online  active"
-            # La primera columna es el ONT ID.
-            match_table = re.match(r'^(\d{1,3})\s+(?:GPON|EPON)', line_strip, re.IGNORECASE)
-            if match_table:
-                val = int(match_table.group(1))
+            # Patrón A: "F/ S/P   ID  SN  ..."  (ej. "0/ 0/10   0  4857...")
+            match_fsp = re.match(
+                r'^\d+\s*/\s*\d+\s*/\s*\d+\s+(\d{1,3})\s+', line_strip
+            )
+            if match_fsp:
+                val = int(match_fsp.group(1))
                 if 0 <= val <= 127:
                     existing_ids.add(val)
                 continue
 
-            # Formato alternativo etiqueta-valor: "ONT ID : 3" o "ONTID : 3"
+            # Patrón B: "  <ID>  GPON|EPON  ..."
+            match_gpon = re.match(r'^(\d{1,3})\s+(?:GPON|EPON)', line_strip, re.IGNORECASE)
+            if match_gpon:
+                val = int(match_gpon.group(1))
+                if 0 <= val <= 127:
+                    existing_ids.add(val)
+                continue
+
+            # Patrón C: "ONT ID : <n>" o "ONTID : <n>"
             match_lbl = re.search(
-                r'(?:ONT\s*ID|ONTID)\s*[:\s]\s*(\d+)', line_strip, re.IGNORECASE
+                r'(?:ONT[\s\-_]*ID)\s*[:\s]\s*(\d+)', line_strip, re.IGNORECASE
             )
             if match_lbl:
                 val = int(match_lbl.group(1))
                 if 0 <= val <= 127:
                     existing_ids.add(val)
+                continue
+
+            # Patrón D: "<ID>  <SN hexadecimal 16 dígitos>  ..."
+            match_sn = re.match(r'^(\d{1,3})\s+([0-9A-Fa-f]{16})\s+', line_strip)
+            if match_sn:
+                val = int(match_sn.group(1))
+                if 0 <= val <= 127:
+                    existing_ids.add(val)
+                continue
 
         sorted_ids = sorted(existing_ids)
-        logger.info(f"[AutoScale] ONT IDs en uso en {gpon_port}: {sorted_ids}")
+
+        # DIAGNÓSTICO: si la lista quedó vacía, loguear la respuesta cruda completa
+        # para poder detectar de inmediato si el parser necesita otro patrón.
+        if not sorted_ids:
+            logger.warning(
+                f"[AutoScale] ADVERTENCIA: '{cmd}' no retornó ONT IDs reconocibles. "
+                f"Respuesta cruda completa:\n{response}"
+            )
+        else:
+            logger.info(f"[AutoScale] ONT IDs en uso en {gpon_port}: {sorted_ids}")
+
         return sorted_ids
 
     def is_service_port_free(self, service_port: int) -> bool:

@@ -521,6 +521,20 @@ class TaskProcessor:
 
                         logger.info(f"[AutoScale-SP] Service Port seleccionado: {calculated_sp}")
 
+                        # ── DIAGNÓSTICO: resumen completo antes del ont add ──
+                        logger.info(
+                            f"[AutoScale][DIAGNÓSTICO] ===========================\n"
+                            f"  Puerto GPON          : {gpon_port}\n"
+                            f"  ONT IDs en OLT       : {sorted(existing_ont_ids)}\n"
+                            f"  ONT IDs en cola      : {sorted(reserved_ont_ids)}\n"
+                            f"  ONT ID seleccionado  : {calculated_ont_id}\n"
+                            f"  SPs en OLT (puerto)  : {sorted(olt_occupied_sps)}\n"
+                            f"  SPs en cola          : {sorted(reserved_sps)}\n"
+                            f"  SP rango             : [{sp_range_start}..{sp_range_end}]\n"
+                            f"  SP seleccionado      : {calculated_sp}\n"
+                            f"[AutoScale][DIAGNÓSTICO] ==========================="
+                        )
+
                         # ── 5. Inyectar en payload y persistir ──
                         validated_payload['ont_id'] = str(calculated_ont_id)
                         validated_payload['service_port'] = str(calculated_sp)
