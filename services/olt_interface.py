@@ -1233,66 +1233,58 @@ class OLTInterface:
 
     def clean_unused_bridges(self) -> Dict[str, Any]:
         """
-        Proceso de limpieza global de bridges/ONTs huérfanas detectadas por la OLT.
-
-        Flujo exacto:
+        Proceso automático de limpieza de autofind.
+        Ejecuta exactamente la secuencia recibida:
           1. enable → configure
-          2. display ont autofind all  → lista TODAS las MACs detectadas (todos los puertos)
-          3. FASE 1: Para cada MAC detectada:
+          2. display ont autofind all
+          3. Para cada ONT en autofind:
                - interface gpon 0/0
-               - ont add <port> <id_libre> sn-auth "<MAC>" omci ont-lineprofile-id <p> ont-srvprofile-id <p> desc "borrar 1"
-               - quit  (volver a config)
-               - service-port <sp> vlan <v> gpon <gpon_port> ont <id> gemport <p> multi-service ...
-          4. FASE 2: Para cada ONT activada:
-               - undo service-port <sp>  (en modo config)
+               - ont add <port> <ont_id> sn-auth "<MAC>" omci ont-lineprofile-id <profile> ont-srvprofile-id <profile> desc "PRUEBAS CHAT"
+               - ont port native-vlan <port> <ont_id> eth 1 vlan <profile> priority 0
+               - quit
+               - service-port <sp> vlan <vlan> gpon 0/0/<port> ont <ont_id> gemport <profile> multi-service user-vlan <profile> tag-transform translate
+               - undo service-port <sp>
                - interface gpon 0/0
-               - ont delete <port> <id>
+               - ont delete <port> <ont_id>
                - quit
         """
         responses = []
-        # Lista de (gpon_port, port_num, ont_id, service_port) para la fase de borrado
-        activated: List[Dict[str, Any]] = []
+        cleaned_count = 0
 
         try:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa.")
 
-            # ── 1. Asegurar modo (config)# ─────────────────────────────────
+            # 1. Asegurar modo config (enable -> configure)
             self._ensure_config_mode()
 
-            # ── 2. Obtener todas las ONTs detectadas por autofind ──────────
+            # 2. display ont autofind all
             candidates = self.display_autofind_all()
-            logger.info(f"[CleanBridges] Total ONTs detectadas por autofind: {len(candidates)}")
+            logger.info(f"[CleanBridges] ONTs detectadas en autofind: {len(candidates)}")
 
             if not candidates:
                 return {
                     'success': True,
                     'status': 'SUCCESS',
-                    'message': 'No se encontraron ONTs en autofind. Nada que limpiar.',
-                    'deleted_count': 0,
+                    'message': 'No hay ONTs en autofind. Nada que limpiar.',
+                    'cleaned_count': 0,
                     'commands': [],
                     'responses': []
                 }
 
-            # ── FASE 1: Activar cada ONT temporalmente ─────────────────────
-            logger.info(f"[CleanBridges] FASE 1: Activando {len(candidates)} ONTs temporalmente...")
+            # Mantener contador de IDs por puerto para esta sesión de limpieza
+            port_ont_counter: Dict[str, int] = {}
+            port_sp_counter: Dict[str, int] = {}
 
             for cand in candidates:
                 mac = cand.get('mac') or cand.get('sn_raw') or cand.get('sn')
-                gpon_port = cand.get('gpon_port', '0/0/0')  # ej: "0/0/10"
+                gpon_port = cand.get('gpon_port', '0/0/0')  # ej: "0/0/15"
 
                 if not mac:
-                    logger.warning(f"[CleanBridges] Candidato sin MAC/SN, ignorado: {cand}")
                     continue
 
-                # Extraer partes del puerto
                 parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
-                if len(parts) >= 3:
-                    interface = f"{parts[0]}/{parts[1]}"   # ej: "0/0"
-                    port_num = parts[2]                    # ej: "10"
-                else:
-                    interface = "0/0"
-                    port_num = "0"
+                port_num = parts[2] if len(parts) >= 3 else "0"
 
                 try:
                     port_num_int = int(port_num)
@@ -1302,57 +1294,39 @@ class OLTInterface:
                 profile_id = str(100 + port_num_int)
                 vlan = str(300 + port_num_int)
 
-                # Obtener IDs ya ocupados en este puerto y reservar uno libre
-                registered_ids = self.get_existing_ont_ids(gpon_port)
-                # También reservar los que ya activamos en esta sesión
-                already_used = {a['ont_id'] for a in activated if a['gpon_port'] == gpon_port}
-                ont_id = None
-                for i in range(128):
-                    if i not in registered_ids and i not in already_used:
-                        ont_id = i
-                        break
+                # Asignar ont_id temporal a partir de 10
+                current_ont_id = port_ont_counter.get(port_num, 10)
+                ont_id = str(current_ont_id)
+                port_ont_counter[port_num] = current_ont_id + 1
 
-                if ont_id is None:
-                    logger.error(f"[CleanBridges] Sin ONT IDs libres en {gpon_port} para {mac}")
-                    continue
+                # Asignar service_port temporal
+                base_sp = port_num_int * 128 + 100
+                current_sp = port_sp_counter.get(port_num, base_sp)
+                service_port = str(current_sp)
+                port_sp_counter[port_num] = current_sp + 1
 
-                # Calcular service-port libre
-                sp_range_start = port_num_int * 128
-                sp_range_end   = sp_range_start + 127
-                occupied_sps = set(self.get_existing_service_ports(gpon_port))
-                already_used_sps = {a['service_port'] for a in activated}
-                service_port = None
-                for sp_cand in range(sp_range_start, sp_range_end + 1):
-                    if sp_cand not in occupied_sps and sp_cand not in already_used_sps:
-                        service_port = sp_cand
-                        break
+                logger.info(f"[CleanBridges] Procesando MAC {mac} en puerto {port_num} (ont_id={ont_id}, sp={service_port})")
 
-                if service_port is None:
-                    logger.error(f"[CleanBridges] Sin service-ports libres en rango [{sp_range_start}..{sp_range_end}]")
-                    continue
-
-                logger.info(f"[CleanBridges] Activando MAC={mac} en {gpon_port} → ont_id={ont_id}, sp={service_port}")
-
-                # --- interface gpon 0/0 ---
+                # --- 1. interface gpon 0/0 ---
                 self.enter_gpon_interface(gpon_port)
 
-                # --- ont add ---
+                # --- 2. ont add ---
                 cmd_add = (
                     f'ont add {port_num} {ont_id} sn-auth "{mac}" omci '
-                    f'ont-lineprofile-id {profile_id} ont-srvprofile-id {profile_id} desc "borrar 1"'
+                    f'ont-lineprofile-id {profile_id} ont-srvprofile-id {profile_id} desc "PRUEBAS CHAT"'
                 )
                 resp_add = self.send_command(cmd_add, use_timing=True, delay_factor=2.5)
                 responses.append((cmd_add, resp_add))
 
-                # --- ont port native-vlan ---
+                # --- 3. ont port native-vlan ---
                 cmd_vlan = f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {profile_id} priority 0'
                 resp_vlan = self.send_command(cmd_vlan, use_timing=True, delay_factor=2.0)
                 responses.append((cmd_vlan, resp_vlan))
 
-                # --- quit (volver a config) ---
+                # --- 4. quit ---
                 self.exit_gpon_interface()
 
-                # --- service-port ---
+                # --- 5. service-port ---
                 cmd_sp = (
                     f'service-port {service_port} vlan {vlan} gpon {gpon_port} ont {ont_id} '
                     f'gemport {profile_id} multi-service user-vlan {profile_id} tag-transform translate'
@@ -1360,52 +1334,29 @@ class OLTInterface:
                 resp_sp = self.send_command(cmd_sp, use_timing=True, delay_factor=2.0)
                 responses.append((cmd_sp, resp_sp))
 
-                activated.append({
-                    'gpon_port': gpon_port,
-                    'interface': interface,
-                    'port_num': port_num,
-                    'ont_id': ont_id,
-                    'service_port': service_port,
-                    'mac': mac
-                })
-
-            logger.info(f"[CleanBridges] FASE 1 completada. {len(activated)} ONTs activadas.")
-
-            # ── FASE 2: Borrar todas las ONTs activadas ────────────────────
-            logger.info(f"[CleanBridges] FASE 2: Eliminando {len(activated)} ONTs...")
-
-            for item in activated:
-                gpon_port  = item['gpon_port']
-                port_num   = item['port_num']
-                ont_id     = item['ont_id']
-                sp         = item['service_port']
-
-                # --- undo service-port (en modo config) ---
-                cmd_undo_sp = f"undo service-port {sp}"
-                logger.info(f"[CleanBridges] {cmd_undo_sp}")
+                # --- 6. undo service-port ---
+                cmd_undo_sp = f"undo service-port {service_port}"
                 resp_undo = self.send_command(cmd_undo_sp, use_timing=True, delay_factor=1.5)
                 responses.append((cmd_undo_sp, resp_undo))
 
-                # --- interface gpon 0/0 ---
+                # --- 7. interface gpon 0/0 ---
                 self.enter_gpon_interface(gpon_port)
 
-                # --- ont delete ---
+                # --- 8. ont delete ---
                 cmd_del = f"ont delete {port_num} {ont_id}"
-                logger.info(f"[CleanBridges] {cmd_del}")
                 resp_del = self.send_command(cmd_del, use_timing=True, delay_factor=2.0)
                 responses.append((cmd_del, resp_del))
 
-                # --- quit ---
+                # --- 9. quit ---
                 self.exit_gpon_interface()
 
-            logger.info(f"[CleanBridges] FASE 2 completada. {len(activated)} ONTs eliminadas.")
+                cleaned_count += 1
 
             return {
                 'success': True,
                 'status': 'SUCCESS',
-                'message': f"Limpieza completada. {len(activated)} ONTs/Bridges activadas y eliminadas de la OLT.",
-                'deleted_count': len(activated),
-                'deleted_items': [{'gpon_port': a['gpon_port'], 'ont_id': a['ont_id'], 'mac': a['mac']} for a in activated],
+                'message': f"Limpieza completada. {cleaned_count} ONTs procesadas y eliminadas de autofind.",
+                'cleaned_count': cleaned_count,
                 'commands': [c for c, _ in responses],
                 'responses': [r for _, r in responses]
             }
