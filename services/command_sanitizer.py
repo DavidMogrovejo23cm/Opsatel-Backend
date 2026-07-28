@@ -325,8 +325,8 @@ class CommandSanitizer:
             validated['service_port'] = CommandSanitizer.sanitize_text(payload.get('service_port', '0'), 10)
         
         elif action == 'clean_unused_bridges':
-            # Requiere gpon_port para limpiar en ese puerto
-            validated['gpon_port'] = CommandSanitizer.validate_gpon_port(payload.get('gpon_port', '0/0/0'))
+            # No requiere gpon_port — actúa sobre TODOS los puertos detectados por display ont autofind all
+            pass
         
         
         # Copiar campos adicionales sanitizados
