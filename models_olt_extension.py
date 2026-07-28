@@ -6,7 +6,9 @@ Modelos para gestión de tareas de aprovisionamiento OLT.
 Nota: Este código debe ser agregado al final de models.py
 """
 
+# pyrefly: ignore [missing-import]
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Numeric, Boolean, Text, JSON, BigInteger, Enum, TIMESTAMP
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime

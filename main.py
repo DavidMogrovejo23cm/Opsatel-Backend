@@ -1,7 +1,12 @@
+# pyrefly: ignore [missing-import]
 from fastapi import FastAPI, Response, Request
+# pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
+# pyrefly: ignore [missing-import]
 from fastapi.responses import JSONResponse
+# pyrefly: ignore [missing-import]
 from fastapi.exceptions import RequestValidationError
+# pyrefly: ignore [missing-import]
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import engine, Base
 import models
@@ -9,12 +14,29 @@ import os
 import sys
 import time
 import pymysql
+# pyrefly: ignore [missing-import]
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
 from pymysql.err import OperationalError as PyMySQLOperationalError
 from sync_db import sync_schema
 from force_fix import force_fix_columns
+import observability
+import discovery_models
+import inventory_models
+from routes import discovery, sync, workflows
+
 # Iniciar App
 app = FastAPI(title="ISP Management API")
+app.add_middleware(observability.CorrelationIdMiddleware)
+app.include_router(observability.router)
+app.include_router(discovery.router)
+app.include_router(sync.router)
+app.include_router(workflows.router)
+observability.setup_json_logging()
+
+
+
+
+
 
 # Función para inicializar la base de datos de forma segura
 def wait_for_db(host='db', port=3306, max_attempts=30, delay=2):
@@ -190,6 +212,7 @@ app.include_router(asistencia.router)
 app.include_router(whatsapp.router)
 app.include_router(olt_tasks.router)
 
+# pyrefly: ignore [missing-import]
 from fastapi.staticfiles import StaticFiles
 os.makedirs("rutas_reportes", exist_ok=True)
 os.makedirs("uploads/cedulas", exist_ok=True)

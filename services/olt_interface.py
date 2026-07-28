@@ -375,21 +375,58 @@ class OLTInterface:
             
             logger.debug(f"✓ Comando completado en {duration_ms}ms. Respuesta: {response[:200]}...")
             
+            # ── Registro Asíncrono de Comando en DB (NetworkCommand) ──
+            try:
+                import observability
+                observability.log_network_command(
+                    equipo=self.host,
+                    comando=command,
+                    respuesta=response,
+                    duracion_ms=duration_ms,
+                    exit_status="SUCCESS"
+                )
+            except Exception as net_err:
+                logger.debug(f"No se pudo registrar comando de red: {net_err}")
+
             return response
         
         except NetmikoTimeoutException as e:
             duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"✗ Timeout esperando respuesta ({duration_ms}ms): {e}")
+            try:
+                import observability
+                observability.log_network_command(
+                    equipo=self.host,
+                    comando=command,
+                    respuesta=str(e),
+                    duracion_ms=duration_ms,
+                    exit_status="TIMEOUT"
+                )
+            except Exception:
+                pass
             self.disconnect()
             raise OLTTimeoutError(f"Timeout en comando: {command}")
         
         except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
             logger.error(f"✗ Error ejecutando comando: {type(e).__name__}: {e}")
+            try:
+                import observability
+                observability.log_network_command(
+                    equipo=self.host,
+                    comando=command,
+                    respuesta=str(e),
+                    duracion_ms=duration_ms,
+                    exit_status="ERROR"
+                )
+            except Exception:
+                pass
             # Si es un error de conexión/lectura/SSH, desconectar de forma segura
             e_str = str(e).lower()
             if any(k in e_str for k in ["connection", "ssh", "socket", "read", "eof"]):
                 self.disconnect()
             raise OLTCommandError(f"Error ejecutando '{command}': {e}")
+
     
     def send_config_commands(self, commands: List[str]) -> Tuple[bool, str]:
         """
@@ -940,6 +977,44 @@ class OLTInterface:
                     already_exists_msg = str(e)
                     responses.append((cmd, f"Warning/Already Exists: {e}"))
 
+            # ── 8. VERIFICACIÓN POST-ACTIVACIÓN: Potencia óptica ──────────────
+            # Ejecutamos 'display ont optical-info' usando la sesión ya activa
+            # (en este punto estamos en (config)# después del service-port).
+            # No reconectamos ni hacemos login nuevamente.
+            rx_power = None
+            tx_power = None
+            ont_status_live = None
+            optical_raw = ""
+            try:
+                _gpon_iface = f"{meta['gpon_port'].rsplit('/', 1)[0]}" if '/' in str(meta['gpon_port']) else "0/0"
+                _port_num   = meta['port_num']
+                _ont_id     = meta['ont_id']
+
+                # Entrar a la interfaz GPON para leer optical-info
+                self.send_command(
+                    f"interface gpon {_gpon_iface}",
+                    use_timing=True,
+                    delay_factor=1.2,
+                )
+                optical_raw = self.send_command(
+                    f"display ont optical-info {_port_num} {_ont_id}",
+                    use_timing=True,
+                    delay_factor=2.5,
+                )
+                logger.info(f"[PostActivation] Respuesta optical-info ({len(optical_raw)} chars): {optical_raw[:400]}")
+
+                power_data  = self.parse_ont_power(optical_raw)
+                rx_power    = power_data['rx_power']
+                tx_power    = power_data['tx_power']
+                ont_status_live = self.parse_ont_status(optical_raw)
+
+                # Salir de la interfaz GPON de vuelta a (config)#
+                self.send_command("quit", use_timing=True, delay_factor=1.0)
+                logger.info(f"[PostActivation] RX={rx_power} dBm | TX={tx_power} dBm | Status={ont_status_live}")
+
+            except Exception as opt_err:
+                logger.warning(f"[PostActivation] No se pudo leer potencia óptica (no es crítico): {opt_err}")
+
             # Base del resultado enriquecido — incluye todos los datos técnicos
             # que el task_processor necesita para persistir en el modelo Cliente.
             enriched_base = {
@@ -959,6 +1034,11 @@ class OLTInterface:
                 'cmd_ont':      meta['cmd_ont'],
                 'cmd_breach':   meta['cmd_breach'],
                 'cmd_servicio': meta['cmd_servicio'],
+                # ─── Potencia óptica post-activación ────────────────────────
+                'rx_power':     rx_power,
+                'tx_power':     tx_power,
+                'ont_status':   ont_status_live,
+                'optical_raw':  optical_raw[:500] if optical_raw else None,
             }
 
             if already_exists_detected:
@@ -976,7 +1056,31 @@ class OLTInterface:
                 'message': 'ONT activada exitosamente en la OLT.',
             }
         except Exception as e:
-            logger.error(f"Error en execute_activation_sequence: {e}")
+            logger.error(f"Error en execute_activation_sequence: {e}. Iniciando ROLLBACK ATÓMICO en OLT...")
+            # ── 8. ROLLBACK ATÓMICO EN OLT ──
+            try:
+                self._ensure_config_mode()
+                meta = cmd_groups.get('metadata', {})
+                sp = meta.get('service_port')
+                ont_id = meta.get('ont_id')
+                port_num = meta.get('port_num')
+                gpon_port = meta.get('gpon_port')
+                
+                # Undo service-port si se llegó a enviar
+                if sp and str(sp).isdigit():
+                    logger.info(f"[Rollback OLT] Deshaciendo service-port {sp}...")
+                    self.send_command(f"undo service-port {sp}", use_timing=True, delay_factor=1.5)
+                
+                # Undo ont delete si la ONT fue creada
+                if gpon_port and ont_id is not None:
+                    logger.info(f"[Rollback OLT] Eliminando ONT {ont_id} en GPON {gpon_port}...")
+                    self.enter_gpon_interface(gpon_port)
+                    self.send_command(f"ont delete {port_num} {ont_id}", use_timing=True, delay_factor=2.0)
+                    self.exit_gpon_interface()
+                logger.info("[Rollback OLT] ✓ Rollback ejecutado correctamente en Huawei OLT.")
+            except Exception as rollback_err:
+                logger.error(f"[Rollback OLT] ✗ Error durante el rollback en OLT: {rollback_err}")
+
             return {
                 'success': False,
                 'status': 'ERROR',
@@ -984,6 +1088,7 @@ class OLTInterface:
                 'commands': [cmd for cmd, _ in responses],
                 'responses': [resp for _, resp in responses],
             }
+
 
     def build_removal_commands(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Construye la secuencia de comandos Huawei para eliminar un ONT.
@@ -1232,46 +1337,61 @@ class OLTInterface:
                 'responses': [resp for _, resp in responses],
             }
     
-    def parse_ont_power(self, response: str) -> Optional[float]:
+    def parse_ont_power(self, response: str) -> Dict[str, Optional[float]]:
         """
-        Parsea respuesta de 'display ont info' para extraer potencia RX.
-        Respuesta típica Huawei:
-        
-        ONT power: RX power(dBm): -23.45
-        o
-        Rx power(dBm): -23.45
-        
-        Args:
-            response: Respuesta cruda de la OLT
-            
+        Parsea respuesta de 'display ont optical-info' para extraer potencia RX y TX.
+
+        Formatos reales Huawei OLT:
+          OLT Rx ONT optical power(dBm) : -22.30
+          ONT Tx power(dBm)             :   2.10
+          Rx optical power(dBm)         : -23.45
+          RX power(dBm)                 : -23.45
+          Rx power(dBm)                 : -23.45
+
         Returns:
-            Valor de potencia en dBm o None si no se encuentra
+            {'rx_power': float|None, 'tx_power': float|None}
         """
+        result: Dict[str, Optional[float]] = {'rx_power': None, 'tx_power': None}
         try:
-            # Intentar varios patrones
-            patterns = [
-                r'RX power\(dBm\):\s*([-\d.]+)',
-                r'Rx power\(dBm\):\s*([-\d.]+)',
-                r'RXpower\(dBm\):\s*([-\d.]+)',
-                r'(?:RX|Rx) ?power.*?\:\s*([-\d.]+)',
-                r'Current.*?power.*?([-\d.]+)',
-                r'Optical.*?power.*?([-\d.]+)',
+            rx_patterns = [
+                # Formato más común en MA5608T / MA5683T
+                r'OLT\s+Rx\s+ONT\s+optical\s+power\s*\(dBm\)\s*:\s*([-\d.]+)',
+                r'Rx\s+optical\s+power\s*\(dBm\)\s*:\s*([-\d.]+)',
+                r'RX\s*power\s*\(dBm\)\s*:\s*([-\d.]+)',
+                r'Rx\s*power\s*\(dBm\)\s*:\s*([-\d.]+)',
+                r'(?:RX|Rx)\s*power.*?:\s*([-\d.]+)',
+                # Fallback genérico
+                r'optical\s+power.*?:\s*([-\d.]+)',
             ]
-            
-            for pattern in patterns:
+            tx_patterns = [
+                r'ONT\s+Tx\s+power\s*\(dBm\)\s*:\s*([-\d.]+)',
+                r'Tx\s+optical\s+power\s*\(dBm\)\s*:\s*([-\d.]+)',
+                r'TX\s*power\s*\(dBm\)\s*:\s*([-\d.]+)',
+                r'Tx\s*power\s*\(dBm\)\s*:\s*([-\d.]+)',
+            ]
+
+            for pattern in rx_patterns:
                 match = re.search(pattern, response, re.IGNORECASE)
                 if match:
-                    power_str = match.group(1).strip()
-                    power_val = float(power_str)
-                    logger.debug(f"Potencia parseada: {power_val} dBm")
-                    return power_val
-            
-            logger.warning(f"No se encontró potencia en respuesta. Raw: {response[:200]}")
-            return None
-        
+                    result['rx_power'] = float(match.group(1).strip())
+                    logger.debug(f"RX potencia parseada: {result['rx_power']} dBm")
+                    break
+
+            for pattern in tx_patterns:
+                match = re.search(pattern, response, re.IGNORECASE)
+                if match:
+                    result['tx_power'] = float(match.group(1).strip())
+                    logger.debug(f"TX potencia parseada: {result['tx_power']} dBm")
+                    break
+
+            if result['rx_power'] is None:
+                logger.warning(f"No se encontró potencia RX en respuesta. Raw: {response[:300]}")
+
+            return result
+
         except Exception as e:
             logger.error(f"Error parseando potencia: {e}")
-            return None
+            return result
     
     def parse_ont_status(self, response: str) -> Optional[str]:
         """
@@ -1480,17 +1600,21 @@ class OLTInterface:
                 try:
                     response = self.send_command(command, delay_factor=2.0)
                     last_response = response
-                    power = self.parse_ont_power(response)
+                    power_data = self.parse_ont_power(response)
+                    rx_power = power_data['rx_power']
+                    tx_power = power_data['tx_power']
                     status = self.parse_ont_status(response)
-                    
-                    if power is not None:
+
+                    if rx_power is not None:
                         # Salir de la interfaz GPON
                         try:
                             self.send_command("quit", delay_factor=1.0)
                         except:
                             pass
                         return {
-                            'power': power,
+                            'power': rx_power,      # backward-compat alias
+                            'rx_power': rx_power,
+                            'tx_power': tx_power,
                             'status': status,
                             'response': response,
                             'gpon_port': gpon_port,

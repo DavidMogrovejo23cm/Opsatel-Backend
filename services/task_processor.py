@@ -13,7 +13,9 @@ import json
 import time
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
+# pyrefly: ignore [missing-import]
 from sqlalchemy import and_, or_
 
 from services.olt_interface import OLTInterface, OLTConnectionError, OLTCommandError
@@ -738,27 +740,54 @@ class TaskProcessor:
                         )
 
                 # Verificar potencia de forma NO-BLOQUEANTE (solo añade datos,
-                # no reemplaza el response_json completo ya guardado)
+                # no reemplaza el response_json completo ya guardado).
+                # PRIMERO intentamos usar la potencia ya leída inline durante la
+                # activación (rx_power / tx_power en el result). Si no vino (None),
+                # hacemos un check_ont_power con la sesión activa como fallback.
                 if task.action in ['add_ont', 'add_service', 'check_power']:
                     try:
-                        logger.info("Verificando potencia del ONT (no-bloqueante)...")
-                        time.sleep(2)  # Esperar a que ONT se sincronice
                         gpon_port = validated_payload.get('gpon_port', '0/0/0')
-                        ont_id = validated_payload.get('ont_id', '0')
-                        power_check = olt.check_ont_power(gpon_port, ont_id)
-                        power_val = power_check.get('power')
-                        # Añadir potencia al response_json ya guardado sin sobreescribir
+                        ont_id    = validated_payload.get('ont_id', '0')
+
+                        # ── 1. Potencia inline (ya capturada durante la activación) ──
+                        inline_rx = result.get('rx_power')
+                        inline_tx = result.get('tx_power')
+                        inline_st = result.get('ont_status')
+
+                        if inline_rx is not None:
+                            logger.info(f"[Power] Usando potencia inline del result: RX={inline_rx} dBm TX={inline_tx} dBm")
+                            power_val  = inline_rx
+                            tx_val     = inline_tx
+                            status_val = inline_st
+                        else:
+                            # ── 2. Fallback: consulta adicional a la OLT ──────────
+                            logger.info("[Power] Potencia no disponible en result, haciendo check_ont_power fallback...")
+                            time.sleep(3)  # Esperar a que ONT se sincronice
+                            power_check = olt.check_ont_power(gpon_port, ont_id)
+                            power_val   = power_check.get('rx_power') or power_check.get('power')
+                            tx_val      = power_check.get('tx_power')
+                            status_val  = power_check.get('status')
+
+                        # ── 3. Guardar en response_json ───────────────────────────
                         if isinstance(task.response_json, dict):
                             updated_json = dict(task.response_json)
-                            updated_json['potencia'] = power_val
-                            updated_json['estado_ont'] = power_check.get('status')
+                            updated_json['potencia']   = power_val      # backward-compat
+                            updated_json['rx_power']   = power_val
+                            updated_json['tx_power']   = tx_val
+                            updated_json['estado_ont'] = status_val
                             task.response_json = updated_json
                         else:
-                            task.response_json = power_check
+                            task.response_json = {
+                                'potencia':   power_val,
+                                'rx_power':   power_val,
+                                'tx_power':   tx_val,
+                                'estado_ont': status_val,
+                            }
+
+                        # ── 4. Persistir potencia en el cliente ───────────────────
                         if power_val is not None:
-                            logger.info(f"Potencia ONT: {power_val} dBm")
+                            logger.info(f"[Power] Potencia ONT: RX={power_val} dBm TX={tx_val} dBm Status={status_val}")
                             if task.action == 'add_ont' and task.cliente_id:
-                                # Actualizar potencia en cliente si se pudo leer
                                 cliente = self.db.query(models.Cliente).filter(
                                     models.Cliente.id == task.cliente_id
                                 ).first()
@@ -770,9 +799,9 @@ class TaskProcessor:
                                     except Exception:
                                         pass  # Columnas opcionales, ignorar si no existen
                         else:
-                            logger.warning("No se pudo leer potencia del ONT (no crítico, tarea ya completada)")
+                            logger.warning("[Power] No se pudo leer potencia del ONT (no crítico, tarea ya completada)")
                     except Exception as pw_err:
-                        logger.warning(f"Error en verificación de potencia (no crítico): {pw_err}")
+                        logger.warning(f"[Power] Error en verificación de potencia (no crítico): {pw_err}")
             else:
                 logger.error(f"✗ Comando falló")
                 task.status = 'failed'

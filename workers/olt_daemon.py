@@ -37,7 +37,9 @@ sys.path.insert(0, _WORKERS_DIR)
 
 from database import SessionLocal
 from services.task_processor import TaskProcessor
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
+# pyrefly: ignore [missing-import]
 from sqlalchemy import text
 
 # ============================================================================
@@ -280,6 +282,32 @@ class OLTDaemon:
                     db = SessionLocal()
                     self.processor.db = db
                     
+                    # ── Heartbeat Update en DB ──
+                    try:
+                        import observability
+                        import socket
+                        hb = db.query(observability.WorkerHeartbeat).filter(
+                            observability.WorkerHeartbeat.worker_name == "olt_daemon"
+                        ).first()
+                        if not hb:
+                            hb = observability.WorkerHeartbeat(
+                                worker_name="olt_daemon",
+                                pid=os.getpid(),
+                                hostname=socket.gethostname(),
+                                status="RUNNING"
+                            )
+                            db.add(hb)
+                        else:
+                            hb.pid = os.getpid()
+                            hb.status = "RUNNING"
+                            hb.cycle_count = self.cycle_count
+                            hb.processed_count = self.processed_count
+                            hb.error_count = self.error_count
+                            hb.last_seen = datetime.utcnow()
+                        db.commit()
+                    except Exception as hb_err:
+                        logger.warning(f"No se pudo actualizar Heartbeat: {hb_err}")
+
                     # Contar pendientes (diagnóstico)
                     import models as _m
                     pending_count = db.query(_m.OLTTask).filter(
@@ -292,6 +320,7 @@ class OLTDaemon:
                     # Procesar
                     processed = self.processor.process_pending_tasks(batch_size=BATCH_SIZE)
                     self.processed_count += processed
+
                     
                     if processed > 0:
                         logger.info(f"[Ciclo {self.cycle_count}] Procesadas {processed} tarea(s)")
