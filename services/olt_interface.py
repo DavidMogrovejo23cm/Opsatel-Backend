@@ -1344,6 +1344,11 @@ class OLTInterface:
                 resp_add = self.send_command(cmd_add, use_timing=True, delay_factor=2.5)
                 responses.append((cmd_add, resp_add))
 
+                # --- ont port native-vlan ---
+                cmd_vlan = f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {profile_id} priority 0'
+                resp_vlan = self.send_command(cmd_vlan, use_timing=True, delay_factor=2.0)
+                responses.append((cmd_vlan, resp_vlan))
+
                 # --- quit (volver a config) ---
                 self.exit_gpon_interface()
 
