@@ -324,6 +324,10 @@ class CommandSanitizer:
             validated['ont_id'] = CommandSanitizer.validate_ont_id(payload.get('ont_id', '0'))
             validated['service_port'] = CommandSanitizer.sanitize_text(payload.get('service_port', '0'), 10)
         
+        elif action == 'clean_unused_bridges':
+            # Requiere gpon_port para limpiar en ese puerto
+            validated['gpon_port'] = CommandSanitizer.validate_gpon_port(payload.get('gpon_port', '0/0/0'))
+        
         
         # Copiar campos adicionales sanitizados
         for key, value in payload.items():

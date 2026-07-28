@@ -79,7 +79,7 @@ def create_olt_task(
             raise HTTPException(status_code=404, detail=f"Cliente {cliente_id} no encontrado")
         
         # Validar acción
-        valid_actions = ['add_ont', 'add_service', 'set_breach', 'check_power', 'remove_ont', 'del_service']
+        valid_actions = ['add_ont', 'add_service', 'set_breach', 'check_power', 'remove_ont', 'del_service', 'clean_unused_bridges']
         if action not in valid_actions:
             raise HTTPException(status_code=400, detail=f"Acción inválida: {action}")
         

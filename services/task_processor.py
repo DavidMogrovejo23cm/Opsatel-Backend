@@ -564,6 +564,25 @@ class TaskProcessor:
                     result = olt.execute_removal_sequence(validated_payload)
                 elif task.action == 'set_breach':
                     result = olt.execute_set_breach_sequence(validated_payload)
+                elif task.action == 'clean_unused_bridges':
+                    # Obtener los IDs de ONT de clientes activos o en proceso en la base de datos para este puerto gpon
+                    gpon_port = validated_payload.get('gpon_port', '0/0/0')
+                    active_clients = self.db.query(models.Cliente).filter(
+                        models.Cliente.puerto == gpon_port,
+                        models.Cliente.id_port != None,
+                        models.Cliente.id_port != "",
+                        models.Cliente.estado.in_(['Activo', 'Suspendido', 'En Activación'])
+                    ).all()
+                    
+                    active_ont_ids = []
+                    for c in active_clients:
+                        try:
+                            active_ont_ids.append(int(c.id_port))
+                        except ValueError:
+                            pass
+                    
+                    logger.info(f"[CleanBridges Task] IDs activos en BD para {gpon_port}: {active_ont_ids}")
+                    result = olt.clean_unused_bridges(gpon_port, active_ont_ids)
                 
                 # Si la secuencia falló y la sesión SSH quedó rota, limpiar del caché
                 # para que la próxima tarea fuerce una reconexión limpia.
@@ -662,7 +681,7 @@ class TaskProcessor:
                 # ── Guardar result enriquecido en response_json AHORA ────────
                 # El frontend puede leer todos los datos técnicos en cuanto la
                 # tarea pasa a 'completed', sin esperar al power-check.
-                if task.action in ['add_ont', 'remove_ont', 'set_breach']:
+                if task.action in ['add_ont', 'remove_ont', 'set_breach', 'clean_unused_bridges']:
                     safe_result = {
                         k: v for k, v in result.items()
                         if k not in ('commands', 'responses')

@@ -1231,6 +1231,136 @@ class OLTInterface:
                 'responses': [resp for _, resp in responses],
             }
 
+    def clean_unused_bridges(self, gpon_port: str, active_client_ont_ids: List[int]) -> Dict[str, Any]:
+        """
+        Escanea y elimina todas las ONTs del puerto GPON indicado que aparezcan en display ont autofind all:
+        Para cada una, la activa temporalmente con descripción "borrar 1" para obtener un ID,
+        elimina cualquier service-port que tenga asociado, y finalmente la elimina de la OLT.
+        """
+        responses = []
+        deleted_ids = []
+        try:
+            if not self.is_connected:
+                raise OLTConnectionError("No hay sesión activa.")
+
+            # 1. Asegurar modo config
+            self._ensure_config_mode()
+
+            # 2. Obtener candidatos en autofind
+            autofinds = self.display_autofind_all()
+            
+            # Filtramos por el gpon_port indicado
+            candidates = [c for c in autofinds if c.get('gpon_port') == gpon_port]
+            logger.info(f"[CleanBridges] ONTs en autofind para {gpon_port}: {candidates}")
+
+            if not candidates:
+                return {
+                    'success': True,
+                    'status': 'SUCCESS',
+                    'message': f'No se encontraron ONTs en autofind en el puerto {gpon_port}.',
+                    'deleted_ids': [],
+                    'commands': [],
+                    'responses': []
+                }
+
+            # Extraer slot/port e interface
+            parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
+            port_num = parts[2] if len(parts) >= 3 else "0"
+            try:
+                port_num_int = int(port_num)
+            except ValueError:
+                port_num_int = 0
+
+            profile_id = str(100 + port_num_int)
+            srvprofile_id = profile_id
+
+            for cand in candidates:
+                mac = cand.get('mac') or cand.get('sn_raw') or cand.get('sn')
+                if not mac:
+                    continue
+
+                # 3. Obtener ONT IDs ya registrados para este puerto para evitar colisiones
+                registered_ids = self.get_existing_ont_ids(gpon_port)
+                
+                # Encontrar el primer ID libre (0-127)
+                ont_id = None
+                for i in range(128):
+                    if i not in registered_ids:
+                        ont_id = i
+                        break
+
+                if ont_id is None:
+                    logger.error(f"[CleanBridges] No hay ONT IDs libres para activar/borrar {mac} en {gpon_port}")
+                    continue
+
+                logger.info(f"[CleanBridges] Activando temporalmente ONT {mac} con ID {ont_id} en {gpon_port} para proceder al borrado...")
+
+                # 4. Entrar a interfaz GPON y agregar la ONT
+                self.enter_gpon_interface(gpon_port)
+                cmd_add = f'ont add {port_num} {ont_id} sn-auth "{mac}" omci ont-lineprofile-id {profile_id} ont-srvprofile-id {srvprofile_id} desc "borrar 1"'
+                resp_add = self.send_command(cmd_add, use_timing=True, delay_factor=2.5)
+                responses.append((cmd_add, resp_add))
+                self.exit_gpon_interface()
+
+                # Esperar 2 segundos a que registre
+                time.sleep(2)
+
+                # 5. Buscar service-ports creados para esta ONT y eliminarlos
+                cmd_sps = f"display service-port port {gpon_port} ont {ont_id}"
+                resp_sps = self.send_command(cmd_sps, use_timing=True, delay_factor=2.0)
+                responses.append((cmd_sps, resp_sps))
+
+                sp_to_delete = []
+                for line in resp_sps.splitlines():
+                    line_strip = line.strip()
+                    if not line_strip:
+                        continue
+                    # Regex para extraer el índice del service port
+                    match_sp = re.match(r'^(\d+)\s+.*?\s+gpon\s+\S+\s+ont\s+(\d+)\b', line_strip, re.IGNORECASE)
+                    if match_sp:
+                        sp_index = int(match_sp.group(1))
+                        sp_to_delete.append(sp_index)
+
+                for sp_index in sp_to_delete:
+                    cmd_undo_sp = f"undo service-port {sp_index}"
+                    logger.info(f"[CleanBridges] Borrando service-port {sp_index} de ONT temporal {ont_id}")
+                    resp_undo = self.send_command(cmd_undo_sp, use_timing=True, delay_factor=1.5)
+                    responses.append((cmd_undo_sp, resp_undo))
+
+                # 6. Entrar a interfaz GPON y borrar la ONT
+                self.enter_gpon_interface(gpon_port)
+                cmd_del = f"ont delete {port_num} {ont_id}"
+                logger.info(f"[CleanBridges] Borrando ONT temporal {ont_id} de {gpon_port}")
+                resp_del = self.send_command(cmd_del, use_timing=True, delay_factor=2.0)
+                responses.append((cmd_del, resp_del))
+                self.exit_gpon_interface()
+
+                deleted_ids.append(ont_id)
+
+            return {
+                'success': True,
+                'status': 'SUCCESS',
+                'message': f"Limpieza completada. Se activaron y eliminaron {len(deleted_ids)} ONTs/Bridges de la OLT.",
+                'deleted_ids': deleted_ids,
+                'commands': [c for c, _ in responses],
+                'responses': [r for _, r in responses]
+            }
+
+        except Exception as e:
+            logger.error(f"Error en clean_unused_bridges: {e}", exc_info=True)
+            # Intentar salir de la interfaz gpon si nos quedamos colgados
+            try:
+                self.exit_gpon_interface()
+            except:
+                pass
+            return {
+                'success': False,
+                'status': 'ERROR',
+                'error': str(e),
+                'commands': [c for c, _ in responses],
+                'responses': [r for _, r in responses]
+            }
+
     def build_set_breach_commands(self, payload: Dict[str, Any]) -> List[str]:
         """Construye la secuencia de comandos Huawei para cambiar la VLAN nativa (Bridge)."""
         gpon_port = payload.get('gpon_port', '0/0/0')
