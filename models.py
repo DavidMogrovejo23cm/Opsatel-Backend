@@ -1,4 +1,6 @@
+# pyrefly: ignore [missing-import]
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Numeric, Boolean, Text, JSON, BigInteger, Enum
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime
@@ -445,6 +447,13 @@ class OLTConfig(Base):
     
     active = Column(Boolean, default=True, index=True)
     nodo_asociado = Column(String(100), index=True)
+    
+    # ── MikroTik Integration Fields ─────────────────────────
+    mikrotik_host = Column(String(50), nullable=True)
+    mikrotik_port = Column(Integer, default=8728)
+    mikrotik_username = Column(String(100), nullable=True)
+    mikrotik_password = Column(String(100), nullable=True)
+    # ────────────────────────────────────────────────────────
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

@@ -19,13 +19,18 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException, Query
+# pyrefly: ignore [missing-import]
 from pydantic import BaseModel
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
+# pyrefly: ignore [missing-import]
 from sqlalchemy import and_, or_, desc
 
 from database import get_db
 import models
+# pyrefly: ignore [missing-import]
 from services.command_sanitizer import CommandSanitizer, CommandSanitizationError
 from routes.auth import require_role, get_current_user
 from services.olt_interface import OLTInterface
@@ -719,3 +724,179 @@ def test_olt_config_connection(
         }
 
 
+# ============================================================================
+# MIKROTIK CONFIG
+# ============================================================================
+
+class MikroTikConfigUpdate(BaseModel):
+    mikrotik_host: Optional[str] = None
+    mikrotik_port: Optional[int] = 8728
+    mikrotik_username: Optional[str] = None
+    mikrotik_password: Optional[str] = None
+
+
+@router.put("/config/{config_id}/mikrotik")
+def update_mikrotik_config(
+    config_id: int,
+    data: MikroTikConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role(["administrador"]))
+):
+    """Configura las credenciales de MikroTik para un nodo OLT"""
+    config = db.query(models.OLTConfig).filter(models.OLTConfig.id == config_id).first()
+    if not config:
+        raise HTTPException(status_code=404, detail="OLT config no encontrada")
+
+    if data.mikrotik_host is not None:
+        config.mikrotik_host = data.mikrotik_host
+    if data.mikrotik_port is not None:
+        config.mikrotik_port = data.mikrotik_port
+    if data.mikrotik_username is not None:
+        config.mikrotik_username = data.mikrotik_username
+    if data.mikrotik_password is not None:
+        config.mikrotik_password = data.mikrotik_password
+
+    config.updated_by = current_user.username
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"MikroTik configurado para OLT '{config.nombre}'",
+        "mikrotik_host": config.mikrotik_host,
+        "mikrotik_port": config.mikrotik_port
+    }
+
+
+@router.post("/config/{config_id}/mikrotik/test")
+def test_mikrotik_connection(
+    config_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role(["administrador"]))
+):
+    """Prueba la conexión a MikroTik para un nodo OLT"""
+    from network.adapters.mikrotik import MikroTikAdapter, MikroTikAdapterError
+
+    config = db.query(models.OLTConfig).filter(models.OLTConfig.id == config_id).first()
+    if not config:
+        raise HTTPException(status_code=404, detail="OLT config no encontrada")
+    if not config.mikrotik_host:
+        raise HTTPException(status_code=400, detail="No hay MikroTik configurado para este nodo")
+
+    try:
+        with MikroTikAdapter(
+            host=config.mikrotik_host,
+            username=config.mikrotik_username,
+            password=config.mikrotik_password,
+            port=config.mikrotik_port or 8728,
+            timeout=8,
+            max_retries=1
+        ) as mt:
+            sysres = mt.get_system_resource()
+            return {
+                "success": True,
+                "message": f"Conexión exitosa a MikroTik {config.mikrotik_host}",
+                "version": sysres.get("version", ""),
+                "board": sysres.get("board-name", ""),
+                "uptime": sysres.get("uptime", "")
+            }
+    except MikroTikAdapterError as e:
+        return {"success": False, "message": str(e)}
+    except Exception as e:
+        return {"success": False, "message": f"Error inesperado: {str(e)}"}
+
+
+# ============================================================================
+# VER POTENCIA ONT
+# ============================================================================
+
+@router.get("/clientes/{cliente_id}/potencia")
+def ver_potencia_ont(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role(["administrador", "soporte", "tecnico"]))
+):
+    """
+    Lee en tiempo real la potencia óptica de la ONT del cliente desde la OLT Huawei.
+    Devuelve RX, TX, OLT RX, OLT TX, temperatura, voltaje, corriente, estado y tiempo online.
+    """
+    import observability
+    # pyrefly: ignore [missing-import]
+    from sqlalchemy import or_
+
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    gpon_port = getattr(cliente, "puerto", None)
+    ont_id_str = getattr(cliente, "id_port", None)
+
+    if not gpon_port or not ont_id_str:
+        raise HTTPException(status_code=400, detail="El cliente no tiene puerto GPON asignado")
+
+    try:
+        ont_id = int(ont_id_str)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"ONT ID inválido: {ont_id_str}")
+
+    # Buscar OLT activa para el nodo del cliente
+    nodo = getattr(cliente, "nodo", None)
+    if nodo:
+        olt_config = db.query(models.OLTConfig).filter(
+            models.OLTConfig.active == True,
+            or_(
+                models.OLTConfig.nodo_asociado == nodo,
+                models.OLTConfig.nodo_asociado == None,
+                models.OLTConfig.nodo_asociado == ""
+            )
+        ).first()
+    else:
+        olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
+
+    if not olt_config:
+        raise HTTPException(status_code=503, detail="No hay OLT activa configurada para este nodo")
+
+    try:
+        olt = OLTInterface(
+            host=olt_config.host,
+            port=olt_config.port or 23,
+            username=olt_config.username,
+            password=olt_config.password,
+            timeout=15,
+            max_retries=1
+        )
+
+        connected = olt.connect()
+        if not connected:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a la OLT")
+
+        try:
+            power_data = olt.check_ont_power(gpon_port, ont_id)
+        finally:
+            olt.disconnect()
+
+        # Auditoría
+        import observability as obs
+        obs.log_audit_event_async(
+            accion="VER_POTENCIA_ONT",
+            modulo="olt_tasks",
+            usuario=current_user.username,
+            entidad_tipo="Cliente",
+            entidad_id=str(cliente_id),
+            detalles=f"Potencia consultada: Puerto {gpon_port} ONT {ont_id} | RX={power_data.get('rx_power','N/A')} dBm"
+        )
+
+        return {
+            "success": True,
+            "cliente_id": cliente_id,
+            "nombre": cliente.nombre,
+            "gpon_port": gpon_port,
+            "ont_id": ont_id,
+            "olt": olt_config.nombre,
+            "potencia": power_data
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error consultando potencia ONT para cliente {cliente_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error consultando potencia: {str(e)}")
