@@ -1,5 +1,5 @@
 from database import SessionLocal
-import models
+import models_olt_extension as models
 
 def setup_mikrotik_credentials():
     db = SessionLocal()

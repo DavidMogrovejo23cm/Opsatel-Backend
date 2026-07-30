@@ -59,6 +59,12 @@ class OLTConfig(Base):
     
     active = Column(Boolean, default=True, index=True)
     nodo_asociado = Column(String(100), index=True)  # BAÑOS, SAYAUSI, etc.
+
+    # Credenciales MikroTik (RouterOS API) asociado a este nodo
+    mikrotik_host     = Column(String(50),  nullable=True)
+    mikrotik_port     = Column(Integer,     nullable=True, default=8728)
+    mikrotik_username = Column(String(100), nullable=True)
+    mikrotik_password = Column(String(100), nullable=True)
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -67,6 +73,8 @@ class OLTConfig(Base):
     
     # Relaciones
     tasks = relationship("OLTTask", back_populates="olt_config")
+
+
 
 
 # ============================================================================

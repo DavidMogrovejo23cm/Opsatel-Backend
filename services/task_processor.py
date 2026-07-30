@@ -21,6 +21,7 @@ from sqlalchemy import and_, or_
 from services.olt_interface import OLTInterface, OLTConnectionError, OLTCommandError
 from services.command_sanitizer import CommandSanitizer, CommandSanitizationError
 import models
+import models_olt_extension  # OLTConfig (con campos MikroTik)
 
 logger = logging.getLogger(__name__)
 
@@ -805,6 +806,118 @@ class TaskProcessor:
                             logger.warning("[Power] No se pudo leer potencia del ONT (no crítico, tarea ya completada)")
                     except Exception as pw_err:
                         logger.warning(f"[Power] Error en verificación de potencia (no crítico): {pw_err}")
+
+                # ── PASO MIKROTIK: Lease DHCP → Estático ──────────────────────
+                # Se ejecuta SÓLO si add_ont fue exitoso. Best-effort: nunca falla la tarea.
+                if task.action == 'add_ont' and success and task.cliente_id:
+                    try:
+                        from network.adapters.mikrotik import MikroTikAdapter, MikroTikAdapterError
+                        import time as _time
+
+                        # Cargar config de OLT (que contiene datos MikroTik)
+                        olt_cfg = self.db.query(models_olt_extension.OLTConfig).filter(
+                            models_olt_extension.OLTConfig.id == task.olt_id
+                        ).first()
+
+                        if not olt_cfg or not olt_cfg.mikrotik_host:
+                            logger.info("[MikroTik] No hay MikroTik configurado para este nodo. Omitiendo.")
+                        else:
+                            # Cargar cliente actualizado con los datos ya persistidos
+                            mt_cliente = self.db.query(models.Cliente).filter(
+                                models.Cliente.id == task.cliente_id
+                            ).first()
+
+                            # MAC usada para la activación (normalizada)
+                            mt_mac = validated_payload.get('mac', '')
+
+                            if mt_cliente and mt_mac:
+                                comment = f"{str(mt_cliente.id).zfill(6)} - {mt_cliente.nombre}"
+                                dhcp_server = f"dhcp-{mt_cliente.nodo.lower()}" if mt_cliente.nodo else None
+
+                                logger.info(f"[MikroTik] Iniciando aprovisionamiento DHCP → Estático para MAC {mt_mac} server='{dhcp_server or 'all'}'")
+
+                                with MikroTikAdapter(
+                                    host=olt_cfg.mikrotik_host,
+                                    username=olt_cfg.mikrotik_username,
+                                    password=olt_cfg.mikrotik_password,
+                                    port=olt_cfg.mikrotik_port or 8728
+                                ) as mt:
+                                    lease = None
+                                    clean_mac = mt_mac.replace(':', '').replace('-', '').upper()
+
+                                    # Polling: hasta 30s (15 intentos x 2s)
+                                    for poll_attempt in range(1, 16):
+                                        logger.info(f"[MikroTik] Intento {poll_attempt}/15 buscando lease dinámico...")
+                                        dynamic_leases = mt.get_dynamic_leases(server=dhcp_server)
+
+                                        # Buscar por MAC (primera prioridad)
+                                        for dl in dynamic_leases:
+                                            dl_mac = dl.get('mac-address', '').replace(':', '').replace('-', '').upper()
+                                            if dl_mac == clean_mac:
+                                                lease = dl
+                                                break
+
+                                        # Buscar por Client ID (segunda prioridad)
+                                        if not lease:
+                                            for dl in dynamic_leases:
+                                                if dl.get('client-id') == str(mt_cliente.id):
+                                                    lease = dl
+                                                    break
+
+                                        # Buscar por Hostname exacto (tercera prioridad)
+                                        if not lease and mt_cliente.nombre:
+                                            clean_host = mt_cliente.nombre.lower().strip()
+                                            for dl in dynamic_leases:
+                                                if dl.get('host-name', '').lower().strip() == clean_host:
+                                                    lease = dl
+                                                    break
+
+                                        if lease:
+                                            _time.sleep(1)  # Espera para que RouterOS pueble todos los campos
+                                            break
+
+                                        _time.sleep(2)
+
+                                    if not lease:
+                                        logger.warning(f"[MikroTik] No se encontró lease dinámico para MAC {mt_mac} tras 30s. Omitiendo.")
+                                    else:
+                                        lease_id = lease['id']
+                                        lease_ip = lease.get('address', '')
+                                        lease_server = lease.get('server', 'unknown')
+                                        logger.info(f"[MikroTik] Lease dinámico encontrado: {lease_ip} (server={lease_server})")
+
+                                        # Convertir a estático
+                                        mt.make_lease_static(lease_id)
+                                        mt.update_lease_comment(lease_id, comment)
+
+                                        # Asignar IP desde inventario BD si existe una libre para el nodo
+                                        import inventory_models
+                                        pool_rec = self.db.query(inventory_models.InventoryIpPool).filter(
+                                            inventory_models.InventoryIpPool.nodo == (mt_cliente.nodo or ""),
+                                            inventory_models.InventoryIpPool.estado == "LIBRE"
+                                        ).order_by(inventory_models.InventoryIpPool.id.asc()).first()
+
+                                        if pool_rec:
+                                            target_ip = pool_rec.ip_address
+                                            pool_rec.estado = "OCUPADO"
+                                            pool_rec.cliente_id = mt_cliente.id
+                                        else:
+                                            target_ip = lease_ip
+
+                                        # Si la IP del pool es distinta, actualizar la dirección del lease
+                                        if target_ip and target_ip != lease_ip:
+                                            mt.update_lease_ip(lease_id, target_ip)
+
+                                        # Persistir IP en el cliente
+                                        mt_cliente.ip = target_ip
+                                        self.db.commit()
+
+                                        logger.info(f"[MikroTik] ✓ Lease {lease_ip} → Estático. IP final: {target_ip}. Comentario: '{comment}'")
+
+                    except Exception as mt_err:
+                        logger.warning(f"[MikroTik] Error en paso MikroTik (best-effort, no falla la tarea): {mt_err}")
+                # ── FIN PASO MIKROTIK ─────────────────────────────────────────
+
             else:
                 logger.error(f"✗ Comando falló")
                 task.status = 'failed'
@@ -813,6 +926,7 @@ class TaskProcessor:
             # Finalizar — commit único que cierra la transacción
             task.completed_at = datetime.now()
             self.db.commit()
+
             
             # Log final
             logger.info(f"Tarea {task_id} completada: status={task.status}")
