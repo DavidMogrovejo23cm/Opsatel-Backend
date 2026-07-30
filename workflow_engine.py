@@ -228,10 +228,15 @@ class WorkflowEngine:
     def _run_mikrotik_step(self, cliente, mac: str, olt_id: int, _add_timeline, correlation_id: str) -> Dict[str, Any]:
         """
         Paso MikroTik del workflow ACTIVAR_CLIENTE.
-        Busca el DHCP Lease del cliente (por MAC > Client ID > Hostname),
-        lo convierte a estático y le asigna el comentario 'CODIGO - NOMBRE'.
+        1. Determina pool/VLAN/servidor DHCP según el puerto GPON/Nodo del cliente.
+        2. Realiza polling en MikroTik consultando leases dinámicos hasta encontrar el del cliente.
+        3. Aplica matching robusto (MAC > Client ID > Hostname).
+        4. Convierte a estático (make-static).
+        5. Modifica comentario a 'CODIGO - NOMBRE'.
+        6. Persiste la IP e información en la base de datos local (InventoryIpPool / cliente.ip).
         """
-        _add_timeline("MIKROTIK_PROVISIONING", "PENDING", f"Buscando DHCP Lease en MikroTik para MAC {mac}...")
+        _add_timeline("MIKROTIK_PROVISIONING", "PENDING", f"Iniciando flujo de aprovisionamiento MikroTik para MAC {mac}...")
+        
         try:
             # Obtener configuración MikroTik del OLT Config
             olt_cfg = self.db.query(models.OLTConfig).filter(models.OLTConfig.id == olt_id).first()
@@ -239,44 +244,117 @@ class WorkflowEngine:
                 _add_timeline("MIKROTIK_PROVISIONING", "SKIPPED", "No hay MikroTik configurado para este nodo")
                 return {"success": False, "reason": "no_config"}
 
-            comment = f"{str(cliente.codigo).zfill(6)} - {cliente.nombre}"
+            # Intentar usar IP reservada/preexistente en BD si ya existe para este cliente
+            existing_ip_rec = self.db.query(inventory_models.InventoryIpPool).filter(
+                inventory_models.InventoryIpPool.cliente_id == cliente.id,
+                inventory_models.InventoryIpPool.estado == "OCUPADO"
+            ).first()
 
+            target_ip = existing_ip_rec.ip_address if existing_ip_rec else None
+            if target_ip:
+                _add_timeline("MIKROTIK_PROVISIONING", "INFO", f"El cliente ya cuenta con la IP {target_ip} reservada en inventario BD.")
+
+            comment = f"{str(cliente.id).zfill(6)} - {cliente.nombre}"
+
+            # Conectar a MikroTik
             with MikroTikAdapter(
                 host=olt_cfg.mikrotik_host,
                 username=olt_cfg.mikrotik_username,
                 password=olt_cfg.mikrotik_password,
                 port=olt_cfg.mikrotik_port or 8728
             ) as mt:
-                # Estrategia de búsqueda: MAC → Client ID → Hostname
-                lease = mt.find_dhcp_lease_by_mac(mac)
-                search_method = "MAC"
+                
+                lease = None
+                poll_interval = 2
+                max_polls = 15  # 30 segundos en total
+                search_method = ""
+                
+                # Determinamos el Servidor DHCP según el Nodo del cliente
+                dhcp_server = f"dhcp-{cliente.nodo.lower()}" if cliente.nodo else None
+                _add_timeline("MIKROTIK_PROVISIONING", "INFO", f"Esperando obtención de IP por DHCP en server '{dhcp_server or 'default'}' (iniciando polling)...")
+                
+                for attempt in range(1, max_polls + 1):
+                    # Consultar leases dinámicos filtrando por servidor si aplica
+                    dynamic_leases = mt.get_dynamic_leases(server=dhcp_server)
+                    
+                    # 1. Buscar por MAC
+                    clean_mac = mac.replace(':', '').replace('-', '').upper()
+                    for dl in dynamic_leases:
+                        dl_mac = dl.get('mac-address', '').replace(':', '').replace('-', '').upper()
+                        if dl_mac == clean_mac:
+                            lease = dl
+                            search_method = "MAC"
+                            break
+                    
+                    # 2. Buscar por Client ID
+                    if not lease and cliente.id:
+                        client_id_str = str(cliente.id)
+                        for dl in dynamic_leases:
+                            if dl.get('client-id') == client_id_str:
+                                lease = dl
+                                search_method = "Client ID"
+                                break
+                    
+                    # 3. Buscar por Hostname (Match exacto para evitar colisiones peligrosas)
+                    if not lease and cliente.nombre:
+                        clean_host = cliente.nombre.lower().strip()
+                        for dl in dynamic_leases:
+                            l_host = dl.get('host-name', '').lower().strip()
+                            if l_host == clean_host:
+                                lease = dl
+                                search_method = "Hostname"
+                                break
 
-                if not lease and cliente.codigo:
-                    lease = mt.find_dhcp_lease_by_client_id(str(cliente.codigo))
-                    search_method = "Client ID"
-
-                if not lease and cliente.nombre:
-                    lease = mt.find_dhcp_lease_by_hostname(cliente.nombre)
-                    search_method = "Hostname"
+                    if lease:
+                        # Pequeña pausa de seguridad (1s) para que RouterOS termine de poblar todos los campos del lease
+                        time.sleep(1)
+                        break
+                    
+                    time.sleep(poll_interval)
 
                 if not lease:
                     _add_timeline("MIKROTIK_PROVISIONING", "WARNING",
-                                  f"No se encontró DHCP Lease para MAC {mac}. Cliente puede estar sin IP aún.")
+                                  f"No se encontró DHCP Lease dinámico activo para MAC {mac} en el server '{dhcp_server or 'default'}' tras 30s.")
                     return {"success": False, "reason": "lease_not_found"}
 
                 lease_id = lease['id']
                 lease_ip = lease.get('address', '')
-                lease_type = lease.get('type', '')
+                lease_server = lease.get('server', 'default')
 
-                # Solo hacer make-static si es dinámica
-                if lease_type != 'static':
-                    mt.make_lease_static(lease_id)
+                _add_timeline("MIKROTIK_PROVISIONING", "INFO", f"Lease dinámico detectado: {lease_ip} ({search_method})")
 
-                # Actualizar comentario siempre
+                # Asignación ordenada de IPs secuencial en base a inventario
+                if not target_ip:
+                    # Validar si existe esta IP en el pool de nuestro inventario BD
+                    pool_ip_rec = self.db.query(inventory_models.InventoryIpPool).filter(
+                        inventory_models.InventoryIpPool.nodo == (cliente.nodo or "BAÑOS"),
+                        inventory_models.InventoryIpPool.estado == "LIBRE"
+                    ).order_by(inventory_models.InventoryIpPool.id.asc()).first()
+
+                    if pool_ip_rec:
+                        # Ocupar esta IP en la base de datos
+                        pool_ip_rec.estado = "OCUPADO"
+                        pool_ip_rec.cliente_id = cliente.id
+                        target_ip = pool_ip_rec.ip_address
+                        _add_timeline("MIKROTIK_PROVISIONING", "INFO", f"IP secuencial asignada de inventario: {target_ip}")
+                    else:
+                        # Si no hay pool, tomamos la que entregó DHCP
+                        target_ip = lease_ip
+
+                # Convertir a estático en MikroTik
+                mt.make_lease_static(lease_id)
                 mt.update_lease_comment(lease_id, comment)
+                
+                # Si la IP reservada es distinta de la IP dinámica actual, actualizamos la dirección IP del lease
+                if target_ip != lease_ip:
+                    mt.update_lease_ip(lease_id, target_ip)
+
+                # Persistir IP en el registro de cliente
+                cliente.ip = target_ip
+                self.db.commit()
 
                 _add_timeline("MIKROTIK_PROVISIONING", "SUCCESS",
-                              f"DHCP Lease {lease_ip} → Estático. Comentario: '{comment}' (buscado por {search_method})")
+                              f"DHCP Lease {target_ip} convertido a Estático. Server: {lease_server}. Comentario: '{comment}'")
 
                 observability.log_audit_event_async(
                     accion="MIKROTIK_LEASE_STATIC",
@@ -284,11 +362,17 @@ class WorkflowEngine:
                     usuario="WORKFLOW_ENGINE",
                     entidad_tipo="Cliente",
                     entidad_id=str(cliente.id),
-                    detalles=f"Lease {lease_ip} convertida a estática. Comentario: {comment}",
+                    detalles=f"Lease {target_ip} convertida a estática. Server: {lease_server}. Comentario: {comment}",
                     correlation_id=correlation_id
                 )
 
-                return {"success": True, "ip": lease_ip, "comment": comment, "method": search_method}
+                return {
+                    "success": True,
+                    "ip": target_ip,
+                    "comment": comment,
+                    "method": search_method,
+                    "server": lease_server
+                }
 
         except MikroTikAdapterError as e:
             _add_timeline("MIKROTIK_PROVISIONING", "WARNING", f"Error MikroTik (no crítico): {e}")
@@ -298,6 +382,7 @@ class WorkflowEngine:
             _add_timeline("MIKROTIK_PROVISIONING", "WARNING", f"Error inesperado MikroTik: {e}")
             logger.warning(f"[WorkflowEngine] MikroTik unexpected error: {e}")
             return {"success": False, "reason": str(e)}
+
 
     def _execute_rollback(self, olt_id: int, gpon_port: str, ont_id: Optional[int], service_port: Optional[int], olt: Optional[OLTInterface], _add_timeline, mac: str = ""):
         """Ejecuta deshacer cambios en OLT, MikroTik y libera recursos en el inventario"""

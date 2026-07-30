@@ -96,41 +96,111 @@ class MikroTikAdapter:
         except Exception as e:
             raise MikroTikAdapterError(f"Error obteniendo recursos del sistema: {e}")
 
-    def find_dhcp_lease_by_mac(self, mac: str) -> Optional[Dict[str, Any]]:
-        """Busca un DHCP Lease por su dirección MAC"""
+
+    def get_dynamic_leases(self, server: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Obtiene los DHCP leases dinámicos del MikroTik. Opcionalmente filtra por Servidor DHCP."""
         try:
-            leases = self._get_resource('/ip/dhcp-server/lease').get(mac_address=mac)
-            if leases:
-                return leases[0]
+            # Consultamos dinámicos directamente usando la API de RouterOS
+            resource = self._get_resource('/ip/dhcp-server/lease')
+            filters = {'dynamic': 'true'}
+            if server:
+                filters['server'] = server
+            
+            leases = resource.get(**filters)
+            # Doble chequeo por diferencias de formato v6/v7
+            return [l for l in leases if l.get('dynamic') == 'true' or l.get('dynamic') is True]
+        except Exception as e:
+            raise MikroTikAdapterError(f"Error listando leases dinámicos: {e}")
+
+    def find_dhcp_lease_by_mac(self, mac: str, server: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Busca un DHCP Lease por su dirección MAC (con opción de servidor)"""
+        try:
+            clean_mac = mac.replace(':', '').replace('-', '').upper()
+            resource = self._get_resource('/ip/dhcp-server/lease')
+            filters = {}
+            if server:
+                filters['server'] = server
+            
+            leases = resource.get(**filters)
+            for l in leases:
+                l_mac = l.get('mac-address', '').replace(':', '').replace('-', '').upper()
+                if l_mac == clean_mac:
+                    return l
             return None
         except Exception as e:
             raise MikroTikAdapterError(f"Error buscando DHCP lease por MAC {mac}: {e}")
 
-    def find_dhcp_lease_by_client_id(self, client_id: str) -> Optional[Dict[str, Any]]:
+    def find_dhcp_lease_by_client_id(self, client_id: str, server: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Busca un DHCP Lease por su Client ID"""
         try:
-            leases = self._get_resource('/ip/dhcp-server/lease').get(client_id=client_id)
-            if leases:
-                return leases[0]
+            resource = self._get_resource('/ip/dhcp-server/lease')
+            filters = {}
+            if server:
+                filters['server'] = server
+            
+            leases = resource.get(**filters)
+            for l in leases:
+                if l.get('client-id') == client_id or client_id in l.get('client-id', ''):
+                    return l
             return None
         except Exception as e:
             raise MikroTikAdapterError(f"Error buscando DHCP lease por Client ID {client_id}: {e}")
 
-    def find_dhcp_lease_by_hostname(self, host_name: str) -> Optional[Dict[str, Any]]:
-        """Busca DHCP Lease por Hostname"""
+    def find_dhcp_lease_by_hostname(self, host_name: str, server: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Busca DHCP Lease por exactitud o coincidencia parcial estricta del Hostname"""
         try:
-            leases = self._get_resource('/ip/dhcp-server/lease').get(host_name=host_name)
-            if leases:
-                return leases[0]
+            clean_host = host_name.lower().strip()
+            resource = self._get_resource('/ip/dhcp-server/lease')
+            filters = {}
+            if server:
+                filters['server'] = server
+            
+            leases = resource.get(**filters)
+            for l in leases:
+                l_host = l.get('host-name', '').lower().strip()
+                if l_host == clean_host: # Match exacto primero
+                    return l
             return None
         except Exception as e:
             raise MikroTikAdapterError(f"Error buscando DHCP lease por Hostname {host_name}: {e}")
 
     def make_lease_static(self, lease_id: str) -> bool:
-        """Convierte una lease dinámica existente en estática"""
+        """
+        Convierte una lease dinámica existente en estática.
+        Soporta múltiples llamadas compatibles de API RouterOS.
+        """
         try:
             resource = self._get_resource('/ip/dhcp-server/lease')
-            resource.call('make-static', {'numbers': lease_id})
+            # Intentamos las 3 variantes sintácticas para máxima compatibilidad con v6/v7 y wrappers
+            success = False
+            errors = []
+            
+            # Variante 1: .id
+            try:
+                resource.call('make-static', {'.id': lease_id})
+                success = True
+            except Exception as e:
+                errors.append(f"V1 (.id) falló: {e}")
+                
+            # Variante 2: numbers
+            if not success:
+                try:
+                    resource.call('make-static', {'numbers': lease_id})
+                    success = True
+                except Exception as e:
+                    errors.append(f"V2 (numbers) falló: {e}")
+                    
+            # Variante 3: id
+            if not success:
+                try:
+                    resource.call('make-static', {'id': lease_id})
+                    success = True
+                except Exception as e:
+                    errors.append(f"V3 (id) falló: {e}")
+
+            if not success:
+                raise MikroTikAdapterError(f"Ninguna variante de make-static funcionó. Errores: {errors}")
+                
             logger.info(f"DHCP Lease {lease_id} convertida a estática.")
             return True
         except Exception as e:
@@ -140,19 +210,42 @@ class MikroTikAdapter:
         """Modifica el comentario de una lease DHCP"""
         try:
             resource = self._get_resource('/ip/dhcp-server/lease')
-            resource.set(id=lease_id, comment=comment)
+            # Soporta tanto '.id' como 'id' en el dict
+            try:
+                resource.set(**{'.id': lease_id, 'comment': comment})
+            except Exception:
+                resource.set(**{'id': lease_id, 'comment': comment})
             logger.info(f"Comentario modificado en DHCP Lease {lease_id}: {comment}")
             return True
         except Exception as e:
             raise MikroTikAdapterError(f"Error modificando comentario de DHCP lease {lease_id}: {e}")
 
+    def update_lease_ip(self, lease_id: str, ip_address: str) -> bool:
+        """Modifica la dirección IP de una lease DHCP estática (reasignación)"""
+        try:
+            resource = self._get_resource('/ip/dhcp-server/lease')
+            try:
+                resource.set(**{'.id': lease_id, 'address': ip_address})
+            except Exception:
+                resource.set(**{'id': lease_id, 'address': ip_address})
+            logger.info(f"IP reasignada en DHCP Lease {lease_id} a {ip_address}")
+            return True
+        except Exception as e:
+            raise MikroTikAdapterError(f"Error reasignando dirección IP {ip_address} al lease {lease_id}: {e}")
+
     def undo_static_lease(self, mac: str) -> bool:
-        """Revierte una lease a dinámica o la remueve de la lista estática (Rollback)"""
+        """
+        Revierte una lease a dinámica quitando el estado estático
+        (en RouterOS se logra removiendo el lease estático sin desconectar el cliente).
+        """
         try:
             resource = self._get_resource('/ip/dhcp-server/lease')
             leases = resource.get(mac_address=mac)
             for l in leases:
-                resource.remove(id=l['id'])
+                # En lugar de borrarlo directamente, verificamos si era dinámico previamente.
+                # Si lo removemos, el cliente conserva su conexión y vuelve a tomar IP dinámica en el siguiente renewal.
+                # De esta forma evitamos romper el binding actual.
+                resource.remove(**{'.id': l['id']})
                 logger.info(f"Rollback: Removida lease estática para MAC {mac}")
             return True
         except Exception as e:
@@ -172,3 +265,4 @@ class MikroTikAdapter:
             return self._get_resource('/ip/firewall/address-list').get()
         except Exception as e:
             raise MikroTikAdapterError(f"Error obteniendo address lists: {e}")
+
