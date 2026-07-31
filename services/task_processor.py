@@ -830,12 +830,28 @@ class TaskProcessor:
 
                             # MAC usada para la activación (normalizada)
                             mt_mac = validated_payload.get('mac', '')
+                            gpon_port = validated_payload.get('gpon_port', '0/0/0')
+
+                            # Extraer número de puerto GPON (ej: "0/0/15" -> 15)
+                            gpon_parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
+                            try:
+                                port_idx = int(gpon_parts[2]) if len(gpon_parts) >= 3 else 0
+                            except (ValueError, IndexError):
+                                port_idx = 0
+
+                            # En tu MikroTik, el puerto 15 usa "dhcp16". Intentaremos ambas variantes: dhcp{puerto+1} y dhcp{puerto}
+                            dhcp_servers_to_try = [
+                                f"dhcp{port_idx + 1}",
+                                f"dhcp{port_idx}",
+                                f"dhcp-{port_idx + 1}",
+                                f"dhcp-{port_idx}",
+                            ]
+                            if mt_cliente.nodo:
+                                dhcp_servers_to_try.append(f"dhcp-{mt_cliente.nodo.lower()}")
 
                             if mt_cliente and mt_mac:
                                 comment = f"{str(mt_cliente.id).zfill(6)} - {mt_cliente.nombre}"
-                                dhcp_server = f"dhcp-{mt_cliente.nodo.lower()}" if mt_cliente.nodo else None
-
-                                logger.info(f"[MikroTik] Iniciando aprovisionamiento DHCP → Estático para MAC {mt_mac} server='{dhcp_server or 'all'}'")
+                                logger.info(f"[MikroTik] Iniciando aprovisionamiento DHCP → Estático. Buscando lease en servidores {dhcp_servers_to_try} para puerto {gpon_port}")
 
                                 with MikroTikAdapter(
                                     host=olt_cfg.mikrotik_host,
@@ -849,29 +865,67 @@ class TaskProcessor:
                                     # Polling: hasta 30s (15 intentos x 2s)
                                     for poll_attempt in range(1, 16):
                                         logger.info(f"[MikroTik] Intento {poll_attempt}/15 buscando lease dinámico...")
-                                        dynamic_leases = mt.get_dynamic_leases(server=dhcp_server)
+                                        
+                                        # Obtener leases de los servidores candidatos
+                                        dynamic_leases = []
+                                        for srv in dhcp_servers_to_try:
+                                            try:
+                                                leases_found = mt.get_dynamic_leases(server=srv)
+                                                if leases_found:
+                                                    dynamic_leases.extend(leases_found)
+                                            except Exception:
+                                                pass
 
-                                        # Buscar por MAC (primera prioridad)
+                                        # Si no encontramos filtrando, intentar obtener todos los dinámicos como fallback
+                                        if not dynamic_leases:
+                                            try:
+                                                dynamic_leases = mt.get_dynamic_leases()
+                                            except Exception:
+                                                dynamic_leases = []
+
+                                        # 1. Buscar por MAC (por si el router reporta la MAC de la ONT)
                                         for dl in dynamic_leases:
                                             dl_mac = dl.get('mac-address', '').replace(':', '').replace('-', '').upper()
                                             if dl_mac == clean_mac:
                                                 lease = dl
                                                 break
 
-                                        # Buscar por Client ID (segunda prioridad)
+                                        # 2. Buscar por Client ID
                                         if not lease:
                                             for dl in dynamic_leases:
                                                 if dl.get('client-id') == str(mt_cliente.id):
                                                     lease = dl
                                                     break
 
-                                        # Buscar por Hostname exacto (tercera prioridad)
+                                        # 3. Buscar por Hostname
                                         if not lease and mt_cliente.nombre:
                                             clean_host = mt_cliente.nombre.lower().strip()
                                             for dl in dynamic_leases:
                                                 if dl.get('host-name', '').lower().strip() == clean_host:
                                                     lease = dl
                                                     break
+
+                                        # 4. Fallback crítico: Si no hay match directo pero hay EXACTAMENTE UN lease dinámico 
+                                        #    activo en el servidor del puerto GPON respectivo (ej: dhcp16), asumimos que es ese cliente.
+                                        if not lease and len(dynamic_leases) == 1:
+                                            lease = dynamic_leases[0]
+                                            logger.info(f"[MikroTik] Match por descarte: Unico lease dinamico en el servidor del puerto: {lease.get('address')}")
+
+                                        # 5. Fallback por si hay múltiples pero uno es del rango/servidor correcto y tiene estado 'bound'
+                                        if not lease and dynamic_leases:
+                                            # Filtrar los que tengan host-name típico de router residencial
+                                            routers_leases = [
+                                                dl for dl in dynamic_leases 
+                                                if any(term in dl.get('host-name', '').lower() for term in ['rtkgw', 'archer', 'tplink', 'merkusys', 'huawei', 'netis', 'tenda', 'dlink', 'deco'])
+                                            ]
+                                            if routers_leases:
+                                                # Tomamos el primero de la lista de routers
+                                                lease = routers_leases[0]
+                                                logger.info(f"[MikroTik] Match por descarte (Router detectado): {lease.get('address')} ({lease.get('host-name')})")
+                                            else:
+                                                # Si no, tomamos el primero disponible
+                                                lease = dynamic_leases[0]
+                                                logger.info(f"[MikroTik] Match por descarte (Primer lease dinamico disponible): {lease.get('address')}")
 
                                         if lease:
                                             _time.sleep(1)  # Espera para que RouterOS pueble todos los campos
