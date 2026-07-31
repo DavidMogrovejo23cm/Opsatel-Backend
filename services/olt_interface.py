@@ -1799,6 +1799,32 @@ class OLTInterface:
                 'error': str(e)
             }
     
+    def get_mac_from_service_port(self, service_port: str) -> Optional[str]:
+        """
+        Obtiene la dirección MAC del dispositivo conectado detrás de un service-port.
+        Ejecuta: display mac-address service-port {service_port}
+        """
+        try:
+            self._ensure_config_mode()
+            command = f"display mac-address service-port {service_port}"
+            logger.info(f"[OLTInterface] Obteniendo MAC del service-port {service_port}...")
+            response = self.send_command(command, delay_factor=1.5)
+            
+            # Buscar formato xxxx-xxxx-xxxx (ej: e484-2b46-42d0)
+            mac_match = re.search(r'([0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4})', response)
+            if mac_match:
+                raw_mac = mac_match.group(1).replace('-', '') # e4842b4642d0
+                # Convertir a formato XX:XX:XX:XX:XX:XX
+                formatted_mac = ":".join(raw_mac[i:i+2].upper() for i in range(0, len(raw_mac), 2))
+                logger.info(f"[OLTInterface] MAC encontrada para service-port {service_port}: {formatted_mac}")
+                return formatted_mac
+                
+            logger.warning(f"[OLTInterface] No se encontró ninguna MAC registrada en el service-port {service_port}")
+            return None
+        except Exception as e:
+            logger.error(f"[OLTInterface] Error obteniendo MAC del service-port {service_port}: {e}")
+            return None
+
     def get_connection_info(self) -> Dict[str, Any]:
         """Retorna info de la conexión actual"""
         return {

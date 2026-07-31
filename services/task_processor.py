@@ -828,8 +828,27 @@ class TaskProcessor:
                                 models.Cliente.id == task.cliente_id
                             ).first()
 
-                            # MAC usada para la activación (normalizada)
-                            mt_mac = validated_payload.get('mac', '')
+                            # Intentar aprender la MAC del cliente directamente desde el service-port en la OLT
+                            service_port_val = validated_payload.get('service_port') or (result.get('service_port') if 'result' in locals() else None)
+                            real_client_mac = None
+                            if service_port_val:
+                                logger.info(f"[MikroTik] Intentando aprender la MAC real del cliente desde el service-port {service_port_val} en la OLT...")
+                                for mac_attempt in range(1, 6): # 5 intentos x 3 segundos
+                                    try:
+                                        _time.sleep(3)
+                                        real_client_mac = olt.get_mac_from_service_port(str(service_port_val))
+                                        if real_client_mac:
+                                            logger.info(f"[MikroTik] ¡MAC real aprendida desde la OLT!: {real_client_mac}")
+                                            break
+                                    except Exception as mac_err:
+                                        logger.warning(f"Intento {mac_attempt} de lectura de MAC fallido: {mac_err}")
+                            
+                            if real_client_mac:
+                                mt_mac = real_client_mac
+                            else:
+                                mt_mac = validated_payload.get('mac', '')
+                                logger.warning(f"[MikroTik] No se pudo aprender la MAC real, usando MAC de la ONT ({mt_mac})")
+
                             gpon_port = validated_payload.get('gpon_port', '0/0/0')
 
                             # Extraer número de puerto GPON (ej: "0/0/15" -> 15)
