@@ -1,5 +1,5 @@
 from database import SessionLocal
-import models  # <-- Cambiado: importa models completo, el cual ya contiene OLTConfig y Cliente
+import models  # <-- Importar models completo
 
 def setup_mikrotik_credentials():
     db = SessionLocal()
