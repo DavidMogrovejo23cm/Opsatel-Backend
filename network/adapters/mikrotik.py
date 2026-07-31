@@ -36,7 +36,7 @@ class MikroTikAdapter:
                 attempt += 1
                 logger.info(f"Conectando a MikroTik {self.host}:{self.port} (Intento {attempt}/{self.max_retries})...")
                 
-                self.connection = routeros_api.RouterOsApiConnection(
+                self.connection = routeros_api.RouterOsApiPool(
                     self.host,
                     username=self.username,
                     password=self.password,
@@ -44,7 +44,7 @@ class MikroTikAdapter:
                     plaintext_login=True,
                     timeout=self.timeout
                 )
-                self.api = self.connection.connect()
+                self.api = self.connection.get_api()
                 self.is_connected = True
                 logger.info(f"✓ Conexión establecida exitosamente con MikroTik {self.host}")
                 return True
