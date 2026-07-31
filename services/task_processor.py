@@ -980,33 +980,76 @@ class TaskProcessor:
                                         mt.update_lease_comment(lease_id, comment)
                                         log_mt("[MikroTik] Comentario actualizado: OK")
 
-                                        # Asignar IP desde inventario BD si existe una libre para el nodo
+                                        # ── Asignación de IP desde inventory_ip_pools ──────────────────
+                                        # Regla 1: Si el cliente YA tiene IP asignada → siempre reutilizarla
+                                        # Regla 2: Si no tiene → tomar primera LIBRE ordenada por INET_ATON
                                         import inventory_models
-                                        pool_rec = self.db.query(inventory_models.InventoryIpPool).filter(
-                                            inventory_models.InventoryIpPool.nodo == (mt_cliente.nodo or ""),
-                                            inventory_models.InventoryIpPool.estado == "LIBRE"
-                                        ).order_by(inventory_models.InventoryIpPool.id.asc()).first()
+                                        from sqlalchemy import func, text
 
-                                        if pool_rec:
-                                            target_ip = pool_rec.ip_address
-                                            pool_rec.estado = "OCUPADO"
-                                            pool_rec.cliente_id = mt_cliente.id
-                                            log_mt(f"[MikroTik] IP reservada en inventario local: {target_ip}")
+                                        target_ip = None
+
+                                        # Buscar si el cliente ya tiene IP reservada históricamente
+                                        existing_pool = self.db.query(inventory_models.InventoryIpPool).filter(
+                                            inventory_models.InventoryIpPool.cliente_id == mt_cliente.id
+                                        ).first()
+
+                                        if existing_pool:
+                                            target_ip = existing_pool.ip_address
+                                            # Asegurarse que quede marcada como OCUPADO
+                                            if existing_pool.estado != "OCUPADO":
+                                                existing_pool.estado = "OCUPADO"
+                                                existing_pool.updated_at = datetime.now()
+                                            log_mt(f"[MikroTik] Cliente ya tiene IP histórica asignada: {target_ip} — reutilizando.")
                                         else:
-                                            target_ip = lease_ip
-                                            log_mt(f"[MikroTik] No hay IPs libres en inventario. Se mantiene IP dinámica del lease: {target_ip}")
+                                            # Buscar primera IP libre del nodo, ordenada numéricamente
+                                            nodo_val = (mt_cliente.nodo or "").strip()
+                                            free_pool = self.db.query(inventory_models.InventoryIpPool).filter(
+                                                inventory_models.InventoryIpPool.nodo == nodo_val,
+                                                inventory_models.InventoryIpPool.estado == "LIBRE"
+                                            ).order_by(
+                                                func.inet_aton(inventory_models.InventoryIpPool.ip_address)
+                                            ).with_for_update().first()
 
-                                        # Si la IP del pool es distinta, actualizar la dirección del lease
-                                        if target_ip and target_ip != lease_ip:
-                                            log_mt(f"[MikroTik] Reasignando IP del lease {lease_id} de {lease_ip} a {target_ip}...")
-                                            mt.update_lease_ip(lease_id, target_ip)
-                                            log_mt("[MikroTik] Reasignación de IP: OK")
+                                            if free_pool:
+                                                target_ip = free_pool.ip_address
+                                                free_pool.estado = "OCUPADO"
+                                                free_pool.cliente_id = mt_cliente.id
+                                                free_pool.updated_at = datetime.now()
+                                                log_mt(f"[MikroTik] Primera IP libre del nodo '{nodo_val}': {target_ip} → marcada como OCUPADO.")
+                                            else:
+                                                # No hay IPs en inventario → mantener la del DHCP como fallback
+                                                target_ip = lease_ip
+                                                log_mt(f"[MikroTik] [ADVERTENCIA] Sin IPs libres en inventario para nodo '{nodo_val}'. Se mantiene IP DHCP: {target_ip}")
 
-                                        # Persistir IP en el cliente
+                                        # Persistir IP en el cliente y hacer commit transaccional
                                         mt_cliente.ip = target_ip
                                         self.db.commit()
+                                        log_mt(f"[MikroTik] IP final asignada y persistida: {target_ip}")
+
+                                        # Actualizar el lease estático con la IP definitiva
+                                        if target_ip and target_ip != lease_ip:
+                                            log_mt(f"[MikroTik] Actualizando IP del lease {lease_id}: {lease_ip} → {target_ip}...")
+                                            mt.update_lease_ip(lease_id, target_ip)
+                                            log_mt("[MikroTik] IP del lease actualizada: OK")
+                                        else:
+                                            log_mt(f"[MikroTik] IP coincide con DHCP ({target_ip}), no se modifica el lease.")
 
                                         log_mt(f"[MikroTik] ✓ Aprovisionamiento exitoso. IP final: {target_ip}.")
+
+                                        # ── Reiniciar ONT en la OLT para que adopte la nueva IP ─────────
+                                        try:
+                                            import time as _time2
+                                            _time2.sleep(2)  # Pequeña pausa para que el lease estático se propague
+                                            reset_gpon = validated_payload.get('gpon_port', '0/0/0')
+                                            reset_ont_id = str(validated_payload.get('ont_id', '0'))
+                                            log_mt(f"[OLT] Reiniciando ONT {reset_gpon} id={reset_ont_id} para adoptar IP {target_ip}...")
+                                            reset_ok = olt.reset_ont(reset_gpon, reset_ont_id)
+                                            if reset_ok:
+                                                log_mt(f"[OLT] ✓ ONT reiniciada correctamente.")
+                                            else:
+                                                log_mt(f"[OLT] [ADVERTENCIA] El reinicio del ONT no devolvió confirmación (no crítico).")
+                                        except Exception as reset_err:
+                                            log_mt(f"[OLT] [ERROR] No se pudo reiniciar el ONT: {reset_err} (no crítico)")
 
                         # Guardar logs de MikroTik en la respuesta json de la tarea para el frontend
                         if isinstance(task.response_json, dict):

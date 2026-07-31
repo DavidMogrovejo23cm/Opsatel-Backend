@@ -1825,6 +1825,63 @@ class OLTInterface:
             logger.error(f"[OLTInterface] Error obteniendo MAC del service-port {service_port}: {e}")
             return None
 
+    def reset_ont(self, gpon_port: str, ont_id: str) -> bool:
+        """
+        Reinicia un ONT en la OLT Huawei para que obtenga la nueva IP asignada.
+
+        Secuencia ejecutada:
+            (config)# interface gpon {X/X}
+            (config-if-gpon-X/X)# ont reset {port} {ont_id}
+            (config-if-gpon-X/X)# quit
+
+        Args:
+            gpon_port: Puerto GPON completo (ej: "0/0/15")
+            ont_id:    ID del ONT en ese puerto (ej: "2")
+
+        Returns:
+            True si se envió el comando exitosamente, False en caso de error.
+        """
+        try:
+            # gpon_port = "0/0/15"  →  interface = "0/0",  port_num = "15"
+            parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
+            if len(parts) >= 3:
+                gpon_interface = f"{parts[0]}/{parts[1]}"   # "0/0"
+                port_num       = parts[2]                    # "15"
+            else:
+                gpon_interface = '/'.join(parts[:2]) if len(parts) >= 2 else '0/0'
+                port_num       = parts[-1] if parts else '0'
+
+            logger.info(
+                f"[OLTInterface] Reiniciando ONT: interface gpon {gpon_interface} "
+                f"| ont reset {port_num} {ont_id}"
+            )
+
+            self._ensure_config_mode()
+
+            # Entrar a la interfaz GPON
+            resp = self.send_command(
+                f"interface gpon {gpon_interface}",
+                use_timing=True, delay_factor=1.5
+            )
+            logger.info(f"[OLTInterface] [reset_ont] interface gpon {gpon_interface}: {resp.strip()[:120]}")
+
+            # Ejecutar ont reset
+            resp = self.send_command(
+                f"ont reset {port_num} {ont_id}",
+                use_timing=True, delay_factor=2.0
+            )
+            logger.info(f"[OLTInterface] [reset_ont] ont reset {port_num} {ont_id}: {resp.strip()[:120]}")
+
+            # Salir de la interfaz GPON
+            self.send_command('quit', use_timing=True, delay_factor=1.0)
+
+            logger.info(f"[OLTInterface] ✓ ONT {gpon_port} / id {ont_id} reiniciado correctamente.")
+            return True
+
+        except Exception as e:
+            logger.error(f"[OLTInterface] Error al reiniciar ONT {gpon_port}/{ont_id}: {e}")
+            return False
+
     def get_connection_info(self) -> Dict[str, Any]:
         """Retorna info de la conexión actual"""
         return {
