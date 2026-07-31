@@ -21,7 +21,7 @@ from sqlalchemy import and_, or_
 from services.olt_interface import OLTInterface, OLTConnectionError, OLTCommandError
 from services.command_sanitizer import CommandSanitizer, CommandSanitizationError
 import models
-import models_olt_extension  # OLTConfig (con campos MikroTik)
+
 
 logger = logging.getLogger(__name__)
 
@@ -815,9 +815,10 @@ class TaskProcessor:
                         import time as _time
 
                         # Cargar config de OLT (que contiene datos MikroTik)
-                        olt_cfg = self.db.query(models_olt_extension.OLTConfig).filter(
-                            models_olt_extension.OLTConfig.id == task.olt_id
+                        olt_cfg = self.db.query(models.OLTConfig).filter(
+                            models.OLTConfig.id == task.olt_id
                         ).first()
+
 
                         if not olt_cfg or not olt_cfg.mikrotik_host:
                             logger.info("[MikroTik] No hay MikroTik configurado para este nodo. Omitiendo.")
