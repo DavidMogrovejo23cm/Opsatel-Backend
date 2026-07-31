@@ -41,8 +41,7 @@ class MikroTikAdapter:
                     username=self.username,
                     password=self.password,
                     port=self.port,
-                    plaintext_login=True,
-                    timeout=self.timeout
+                    plaintext_login=True
                 )
                 self.api = self.connection.get_api()
                 self.is_connected = True
