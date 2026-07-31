@@ -810,18 +810,24 @@ class TaskProcessor:
                 # ── PASO MIKROTIK: Lease DHCP → Estático ──────────────────────
                 # Se ejecuta SÓLO si add_ont fue exitoso. Best-effort: nunca falla la tarea.
                 if task.action == 'add_ont' and success and task.cliente_id:
+                    mt_logs = []
+                    def log_mt(msg):
+                        logger.info(msg)
+                        mt_logs.append(msg)
+
                     try:
                         from network.adapters.mikrotik import MikroTikAdapter, MikroTikAdapterError
                         import time as _time
+
+                        log_mt("[MikroTik] Iniciando paso de lease DHCP → estático.")
 
                         # Cargar config de OLT (que contiene datos MikroTik)
                         olt_cfg = self.db.query(models.OLTConfig).filter(
                             models.OLTConfig.id == task.olt_id
                         ).first()
 
-
                         if not olt_cfg or not olt_cfg.mikrotik_host:
-                            logger.info("[MikroTik] No hay MikroTik configurado para este nodo. Omitiendo.")
+                            log_mt("[MikroTik] No hay MikroTik configurado en la OLT para este nodo. Omitiendo.")
                         else:
                             # Cargar cliente actualizado con los datos ya persistidos
                             mt_cliente = self.db.query(models.Cliente).filter(
@@ -832,22 +838,22 @@ class TaskProcessor:
                             service_port_val = validated_payload.get('service_port') or (result.get('service_port') if 'result' in locals() else None)
                             real_client_mac = None
                             if service_port_val:
-                                logger.info(f"[MikroTik] Intentando aprender la MAC real del cliente desde el service-port {service_port_val} en la OLT...")
+                                log_mt(f"[MikroTik] Intentando aprender la MAC real del cliente desde el service-port {service_port_val} en la OLT...")
                                 for mac_attempt in range(1, 6): # 5 intentos x 3 segundos
                                     try:
                                         _time.sleep(3)
                                         real_client_mac = olt.get_mac_from_service_port(str(service_port_val))
                                         if real_client_mac:
-                                            logger.info(f"[MikroTik] ¡MAC real aprendida desde la OLT!: {real_client_mac}")
+                                            log_mt(f"[MikroTik] ¡MAC real aprendida desde la OLT!: {real_client_mac}")
                                             break
                                     except Exception as mac_err:
-                                        logger.warning(f"Intento {mac_attempt} de lectura de MAC fallido: {mac_err}")
+                                        log_mt(f"[MikroTik] Intento {mac_attempt} de lectura de MAC fallido: {mac_err}")
                             
                             if real_client_mac:
                                 mt_mac = real_client_mac
                             else:
                                 mt_mac = validated_payload.get('mac', '')
-                                logger.warning(f"[MikroTik] No se pudo aprender la MAC real, usando MAC de la ONT ({mt_mac})")
+                                log_mt(f"[MikroTik] No se pudo aprender la MAC real, usando MAC de la ONT ({mt_mac}) como fallback")
 
                             gpon_port = validated_payload.get('gpon_port', '0/0/0')
 
@@ -870,7 +876,7 @@ class TaskProcessor:
 
                             if mt_cliente and mt_mac:
                                 comment = f"{str(mt_cliente.id).zfill(6)} - {mt_cliente.nombre}"
-                                logger.info(f"[MikroTik] Iniciando aprovisionamiento DHCP → Estático. Buscando lease en servidores {dhcp_servers_to_try} para puerto {gpon_port}")
+                                log_mt(f"[MikroTik] Conectando a MikroTik {olt_cfg.mikrotik_host}:{olt_cfg.mikrotik_port or 8728}...")
 
                                 with MikroTikAdapter(
                                     host=olt_cfg.mikrotik_host,
@@ -878,12 +884,13 @@ class TaskProcessor:
                                     password=olt_cfg.mikrotik_password,
                                     port=olt_cfg.mikrotik_port or 8728
                                 ) as mt:
+                                    log_mt("[MikroTik] Conexión establecida. Iniciando búsqueda del lease...")
                                     lease = None
                                     clean_mac = mt_mac.replace(':', '').replace('-', '').upper()
 
                                     # Polling: hasta 30s (15 intentos x 2s)
                                     for poll_attempt in range(1, 16):
-                                        logger.info(f"[MikroTik] Intento {poll_attempt}/15 buscando lease dinámico...")
+                                        log_mt(f"[MikroTik] Buscando lease dinámico (Intento {poll_attempt}/15)...")
                                         
                                         # Obtener leases de los servidores candidatos
                                         dynamic_leases = []
@@ -902,11 +909,14 @@ class TaskProcessor:
                                             except Exception:
                                                 dynamic_leases = []
 
-                                        # 1. Buscar por MAC (por si el router reporta la MAC de la ONT)
+                                        log_mt(f"[MikroTik] Total leases dinámicos encontrados en consulta: {len(dynamic_leases)}")
+
+                                        # 1. Buscar por MAC
                                         for dl in dynamic_leases:
                                             dl_mac = dl.get('mac-address', '').replace(':', '').replace('-', '').upper()
                                             if dl_mac == clean_mac:
                                                 lease = dl
+                                                log_mt(f"[MikroTik] Match por MAC exitoso: {dl.get('address')}")
                                                 break
 
                                         # 2. Buscar por Client ID
@@ -914,6 +924,7 @@ class TaskProcessor:
                                             for dl in dynamic_leases:
                                                 if dl.get('client-id') == str(mt_cliente.id):
                                                     lease = dl
+                                                    log_mt(f"[MikroTik] Match por Client ID exitoso: {dl.get('address')}")
                                                     break
 
                                         # 3. Buscar por Hostname
@@ -922,47 +933,52 @@ class TaskProcessor:
                                             for dl in dynamic_leases:
                                                 if dl.get('host-name', '').lower().strip() == clean_host:
                                                     lease = dl
+                                                    log_mt(f"[MikroTik] Match por Hostname exitoso: {dl.get('address')}")
                                                     break
 
                                         # 4. Fallback crítico: Si no hay match directo pero hay EXACTAMENTE UN lease dinámico 
                                         #    activo en el servidor del puerto GPON respectivo (ej: dhcp16), asumimos que es ese cliente.
                                         if not lease and len(dynamic_leases) == 1:
                                             lease = dynamic_leases[0]
-                                            logger.info(f"[MikroTik] Match por descarte: Unico lease dinamico en el servidor del puerto: {lease.get('address')}")
+                                            log_mt(f"[MikroTik] Match por descarte: Único lease dinámico en el servidor del puerto: {lease.get('address')}")
 
                                         # 5. Fallback por si hay múltiples pero uno es del rango/servidor correcto y tiene estado 'bound'
                                         if not lease and dynamic_leases:
-                                            # Filtrar los que tengan host-name típico de router residencial
                                             routers_leases = [
                                                 dl for dl in dynamic_leases 
                                                 if any(term in dl.get('host-name', '').lower() for term in ['rtkgw', 'archer', 'tplink', 'merkusys', 'huawei', 'netis', 'tenda', 'dlink', 'deco'])
                                             ]
                                             if routers_leases:
-                                                # Tomamos el primero de la lista de routers
                                                 lease = routers_leases[0]
-                                                logger.info(f"[MikroTik] Match por descarte (Router detectado): {lease.get('address')} ({lease.get('host-name')})")
+                                                log_mt(f"[MikroTik] Match por descarte (Router detectado): {lease.get('address')} ({lease.get('host-name')})")
                                             else:
-                                                # Si no, tomamos el primero disponible
                                                 lease = dynamic_leases[0]
-                                                logger.info(f"[MikroTik] Match por descarte (Primer lease dinamico disponible): {lease.get('address')}")
+                                                log_mt(f"[MikroTik] Match por descarte (Primer lease dinámico disponible): {lease.get('address')}")
 
                                         if lease:
-                                            _time.sleep(1)  # Espera para que RouterOS pueble todos los campos
+                                            _time.sleep(1)
                                             break
 
                                         _time.sleep(2)
 
                                     if not lease:
-                                        logger.warning(f"[MikroTik] No se encontró lease dinámico para MAC {mt_mac} tras 30s. Omitiendo.")
+                                        log_mt(f"[MikroTik] [ADVERTENCIA] No se encontró lease dinámico para MAC {mt_mac} tras 30s.")
                                     else:
-                                        lease_id = lease['id']
+                                        # Soporte para .id (RouterOS estándar) y id
+                                        lease_id = lease.get('.id') or lease.get('id')
                                         lease_ip = lease.get('address', '')
                                         lease_server = lease.get('server', 'unknown')
-                                        logger.info(f"[MikroTik] Lease dinámico encontrado: {lease_ip} (server={lease_server})")
+                                        
+                                        log_mt(f"[MikroTik] Lease dinámico encontrado. ID: {lease_id} | IP: {lease_ip} | Server: {lease_server}")
 
                                         # Convertir a estático
+                                        log_mt(f"[MikroTik] Convirtiendo lease {lease_id} a estático...")
                                         mt.make_lease_static(lease_id)
+                                        log_mt("[MikroTik] Conversión a estático: OK")
+
+                                        log_mt(f"[MikroTik] Modificando comentario a: '{comment}'...")
                                         mt.update_lease_comment(lease_id, comment)
+                                        log_mt("[MikroTik] Comentario actualizado: OK")
 
                                         # Asignar IP desde inventario BD si existe una libre para el nodo
                                         import inventory_models
@@ -975,23 +991,35 @@ class TaskProcessor:
                                             target_ip = pool_rec.ip_address
                                             pool_rec.estado = "OCUPADO"
                                             pool_rec.cliente_id = mt_cliente.id
+                                            log_mt(f"[MikroTik] IP reservada en inventario local: {target_ip}")
                                         else:
                                             target_ip = lease_ip
+                                            log_mt(f"[MikroTik] No hay IPs libres en inventario. Se mantiene IP dinámica del lease: {target_ip}")
 
                                         # Si la IP del pool es distinta, actualizar la dirección del lease
                                         if target_ip and target_ip != lease_ip:
+                                            log_mt(f"[MikroTik] Reasignando IP del lease {lease_id} de {lease_ip} a {target_ip}...")
                                             mt.update_lease_ip(lease_id, target_ip)
+                                            log_mt("[MikroTik] Reasignación de IP: OK")
 
                                         # Persistir IP en el cliente
                                         mt_cliente.ip = target_ip
                                         self.db.commit()
 
-                                        logger.info(f"[MikroTik] ✓ Lease {lease_ip} → Estático. IP final: {target_ip}. Comentario: '{comment}'")
+                                        log_mt(f"[MikroTik] ✓ Aprovisionamiento exitoso. IP final: {target_ip}.")
+
+                        # Guardar logs de MikroTik en la respuesta json de la tarea para el frontend
+                        if isinstance(task.response_json, dict):
+                            updated_json = dict(task.response_json)
+                            updated_json['mikrotik_log'] = "\n".join(mt_logs)
+                            task.response_json = updated_json
 
                     except Exception as mt_err:
-                        logger.warning(f"[MikroTik] Error en paso MikroTik (best-effort, no falla la tarea): {mt_err}")
-                # ── FIN PASO MIKROTIK ─────────────────────────────────────────
-
+                        log_mt(f"[MikroTik] [ERROR FATAL] Paso MikroTik falló: {mt_err}")
+                        if isinstance(task.response_json, dict):
+                            updated_json = dict(task.response_json)
+                            updated_json['mikrotik_log'] = "\n".join(mt_logs)
+                            task.response_json = updated_json
             else:
                 logger.error(f"✗ Comando falló")
                 task.status = 'failed'
