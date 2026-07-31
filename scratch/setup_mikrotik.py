@@ -1,9 +1,10 @@
 from database import SessionLocal
-import models_olt_extension as models
+import models  # <-- Cambiado: importa models completo, el cual ya contiene OLTConfig y Cliente
 
 def setup_mikrotik_credentials():
     db = SessionLocal()
     try:
+        # Accedemos a OLTConfig desde models
         olts = db.query(models.OLTConfig).all()
         if not olts:
             print("No se encontraron registros de OLT en la tabla 'olt_config'.")
