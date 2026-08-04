@@ -4,9 +4,13 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException, Query
+# pyrefly: ignore [missing-import]
 from pydantic import BaseModel
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
+# pyrefly: ignore [missing-import]
 from sqlalchemy import or_, desc
 
 from database import get_db
@@ -23,7 +27,7 @@ logger = logging.getLogger("opsatel.bulk")
 # ============================================================================
 
 class BulkItem(BaseModel):
-    cliente_id: int
+    cliente_id: Optional[int] = None
     mac: str
     gpon_port: str
     ont_id: Optional[str] = None
@@ -45,6 +49,7 @@ def bulk_activate(
 ):
     """
     Crea múltiples tareas de activación OLT agrupadas por un bulk_id único.
+    Si no se provee cliente_id, crea un cliente temporal ficticio de forma automática.
     """
     if not req.items:
         raise HTTPException(status_code=400, detail="La lista de clientes a activar está vacía.")
@@ -60,16 +65,48 @@ def bulk_activate(
         detalles=f"Inicio de activación masiva para {len(req.items)} terminales. Bulk ID: {bulk_id}"
     )
     
+    # Buscar una OLT activa por defecto si es necesario
+    default_olt = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
+    
     for idx, item in enumerate(req.items):
+        gpon_port = item.gpon_port or "0/0/1"
+        puerto_num = "1"
+        try:
+            puerto_num = gpon_port.split('/')[-1]
+        except Exception:
+            pass
+
         cliente_id = item.cliente_id
+        cliente = None
         
-        # Validar cliente
-        cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+        if cliente_id:
+            # Validar cliente existente
+            cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+        
         if not cliente:
-            logger.warning(f"[Bulk] Cliente {cliente_id} no encontrado en lote {bulk_id}. Saltando.")
-            continue
+            # Crear cliente temporal random
+            random_suffix = uuid.uuid4().hex[:6].upper()
+            temp_name = f"TEMP_{random_suffix}"
             
-        # Determinar OLT por nodo
+            # Obtener el MAX id actual para evitar colisiones
+            max_id = db.query(models.Cliente.id).order_by(desc(models.Cliente.id)).first()
+            next_id = (max_id[0] + 1) if max_id else 50000
+            
+            # Crear objeto cliente temporal
+            cliente = models.Cliente(
+                id=next_id,
+                nombre=temp_name,
+                estado="Pendiente",
+                puerto=str(puerto_num),
+                nodo=default_olt.nodo_asociado if default_olt else "BAÑOS",
+                plan="GAMER PRO"
+            )
+            db.add(cliente)
+            db.flush()
+            cliente_id = cliente.id
+            logger.info(f"[Bulk] Creado cliente temporal {temp_name} (ID: {cliente_id}) para puerto {gpon_port}")
+            
+        # Determinar OLT por nodo del cliente
         olt_config = db.query(models.OLTConfig).filter(
             or_(
                 models.OLTConfig.nodo_asociado == cliente.nodo,
@@ -79,17 +116,13 @@ def bulk_activate(
         ).first()
         
         if not olt_config:
-            logger.warning(f"[Bulk] No hay OLT activa configurada para nodo {cliente.nodo} (cliente {cliente_id}). Saltando.")
+            olt_config = default_olt
+            
+        if not olt_config:
+            logger.warning(f"[Bulk] No hay OLT activa configurada. Saltando.")
             continue
 
-        # Generar payload limpio para add_ont
-        gpon_port = item.gpon_port or f"0/0/{cliente.puerto or 1}"
-        puerto_num = 0
-        try:
-            puerto_num = int(gpon_port.split('/')[-1])
-        except Exception:
-            pass
-        profile = str(100 + puerto_num)
+        profile = str(100 + int(puerto_num) if puerto_num.isdigit() else 101)
 
         raw_payload = {
             "mac": item.mac.replace(":", "").replace("-", "").upper(),
@@ -107,14 +140,14 @@ def bulk_activate(
             logger.warning(f"[Bulk] Payload inválido para cliente {cliente_id}: {e}. Saltando.")
             continue
 
-        # Crear OLTTask con prioridad decrementada para mantener orden de encolado original
+        # Crear OLTTask
         task = models.OLTTask(
             cliente_id=cliente_id,
             olt_id=olt_config.id,
             action="add_ont",
             payload=json.dumps(validated_payload),
             status="pending",
-            priority=5 - idx,  # Prioridades consecutivas descendentes para procesar en orden
+            priority=5 - idx,
             created_by=current_user.username,
             created_at=datetime.now(),
             bulk_id=bulk_id
@@ -123,7 +156,6 @@ def bulk_activate(
         
         # Marcar cliente en cola
         cliente.olt_sync_status = "in_queue"
-        
         created_tasks.append(task)
         
     db.commit()
