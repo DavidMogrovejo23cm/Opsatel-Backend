@@ -984,6 +984,7 @@ class TaskProcessor:
                                         # Regla 1: Si el cliente YA tiene IP asignada → siempre reutilizarla
                                         # Regla 2: Si no tiene → tomar primera LIBRE ordenada por INET_ATON
                                         import inventory_models
+                                        # pyrefly: ignore [missing-import]
                                         from sqlalchemy import func, text
 
                                         target_ip = None
