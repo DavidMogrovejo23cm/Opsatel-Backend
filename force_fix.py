@@ -33,6 +33,12 @@ def force_fix_columns():
         ("biometria_salida_validada", "BOOLEAN")
     ]
 
+    # 4. Tabla olt_tasks
+    table_olt_tasks = "olt_tasks"
+    columns_olt_tasks = [
+        ("bulk_id", "VARCHAR(100)")
+    ]
+
     def process_table(table_name, columns):
         inspector = inspect(engine)
         if not inspector.has_table(table_name):
@@ -58,6 +64,7 @@ def force_fix_columns():
     process_table(table_clientes, columns_clientes)
     process_table(table_pagos, columns_pagos)
     process_table(table_asistencias, columns_asistencias)
+    process_table(table_olt_tasks, columns_olt_tasks)
     
     print("Reparación terminada.")
 

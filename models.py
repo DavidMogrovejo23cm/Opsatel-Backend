@@ -489,6 +489,7 @@ class OLTTask(Base):
     
     created_by = Column(String(100))
     processed_by = Column(String(100))
+    bulk_id = Column(String(100), nullable=True, index=True)
     
     olt_config = relationship("OLTConfig", back_populates="tasks")
     logs = relationship("OLTTaskLog", back_populates="task")

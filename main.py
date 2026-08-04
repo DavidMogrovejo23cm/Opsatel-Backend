@@ -23,6 +23,7 @@ import observability
 import discovery_models
 import inventory_models
 from routes import discovery, sync, workflows
+from routes.bulk_activation import bulk_router
 
 # Iniciar App
 app = FastAPI(title="ISP Management API")
@@ -31,6 +32,7 @@ app.include_router(observability.router)
 app.include_router(discovery.router)
 app.include_router(sync.router)
 app.include_router(workflows.router)
+app.include_router(bulk_router)
 observability.setup_json_logging()
 
 
