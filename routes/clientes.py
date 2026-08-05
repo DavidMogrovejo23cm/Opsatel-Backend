@@ -1301,6 +1301,19 @@ def eliminar_cliente(id: int, db: Session = Depends(get_db)):
     # Eliminar pagos asociados (si los hubiera)
     db.query(models.Pago).filter(models.Pago.cliente_id == id).delete()
     
+    # Liberar la IP en inventory_ip_pools
+    try:
+        import inventory_models
+        pool_ip = db.query(inventory_models.InventoryIpPool).filter(
+            inventory_models.InventoryIpPool.cliente_id == id
+        ).first()
+        if pool_ip:
+            pool_ip.estado = "LIBRE"
+            pool_ip.cliente_id = None
+            pool_ip.updated_at = datetime.now()
+    except Exception as e:
+        print(f"Aviso: No se pudo liberar la IP en el inventario: {e}")
+        
     db.delete(cliente)
     db.commit()
 
