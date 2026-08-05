@@ -1,7 +1,9 @@
 from database import engine
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 import os
 import shutil
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 from typing import List
 import models, schemas
@@ -433,6 +435,7 @@ def borrar_cliente_de_olt(id: int, db: Session = Depends(get_db), current_user=D
     campos OLT borrados para que pueda ser re-activado correctamente.
     """
     import json as _json
+    # pyrefly: ignore [missing-import]
     from sqlalchemy import or_ as _or
 
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
@@ -577,6 +580,7 @@ def descargar_completa_base_datos(db: Session = Depends(get_db)):
         from decimal import Decimal
         from datetime import datetime, date
         import pandas as pd
+        # pyrefly: ignore [missing-import]
         from fastapi.responses import StreamingResponse
         
         # Lista de todos los modelos a exportar
@@ -1256,6 +1260,7 @@ def eliminar_todos_clientes(db: Session = Depends(get_db)):
         
         # Resetear AUTO_INCREMENT
         try:
+            # pyrefly: ignore [missing-import]
             from sqlalchemy import text
             is_postgresql = "postgresql" in str(engine.url).lower() or "psycopg" in str(engine.url).lower()
             is_mysql = "mysql" in str(engine.url).lower()
@@ -1319,6 +1324,7 @@ def eliminar_cliente(id: int, db: Session = Depends(get_db)):
 
     # Resetear AUTO_INCREMENT solo en MySQL/MariaDB
     try:
+        # pyrefly: ignore [missing-import]
         from sqlalchemy import text
         is_mysql = "mysql" in str(engine.url).lower() if 'engine' in dir() else False
         if is_mysql:
