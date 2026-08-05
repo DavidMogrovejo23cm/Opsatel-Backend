@@ -1002,25 +1002,50 @@ class TaskProcessor:
                                                 existing_pool.updated_at = datetime.now()
                                             log_mt(f"[MikroTik] Cliente ya tiene IP histórica asignada: {target_ip} — reutilizando.")
                                         else:
-                                            # Buscar primera IP libre del nodo, ordenada numéricamente
-                                            nodo_val = (mt_cliente.nodo or "").strip()
-                                            free_pool = self.db.query(inventory_models.InventoryIpPool).filter(
-                                                inventory_models.InventoryIpPool.nodo == nodo_val,
+                                            # Normalizar nodo de forma flexible (mayúsculas, acentos, espacios)
+                                            import re
+                                            def clean_node(name):
+                                                if not name: return ""
+                                                name = name.strip().lower()
+                                                name = re.sub(r'[áàäâ]', 'a', name)
+                                                name = re.sub(r'[éèëê]', 'e', name)
+                                                name = re.sub(r'[íìïî]', 'i', name)
+                                                name = re.sub(r'[óòöô]', 'o', name)
+                                                name = re.sub(r'[úùüû]', 'u', name)
+                                                return name
+
+                                            clean_client_nodo = clean_node(mt_cliente.nodo)
+
+                                            # Obtener todos los pools libres para filtrar y ordenar en memoria
+                                            all_free = self.db.query(inventory_models.InventoryIpPool).filter(
                                                 inventory_models.InventoryIpPool.estado == "LIBRE"
-                                            ).order_by(
-                                                func.inet_aton(inventory_models.InventoryIpPool.ip_address)
-                                            ).with_for_update().first()
+                                            ).all()
+
+                                            import socket, struct
+                                            def ip_key(ip_str):
+                                                try:
+                                                    return struct.unpack("!L", socket.inet_aton(ip_str))[0]
+                                                except:
+                                                    return 0
+
+                                            sorted_free = sorted([p for p in all_free if clean_node(p.nodo) == clean_client_nodo], key=lambda x: ip_key(x.ip_address))
+                                            free_pool = sorted_free[0] if sorted_free else None
 
                                             if free_pool:
                                                 target_ip = free_pool.ip_address
-                                                free_pool.estado = "OCUPADO"
-                                                free_pool.cliente_id = mt_cliente.id
-                                                free_pool.updated_at = datetime.now()
-                                                log_mt(f"[MikroTik] Primera IP libre del nodo '{nodo_val}': {target_ip} → marcada como OCUPADO.")
+                                                # Bloquear y actualizar registro individualmente
+                                                db_pool_rec = self.db.query(inventory_models.InventoryIpPool).filter(
+                                                    inventory_models.InventoryIpPool.id == free_pool.id
+                                                ).with_for_update().first()
+                                                if db_pool_rec:
+                                                    db_pool_rec.estado = "OCUPADO"
+                                                    db_pool_rec.cliente_id = mt_cliente.id
+                                                    db_pool_rec.updated_at = datetime.now()
+                                                log_mt(f"[MikroTik] Primera IP libre del nodo '{mt_cliente.nodo}': {target_ip} → marcada como OCUPADO.")
                                             else:
                                                 # No hay IPs en inventario → mantener la del DHCP como fallback
                                                 target_ip = lease_ip
-                                                log_mt(f"[MikroTik] [ADVERTENCIA] Sin IPs libres en inventario para nodo '{nodo_val}'. Se mantiene IP DHCP: {target_ip}")
+                                                log_mt(f"[MikroTik] [ADVERTENCIA] Sin IPs libres en inventario para nodo '{mt_cliente.nodo}'. Se mantiene IP DHCP: {target_ip}")
 
                                         # Persistir IP en el cliente y hacer commit transaccional
                                         mt_cliente.ip = target_ip

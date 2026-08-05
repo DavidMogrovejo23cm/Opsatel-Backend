@@ -413,3 +413,149 @@ def undo_last_activation(
         "message": f"Última activación deshecha (Cliente: {cliente.nombre}). Eliminación encolada.",
         "remove_task_id": remove_task.id
     }
+
+
+@bulk_router.post("/clientes/{cliente_id}/refresh-ip", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
+def refresh_client_ip(
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Fuerza el refresco y asignación correcta de IP estática de un cliente desde su pool.
+    Normaliza los nombres de nodo y actualiza el MikroTik de forma interactiva.
+    """
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado.")
+
+    # Conectar al MikroTik (Usando OLT configurada para el nodo del cliente)
+    olt_config = db.query(models.OLTConfig).filter(
+        or_(
+            models.OLTConfig.nodo_asociado == cliente.nodo,
+            models.OLTConfig.nodo_asociado == None
+        ),
+        models.OLTConfig.active == True
+    ).first()
+    
+    if not olt_config or not olt_config.mikrotik_host:
+        raise HTTPException(status_code=500, detail="MikroTik no configurado para el nodo del cliente.")
+
+    import re
+    from network.adapters.mikrotik import MikroTikAdapter
+    mt = MikroTikAdapter(
+        host=olt_config.mikrotik_host,
+        port=olt_config.mikrotik_port or 8728,
+        username=olt_config.mikrotik_username or "admin",
+        password=olt_config.mikrotik_password or ""
+    )
+
+    # 1. Buscar lease en MikroTik por el comentario del cliente
+    # La OLT usa el formato: "{cliente_id} {nombre}" o similar
+    # Buscamos coincidencias con el ID de cliente de 6 dígitos
+    client_code = str(cliente.id).padStart(6, '0')
+    lease_found = None
+
+    try:
+        mt.connect()
+        leases = mt.api.get_resource('/ip/dhcp-server/lease').get()
+        
+        # Primero intentar match exacto o parcial por el comentario
+        for l in leases:
+            comment = l.get('comment', '')
+            if client_code in comment:
+                lease_found = l
+                break
+
+        # Si no se encuentra por comentario, intentar por MAC si el cliente tiene registrada
+        if not lease_found and cliente.mac:
+            clean_mac = cliente.mac.replace(":", "").replace("-", "").upper()
+            for l in leases:
+                l_mac = l.get('mac-address', '').replace(":", "").replace("-", "").upper()
+                if clean_mac == l_mac:
+                    lease_found = l
+                    break
+
+        if not lease_found:
+            raise HTTPException(status_code=404, detail=f"No se encontró un Lease DHCP en el MikroTik para el cliente {client_code}.")
+
+        lease_id = lease_found.get('.id') or lease_found.get('id')
+        lease_ip = lease_found.get('address')
+
+        # 2. Lógica de asignación de IP robusta (Normalizando acentos, espacios y mayúsculas en memoria)
+        def clean_node(name):
+            if not name: return ""
+            name = name.strip().lower()
+            name = re.sub(r'[áàäâ]', 'a', name)
+            name = re.sub(r'[éèëê]', 'e', name)
+            name = re.sub(r'[íìïî]', 'i', name)
+            name = re.sub(r'[óòöô]', 'o', name)
+            name = re.sub(r'[úùüû]', 'u', name)
+            return name
+
+        clean_client_nodo = clean_node(cliente.nodo)
+
+        # Buscar si el cliente ya tiene IP reservada históricamente
+        import inventory_models
+        existing_pool = db.query(inventory_models.InventoryIpPool).filter(
+            inventory_models.InventoryIpPool.cliente_id == cliente.id
+        ).first()
+
+        target_ip = None
+        if existing_pool:
+            target_ip = existing_pool.ip_address
+            if existing_pool.estado != "OCUPADO":
+                existing_pool.estado = "OCUPADO"
+                existing_pool.updated_at = datetime.now()
+        else:
+            # Buscar en la BD todas las libres de la tabla
+            all_free = db.query(inventory_models.InventoryIpPool).filter(
+                inventory_models.InventoryIpPool.estado == "LIBRE"
+            ).all()
+
+            # Ordenamos las IPs encontradas numéricamente
+            import socket, struct
+            def ip_key(ip_str):
+                try:
+                    return struct.unpack("!L", socket.inet_aton(ip_str))[0]
+                except:
+                    return 0
+
+            sorted_free = sorted([p for p in all_free if clean_node(p.nodo) == clean_client_nodo], key=lambda x: ip_key(x.ip_address))
+            if sorted_free:
+                free_pool = sorted_free[0]
+                target_ip = free_pool.ip_address
+                free_pool.estado = "OCUPADO"
+                free_pool.cliente_id = cliente.id
+                free_pool.updated_at = datetime.now()
+            else:
+                target_ip = lease_ip
+
+        # 3. Actualizar en MikroTik y base de datos
+        cliente.ip = target_ip
+        db.commit()
+
+        if target_ip and target_ip != lease_ip:
+            mt.update_lease_ip(lease_id, target_ip)
+            # Volver a hacer estático por seguridad
+            mt.make_lease_static(lease_id)
+        
+        # Actualizar comentario si no tiene el formato estándar
+        standard_comment = f"{client_code} - {cliente.nombre}"
+        if lease_found.get('comment') != standard_comment:
+            mt.update_lease_comment(lease_id, standard_comment)
+
+        mt.disconnect()
+
+        return {
+            "status": "ok",
+            "ip": target_ip,
+            "message": f"IP del cliente refrescada y asignada con éxito: {target_ip}"
+        }
+
+    except Exception as e:
+        if 'mt' in locals():
+            try: mt.disconnect()
+            except: pass
+        raise HTTPException(status_code=500, detail=f"Error al conectar/actualizar MikroTik: {str(e)}")
+
