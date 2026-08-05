@@ -1303,6 +1303,15 @@ def eliminar_cliente(id: int, db: Session = Depends(get_db)):
             try: os.remove(path)
             except: pass
 
+    # Eliminar logs y tareas OLT asociadas (para evitar violación de clave foránea)
+    try:
+        task_ids = [t.id for t in db.query(models.OLTTask).filter(models.OLTTask.cliente_id == id).all()]
+        if task_ids:
+            db.query(models.OLTTaskLog).filter(models.OLTTaskLog.task_id.in_(task_ids)).delete(synchronize_session=False)
+            db.query(models.OLTTask).filter(models.OLTTask.id.in_(task_ids)).delete(synchronize_session=False)
+    except Exception as e:
+        print(f"Aviso: No se pudieron eliminar las tareas OLT del cliente: {e}")
+
     # Eliminar pagos asociados (si los hubiera)
     db.query(models.Pago).filter(models.Pago.cliente_id == id).delete()
     
