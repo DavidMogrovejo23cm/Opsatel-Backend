@@ -1,10 +1,15 @@
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException, status
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 from typing import List, Optional
+# pyrefly: ignore [missing-import]
+from pydantic import BaseModel
 
 from database import get_db
 import models
 import schemas
+from config_manager import get_config, save_config
 
 router = APIRouter(
     prefix="/configuraciones",
@@ -342,6 +347,3 @@ def update_caja_nap(caja_id: int, caja_data: schemas.CajaNapUpdate, db: Session 
         db.rollback()
         raise HTTPException(status_code=400, detail="Error al actualizar caja NAP")
     return _enrich_caja(db_caja, db)
-
-
-
