@@ -347,3 +347,22 @@ def update_caja_nap(caja_id: int, caja_data: schemas.CajaNapUpdate, db: Session 
         db.rollback()
         raise HTTPException(status_code=400, detail="Error al actualizar caja NAP")
     return _enrich_caja(db_caja, db)
+
+
+# --- Configuración General del Sistema ---
+
+class DiasPermanciaRequest(BaseModel):
+    dias: int
+
+@router.get("/dias-permanencia")
+def get_dias_permanencia():
+    config = get_config()
+    dias = config.get("dias_permanencia", 7)
+    return {"dias": int(dias)}
+
+@router.put("/dias-permanencia")
+def set_dias_permanencia(data: DiasPermanciaRequest):
+    if data.dias < 1 or data.dias > 10:
+        raise HTTPException(status_code=400, detail="Los días deben estar entre 1 y 10")
+    save_config({"dias_permanencia": data.dias})
+    return {"dias": data.dias, "message": "Configuración guardada correctamente"}
