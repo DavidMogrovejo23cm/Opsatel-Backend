@@ -837,8 +837,23 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
         if math.isnan(m_total_cash) or math.isnan(m_internet_cash):
             raise HTTPException(status_code=400, detail="Monto inválido (NaN)")
 
-        # Calculamos la reducción total de deuda: Cash + Descuentos
-        deuda_internet = m_internet_cash + (pago_data.descuento_internet or 0.0)
+        # ─── LÓGICA DE PROMOCIÓN / DESCUENTO POR INTERNET_PAYMENT MODIFICADO ───
+        # El frontend sugiere un internet_payment = total_pago - plus (saldo + tarifa).
+        # Si el usuario modifica ese valor a uno menor (promo), la diferencia entre
+        # lo sugerido originalmente y lo que el usuario definió es un descuento implícito
+        # que debe reducir la deuda como si fuera una cortesía parcial.
+        descuento_promo = 0.0
+        ip_enviado = try_float(pago_data.internet_payment) if pago_data.internet_payment and pago_data.internet_payment != "NONE" else None
+        
+        if ip_enviado is not None:
+            # Calcular lo que el backend habría sugerido (mismo cálculo que el frontend)
+            internet_sugerido = float(cliente.total_pago or 0) - try_float(cliente.plus)
+            # Si el usuario puso un valor menor al sugerido, la diferencia es descuento promo
+            if ip_enviado < internet_sugerido and internet_sugerido > 0:
+                descuento_promo = internet_sugerido - ip_enviado
+
+        # Calculamos la reducción total de deuda: Cash + Descuentos explícitos + Descuento promo
+        deuda_internet = m_internet_cash + (pago_data.descuento_internet or 0.0) + descuento_promo
         deuda_plus = m_plus_cash + (pago_data.descuento_plus or 0.0)
         deuda_adicional = m_adic_cash + (pago_data.descuento_adicional or 0.0)
 
@@ -883,6 +898,12 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
         if pago_data.payment_date is not None: cliente.payment_date = pago_data.payment_date
         if pago_data.bank is not None: cliente.bank = pago_data.bank
         if pago_data.notas_pago is not None: cliente.notas_pago = pago_data.notas_pago
+
+        # 4. GUARDAR INTERNET PAYMENT para que General.jsx muestre que ya se pagó internet.
+        if pago_data.internet_payment is not None and pago_data.internet_payment != "NONE":
+            cliente.internet_payment = pago_data.internet_payment
+        else:
+            cliente.internet_payment = str(round(m_internet_cash, 2))
 
         sync_cliente_balances(cliente, db)
         db.commit()
