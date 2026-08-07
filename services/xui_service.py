@@ -133,12 +133,20 @@ async def create_xui_user(
             raise ConnectionError("Sesión de XUI expirada.")
             
         try:
-            return r.json()
+            data = r.json()
+            if data.get("result") is True or data.get("success") is True:
+                logger.info(f"✅ XUI: Usuario {username} creado exitosamente en el panel.")
+                return {"success": True, "data": data}
+            else:
+                logger.error(f"❌ XUI: El panel rechazó la creación del usuario {username}. Respuesta: {data}")
+                return {"success": False, "data": data}
         except Exception:
-            # Check if successful response HTML or plaintext is returned
-            if "success" in r.text.lower() or '"result":1' in r.text or "true" in r.text.lower():
+            # Fallback parsing
+            if '"result":true' in r.text.lower() or '"success":true' in r.text.lower():
+                logger.info(f"✅ XUI (Fallback Text Match): Usuario {username} creado exitosamente.")
                 return {"success": True, "msg": "Usuario creado"}
-            raise ConnectionError(f"Respuesta de XUI no parseable: {r.text[:200]}")
+            logger.error(f"❌ XUI: Error parseando respuesta o fallo de creación. Raw Response: {r.text[:300]}")
+            return {"success": False, "detail": r.text[:200]}
 
     try:
         return await _send_create()
