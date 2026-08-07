@@ -614,32 +614,42 @@ def descargar_completa_base_datos(db: Session = Depends(get_db)):
         output = io.BytesIO()
         
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            sheets_written = 0
             for model, sheet_name in models_to_export:
-                # Query all records for this model
-                records = db.query(model).all()
-                
-                if records:
-                    data_list = []
-                    for rec in records:
-                        d = {}
-                        for col in model.__table__.columns:
-                            # col.key es el nombre del atributo en Python (ej: 'id')
-                            # col.name es el nombre del campo en la base de datos (ej: 'NUMERO')
-                            val = getattr(rec, col.key)
-                            if isinstance(val, (datetime, date)):
-                                val = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, "strftime") else str(val)
-                            elif isinstance(val, Decimal):
-                                val = float(val)
-                            d[col.name] = val
-                        data_list.append(d)
-                    df = pd.DataFrame(data_list)
-                else:
-                    columns = [c.name for c in model.__table__.columns]
-                    df = pd.DataFrame(columns=columns)
+                try:
+                    # Query all records for this model
+                    records = db.query(model).all()
                     
-                # Limit sheet name to 31 characters
-                sheet_name_limit = sheet_name[:31]
-                df.to_excel(writer, sheet_name=sheet_name_limit, index=False)
+                    if records:
+                        data_list = []
+                        for rec in records:
+                            d = {}
+                            for col in model.__table__.columns:
+                                # col.key es el nombre del atributo en Python (ej: 'id')
+                                # col.name es el nombre del campo en la base de datos (ej: 'NUMERO')
+                                val = getattr(rec, col.key)
+                                if isinstance(val, (datetime, date)):
+                                    val = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, "strftime") else str(val)
+                                elif isinstance(val, Decimal):
+                                    val = float(val)
+                                d[col.name] = val
+                            data_list.append(d)
+                        df = pd.DataFrame(data_list)
+                    else:
+                        columns = [c.name for c in model.__table__.columns]
+                        df = pd.DataFrame(columns=columns)
+                        
+                    # Limit sheet name to 31 characters
+                    sheet_name_limit = sheet_name[:31]
+                    df.to_excel(writer, sheet_name=sheet_name_limit, index=False)
+                    sheets_written += 1
+                except Exception as sheet_err:
+                    print(f"Aviso: No se pudo exportar la tabla '{sheet_name}': {sheet_err}")
+                    continue
+            
+            # Garantizar que al menos una hoja exista para evitar error de openpyxl
+            if sheets_written == 0:
+                pd.DataFrame({"Info": ["No se encontraron tablas exportables"]}).to_excel(writer, sheet_name="Info", index=False)
                 
         output.seek(0)
         
