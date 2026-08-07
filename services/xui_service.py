@@ -84,7 +84,7 @@ async def create_xui_user(
 ) -> Dict:
     """
     Simulates the XUI.one panel line creation request using post.php.
-    Uses multipart/form-data via the 'files' parameter in httpx.
+    Uses strict multipart/form-data via the 'files' parameter in httpx.
     """
     session = _get_session()
     
@@ -99,35 +99,37 @@ async def create_xui_user(
     # XUI.one expects bouquets_selected as a JSON string of strings, e.g. ["1","2","5"]
     bouquets_json = json.dumps([str(b) for b in bouquets], separators=(",", ":"))
 
-    # Construct the form fields for multipart/form-data
-    form_data = [
-        ("bouquets_selected", bouquets_json),
-        ("username", username),
-        ("password", password),
-        ("member_id", "16"),  # Member ID for your reseller/admin account in XUI
-        ("no_expire", "on"),
-        ("max_connections", str(max_connections)),
-        ("contact", ""),
-        ("admin_notes", ""),
-        ("reseller_notes", ""),
-        ("force_server_id", "0"),
-        ("isp_clear", ""),
-        ("access_token", ""),
-        ("forced_country", "")
+    # Construct the form fields for strict multipart/form-data using (None, value)
+    files = [
+        ("bouquets_selected", (None, bouquets_json)),
+        ("username", (None, username)),
+        ("password", (None, password)),
+        ("member_id", (None, "16")),  # Member ID for your reseller/admin account in XUI
+        ("no_expire", (None, "on")),
+        ("max_connections", (None, str(max_connections))),
+        ("contact", (None, "")),
+        ("admin_notes", (None, "")),
+        ("reseller_notes", (None, "")),
+        ("force_server_id", (None, "0")),
+        ("isp_clear", (None, "")),
+        ("access_token", (None, "")),
+        ("forced_country", (None, ""))
     ]
 
     # Append list values for outputs (access_output[])
     for out in allowed_outputs:
-        form_data.append(("access_output[]", str(out)))
+        files.append(("access_output[]", (None, str(out))))
 
     headers = {
-        "Referer": f"{XUI_URL}/lines",
-        "X-Requested-With": "XMLHttpRequest"
+        "Referer": f"{XUI_URL}/line",
+        "Origin": XUI_URL.split("/bwfdVuGs")[0],
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "*/*"
     }
 
     async def _send_create():
         # files= parameter forces HTTPX to send as multipart/form-data
-        r = await session.post(url, files=form_data, headers=headers)
+        r = await session.post(url, files=files, headers=headers)
         if r.status_code != 200:
             raise ConnectionError(f"HTTP {r.status_code} al crear línea en XUI")
         
@@ -137,15 +139,16 @@ async def create_xui_user(
             
         try:
             data = r.json()
-            if data.get("result") is True or data.get("success") is True or str(data.get("result")) == "1":
-                logger.info(f"✅ XUI: Línea {username} creada exitosamente.")
+            # XUI.one success response: {"result":true,"location":"lines?status=1","status":1}
+            if data.get("result") is True or data.get("success") is True or str(data.get("status")) == "1":
+                logger.info(f"✅ XUI: Línea {username} creada exitosamente en el panel.")
                 return {"success": True, "data": data}
             else:
                 logger.error(f"❌ XUI: El panel rechazó la creación de la línea {username}. Respuesta: {data}")
                 return {"success": False, "data": data}
         except Exception:
             # Fallback text check
-            if '"result":true' in r.text.lower() or '"success":true' in r.text.lower() or '"result":1' in r.text:
+            if '"result":true' in r.text.lower() or '"success":true' in r.text.lower() or '"status":1' in r.text:
                 logger.info(f"✅ XUI (Fallback Text Match): Línea {username} creada exitosamente.")
                 return {"success": True, "msg": "Línea creada"}
             logger.error(f"❌ XUI: Error parseando respuesta o fallo de creación. Raw Response: {r.text[:300]}")
