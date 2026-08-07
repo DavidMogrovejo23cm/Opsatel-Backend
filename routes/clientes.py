@@ -806,6 +806,8 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
+    old_internet_payment = cliente.internet_payment
+
     for var, value in vars(data).items():
         if value is not None:
             setattr(cliente, var, value)
@@ -815,6 +817,36 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
                 base_screens = (plan_info.pantallas if plan_info.pantallas is not None else 0) if plan_info else 0
                 cliente.plus = str(max(0, (value - base_screens) * 2))
             
+    # Lógica de ajuste de saldo si internet_payment fue modificado manualmente via "Guardar Valores"
+    if data.internet_payment is not None and data.internet_payment != old_internet_payment:
+        old_pay = try_float(old_internet_payment)
+        new_pay = try_float(data.internet_payment)
+        
+        # Obtener tarifa actual para los cálculos
+        tarifa = 0.00
+        if cliente.tercera_edad and cliente.precio_plan_especial is not None:
+            tarifa = float(cliente.precio_plan_especial)
+        elif db:
+            plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+            if plan_info:
+                tarifa = float(plan_info.precio or 0)
+
+        if new_pay > 0 and old_pay == 0:
+            # Se agregó un pago/promo
+            # Calcular lo sugerido de internet antes de este pago
+            internet_sugerido = float(cliente.total_pago or 0) - try_float(cliente.plus)
+            descuento_promo = 0.0
+            if new_pay < internet_sugerido and internet_sugerido > 0:
+                descuento_promo = internet_sugerido - new_pay
+            cliente.saldo = float(cliente.saldo or 0) - (new_pay + descuento_promo)
+        elif new_pay == 0 and old_pay > 0:
+            # Se borró el pago, restauramos saldo
+            cliente.saldo = float(cliente.saldo or 0) + max(tarifa, old_pay)
+        elif new_pay > 0 and old_pay > 0:
+            # Se editó un pago existente
+            diff = new_pay - old_pay
+            cliente.saldo = float(cliente.saldo or 0) - diff
+
     sync_cliente_balances(cliente, db)
     db.commit()
     return {"message": "Datos de administración actualizados"}
