@@ -1,3 +1,4 @@
+# pyrefly: ignore [missing-import]
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
 from datetime import datetime
@@ -21,6 +22,10 @@ class ClienteCreate(BaseModel):
     tercera_edad: Optional[bool] = False
     precio_plan_especial: Optional[float] = 0.0
     iptv_max_conn: Optional[int] = 0
+    iptv_activar: Optional[bool] = False
+    iptv_user: Optional[str] = None
+    iptv_pass: Optional[str] = None
+    tv_tipo: Optional[str] = "Ninguno"  # "Ninguno", "IPTV", "CATV"
     comentarios: Optional[str] = None
 
 class ClienteUpdateTecnico(BaseModel):
@@ -150,6 +155,7 @@ class ClienteUpdateGeneral(BaseModel):
     iptv_outputs: Optional[str] = None
     iptv_notes: Optional[str] = None
     iptv_member_id: Optional[int] = None
+    tv_tipo: Optional[str] = None
 
     @field_validator('potencia')
     @classmethod

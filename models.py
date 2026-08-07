@@ -126,6 +126,7 @@ class Cliente(Base):
     iptv_outputs = Column("IPTV_OUTPUTS", Text)
     iptv_notes = Column("IPTV_NOTES", Text)
     iptv_member_id = Column("IPTV_MEMBER_ID", Integer, default=1)
+    tv_tipo = Column("TV_TIPO", String(50), default="Ninguno")
 
     pagos = relationship("Pago", back_populates="cliente")
 

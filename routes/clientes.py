@@ -221,6 +221,31 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
             nuevo_id += 1
         elif current_id > nuevo_id:
             break # Encontramos un hueco
+
+    # Lógica IPTV auto-generación de credenciales
+    iptv_act = False
+    iptv_u = None
+    iptv_p = None
+    iptv_max = 0
+    iptv_b = "[]"
+    iptv_out = "[]"
+
+    if cliente.tv_tipo == "IPTV":
+        iptv_act = True
+        # Generar nombre de usuario sugerido: ID + Primer Apellido + Primera Letra Nombre
+        name_parts = (cliente.nombre or "").strip().split(" ")
+        name_parts = [p for p in name_parts if len(p) > 0]
+        generated_user = str(nuevo_id)
+        if len(name_parts) >= 2:
+            generated_user += name_parts[0].lower() + name_parts[1][0].lower()
+        elif len(name_parts) == 1:
+            generated_user += name_parts[0].lower()
+        
+        iptv_u = generated_user
+        iptv_p = "TV" + str(datetime.now().year) + ".@"
+        iptv_max = cliente.iptv_max_conn or 1
+        iptv_b = "[1,2,5]"
+        iptv_out = "[1,2]"
             
     db_cliente = models.Cliente(
         id=nuevo_id, # Asignamos el ID manualmente para llenar el hueco
@@ -233,7 +258,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         parroquia=cliente.parroquia,
         plan=cliente.plan,
         plus=cliente.plus,
-        iptv_max_conn=cliente.iptv_max_conn,
+        iptv_max_conn=iptv_max,
         cedula_tipo=cliente.cedula_tipo,
         ubicacion=cliente.ubicacion,
         fecha_firma=cliente.fecha_firma,
@@ -241,7 +266,14 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         tercera_edad=cliente.tercera_edad,
         precio_plan_especial=cliente.precio_plan_especial,
         comentarios=cliente.comentarios,
-        estado="Pendiente"
+        estado="Pendiente",
+        iptv_activar=iptv_act,
+        iptv_user=iptv_u,
+        iptv_pass=iptv_p,
+        iptv_bouquets=iptv_b,
+        iptv_outputs=iptv_out,
+        iptv_exp_date="Nunca",
+        tv_tipo=cliente.tv_tipo or "Ninguno"
     )
     try:
         db.add(db_cliente)
@@ -249,6 +281,31 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         sync_cliente_balances(db_cliente, db)
         db.commit()
         db.refresh(db_cliente)
+
+        # Si requiere IPTV, realizar la creación en el panel de fondo de forma asíncrona
+        if iptv_act:
+            import asyncio
+            from services.xui_service import create_xui_user
+            async def run_xui_creation():
+                try:
+                    res = await create_xui_user(
+                        username=iptv_u,
+                        password=iptv_p,
+                        max_connections=iptv_max,
+                        bouquets=iptv_b,
+                        allowed_outputs=iptv_out
+                    )
+                    print(f"IPTV: Cuenta de XUI creada exitosamente para {iptv_u}. Detalle: {res}")
+                except Exception as xui_err:
+                    print(f"ERROR IPTV: Falló la creación en panel XUI para {iptv_u}: {xui_err}")
+
+            # Correr en background para no ralentizar la respuesta del API principal
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(run_xui_creation())
+            except RuntimeError:
+                asyncio.run(run_xui_creation())
+
         return db_cliente
     except Exception as e:
         db.rollback()
