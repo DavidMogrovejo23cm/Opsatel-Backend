@@ -79,12 +79,12 @@ async def create_xui_user(
     username: str, 
     password: str, 
     max_connections: int = 1,
-    bouquets: str = "[1,2,5]",
-    allowed_outputs: str = "[1,2]"
+    bouquets: List[str] = ["1", "2", "5"],
+    allowed_outputs: List[str] = ["1", "2"]
 ) -> Dict:
     """
-    Simulates the XUI.one panel line/user creation request.
-    Uses the same HTTP session to preserve authentication.
+    Simulates the XUI.one panel line creation request using post.php.
+    Uses multipart/form-data via the 'files' parameter in httpx.
     """
     session = _get_session()
     
@@ -93,58 +93,61 @@ async def create_xui_user(
     if "PHPSESSID" not in cookies:
         await do_login()
 
-    api_url = f"{XUI_URL}/api"
+    url = f"{XUI_URL}/post.php?action=line&referrer=lines&order=0&dir=desc"
     
-    # Form payload for creating a new IPTV line in XUI.one
-    payload = {
-        "action": "user_new",  # Default action in XUI.one for creating users
-        "username": username,
-        "password": password,
-        "member_id": 1,
-        "bouquet": bouquets,
-        "allowed_outputs": allowed_outputs,
-        "max_connections": max_connections,
-        "admin_enabled": 1,
-        "enabled": 1,
-        "is_restreamer": 0,
-        "is_trial": 0,
-        "is_mag": 0,
-        "is_e2": 0,
-        "is_stalker": 0,
-        "is_isplock": 0,
-        "allowed_ips": "[]",
-        "allowed_ua": "[]",
-        "bypass_ua": 0,
-        "force_server_id": 0
-    }
+    import json
+    # XUI.one expects bouquets_selected as a JSON string of strings, e.g. ["1","2","5"]
+    bouquets_json = json.dumps([str(b) for b in bouquets], separators=(",", ":"))
+
+    # Construct the form fields for multipart/form-data
+    form_data = [
+        ("bouquets_selected", bouquets_json),
+        ("username", username),
+        ("password", password),
+        ("member_id", "16"),  # Member ID for your reseller/admin account in XUI
+        ("no_expire", "on"),
+        ("max_connections", str(max_connections)),
+        ("contact", ""),
+        ("admin_notes", ""),
+        ("reseller_notes", ""),
+        ("force_server_id", "0"),
+        ("isp_clear", ""),
+        ("access_token", ""),
+        ("forced_country", "")
+    ]
+
+    # Append list values for outputs (access_output[])
+    for out in allowed_outputs:
+        form_data.append(("access_output[]", str(out)))
 
     headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Referer": f"{XUI_URL}/users"
+        "Referer": f"{XUI_URL}/lines",
+        "X-Requested-With": "XMLHttpRequest"
     }
 
     async def _send_create():
-        r = await session.post(api_url, data=payload, headers=headers)
+        # files= parameter forces HTTPX to send as multipart/form-data
+        r = await session.post(url, files=form_data, headers=headers)
         if r.status_code != 200:
-            raise ConnectionError(f"HTTP {r.status_code} al crear usuario en XUI")
+            raise ConnectionError(f"HTTP {r.status_code} al crear línea en XUI")
         
-        # Check if login expired and we got redirected to login page
+        # Check if login expired
         if "XUI | Login" in r.text or 'data-id="login"' in r.text:
             raise ConnectionError("Sesión de XUI expirada.")
             
         try:
             data = r.json()
-            if data.get("result") is True or data.get("success") is True:
-                logger.info(f"✅ XUI: Usuario {username} creado exitosamente en el panel.")
+            if data.get("result") is True or data.get("success") is True or str(data.get("result")) == "1":
+                logger.info(f"✅ XUI: Línea {username} creada exitosamente.")
                 return {"success": True, "data": data}
             else:
-                logger.error(f"❌ XUI: El panel rechazó la creación del usuario {username}. Respuesta: {data}")
+                logger.error(f"❌ XUI: El panel rechazó la creación de la línea {username}. Respuesta: {data}")
                 return {"success": False, "data": data}
         except Exception:
-            # Fallback parsing
-            if '"result":true' in r.text.lower() or '"success":true' in r.text.lower():
-                logger.info(f"✅ XUI (Fallback Text Match): Usuario {username} creado exitosamente.")
-                return {"success": True, "msg": "Usuario creado"}
+            # Fallback text check
+            if '"result":true' in r.text.lower() or '"success":true' in r.text.lower() or '"result":1' in r.text:
+                logger.info(f"✅ XUI (Fallback Text Match): Línea {username} creada exitosamente.")
+                return {"success": True, "msg": "Línea creada"}
             logger.error(f"❌ XUI: Error parseando respuesta o fallo de creación. Raw Response: {r.text[:300]}")
             return {"success": False, "detail": r.text[:200]}
 
@@ -157,5 +160,5 @@ async def create_xui_user(
             return await _send_create()
         raise
     except Exception as e:
-        logger.error(f"XUI: Fallo al crear usuario {username}: {e}")
+        logger.error(f"XUI: Fallo al crear línea {username}: {e}")
         raise

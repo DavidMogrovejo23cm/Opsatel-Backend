@@ -292,8 +292,8 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
                         username=iptv_u,
                         password=iptv_p,
                         max_connections=iptv_max,
-                        bouquets=iptv_b,
-                        allowed_outputs=iptv_out
+                        bouquets=["1", "2", "5"],
+                        allowed_outputs=["1", "2"]
                     )
                     print(f"IPTV: Cuenta de XUI creada exitosamente para {iptv_u}. Detalle: {res}")
                 except Exception as xui_err:
