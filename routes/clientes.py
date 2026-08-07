@@ -1338,6 +1338,9 @@ def eliminar_cliente(id: int, db: Session = Depends(get_db)):
     # Eliminar pagos asociados (si los hubiera)
     db.query(models.Pago).filter(models.Pago.cliente_id == id).delete()
     
+    # Eliminar registros de hoja de ruta asociados (para evitar violación de clave foránea)
+    db.query(models.HojaRuta).filter(models.HojaRuta.cliente_id == id).delete()
+    
     # Liberar la IP en inventory_ip_pools
     try:
         import inventory_models
