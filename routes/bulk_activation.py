@@ -442,42 +442,125 @@ def refresh_client_ip(
         raise HTTPException(status_code=500, detail="MikroTik no configurado para el nodo del cliente.")
 
     import re
+    import time
     from network.adapters.mikrotik import MikroTikAdapter
-    mt = MikroTikAdapter(
-        host=olt_config.mikrotik_host,
-        port=olt_config.mikrotik_port or 8728,
-        username=olt_config.mikrotik_username or "admin",
-        password=olt_config.mikrotik_password or ""
-    )
+    from services.olt_interface import OLTInterface
 
-    # 1. Buscar lease en MikroTik por el comentario del cliente
-    # La OLT usa el formato: "{cliente_id} {nombre}" o similar
-    # Buscamos coincidencias con el ID de cliente de 6 dígitos
+    # Intentar obtener la MAC real en caliente conectando a la OLT
+    real_client_mac = None
+    if cliente.service_port:
+        try:
+            olt = OLTInterface(
+                host=olt_config.host,
+                port=olt_config.port or 23,
+                username=olt_config.username or "admin",
+                password=olt_config.password or ""
+            )
+            # Intentar aprender la MAC real del cliente (3 intentos)
+            for mac_attempt in range(3):
+                time.sleep(1)
+                real_client_mac = olt.get_mac_from_service_port(str(cliente.service_port))
+                if real_client_mac:
+                    break
+        except Exception as olt_err:
+            logger.warning(f"No se pudo consultar la MAC en la OLT para cliente {cliente.id}: {olt_err}")
+
+    mt_mac = real_client_mac or cliente.mac or ""
     client_code = str(cliente.id).zfill(6)
     lease_found = None
 
-    try:
-        mt.connect()
-        leases = mt.api.get_resource('/ip/dhcp-server/lease').get()
-        
-        # Primero intentar match exacto o parcial por el comentario
-        for l in leases:
-            comment = l.get('comment', '')
-            if client_code in comment:
-                lease_found = l
-                break
+    # Determinar los servidores DHCP candidatos basados en el puerto GPON
+    puerto_raw = str(cliente.puerto or "0")
+    m = re.search(r'\d+', puerto_raw)
+    port_idx = int(m.group()) if m else 0
 
-        # Si no se encuentra por comentario, intentar por MAC si el cliente tiene registrada
-        if not lease_found and cliente.mac:
-            clean_mac = cliente.mac.replace(":", "").replace("-", "").upper()
-            for l in leases:
+    dhcp_servers_to_try = [
+        f"dhcp{port_idx + 1}",
+        f"dhcp{port_idx}",
+        f"dhcp-{port_idx + 1}",
+        f"dhcp-{port_idx}",
+    ]
+    if cliente.nodo:
+        dhcp_servers_to_try.append(f"dhcp-{cliente.nodo.lower()}")
+
+    try:
+        mt = MikroTikAdapter(
+            host=olt_config.mikrotik_host,
+            port=olt_config.mikrotik_port or 8728,
+            username=olt_config.mikrotik_username or "admin",
+            password=olt_config.mikrotik_password or ""
+        )
+        mt.connect()
+
+        # Obtener todos los leases dinámicos activos
+        dynamic_leases = []
+        for srv in dhcp_servers_to_try:
+            try:
+                leases_found = mt.get_dynamic_leases(server=srv)
+                if leases_found:
+                    dynamic_leases.extend(leases_found)
+            except Exception:
+                pass
+
+        if not dynamic_leases:
+            try:
+                dynamic_leases = mt.get_dynamic_leases()
+            except Exception:
+                dynamic_leases = []
+
+        # 1. Buscar por MAC aprendida o del cliente
+        if mt_mac:
+            clean_mac = mt_mac.replace(":", "").replace("-", "").upper()
+            for dl in dynamic_leases:
+                dl_mac = dl.get('mac-address', '').replace(":", "").replace("-", "").upper()
+                if dl_mac == clean_mac:
+                    lease_found = dl
+                    break
+
+        # 2. Buscar por comentario si ya es estático o por el ID en el client-id
+        if not lease_found:
+            for dl in dynamic_leases:
+                comment = dl.get('comment', '')
+                client_id_opt = dl.get('client-id', '')
+                if client_code in comment or client_id_opt == str(cliente.id):
+                    lease_found = dl
+                    break
+
+        # 3. Buscar por Hostname coincidente
+        if not lease_found and cliente.nombre:
+            clean_host = cliente.nombre.lower().strip()
+            for dl in dynamic_leases:
+                if dl.get('host-name', '').lower().strip() == clean_host:
+                    lease_found = dl
+                    break
+
+        # 4. Fallback por descarte de un solo lease dinámico en el servidor
+        if not lease_found and len(dynamic_leases) == 1:
+            lease_found = dynamic_leases[0]
+
+        # 5. Fallback por descarte (primer lease de router genérico)
+        if not lease_found and dynamic_leases:
+            routers_leases = [
+                dl for dl in dynamic_leases 
+                if any(term in dl.get('host-name', '').lower() for term in ['rtkgw', 'archer', 'tplink', 'merkusys', 'huawei', 'netis', 'tenda', 'dlink', 'deco'])
+            ]
+            if routers_leases:
+                lease_found = routers_leases[0]
+            else:
+                lease_found = dynamic_leases[0]
+
+        if not lease_found:
+            # Si no hay ningún lease dinámico, buscar entre TODOS los leases (dinámicos y estáticos)
+            all_leases = mt.api.get_resource('/ip/dhcp-server/lease').get()
+            for l in all_leases:
+                comment = l.get('comment', '')
                 l_mac = l.get('mac-address', '').replace(":", "").replace("-", "").upper()
-                if clean_mac == l_mac:
+                if client_code in comment or (mt_mac and l_mac == mt_mac.replace(":", "").replace("-", "").upper()):
                     lease_found = l
                     break
 
         if not lease_found:
-            raise HTTPException(status_code=404, detail=f"No se encontró un Lease DHCP en el MikroTik para el cliente {client_code}.")
+            raise HTTPException(status_code=404, detail=f"No se encontró un Lease DHCP en el MikroTik para el cliente {client_code} (MAC: {mt_mac or 'No leída'}).")
 
         lease_id = lease_found.get('.id') or lease_found.get('id')
         lease_ip = lease_found.get('address')
