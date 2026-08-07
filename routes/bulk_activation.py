@@ -453,7 +453,7 @@ def refresh_client_ip(
     # 1. Buscar lease en MikroTik por el comentario del cliente
     # La OLT usa el formato: "{cliente_id} {nombre}" o similar
     # Buscamos coincidencias con el ID de cliente de 6 dígitos
-    client_code = str(cliente.id).padStart(6, '0')
+    client_code = str(cliente.id).zfill(6)
     lease_found = None
 
     try:
