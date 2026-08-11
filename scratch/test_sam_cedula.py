@@ -2,7 +2,9 @@ import sys
 import os
 import unittest
 from unittest.mock import MagicMock
+# pyrefly: ignore [missing-import]
 from sqlalchemy import create_engine
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import sessionmaker
 
 # Agregar directorio padre al path

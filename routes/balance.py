@@ -1,7 +1,11 @@
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException
+# pyrefly: ignore [missing-import]
 from fastapi.responses import FileResponse
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 from typing import List, Optional
+# pyrefly: ignore [missing-import]
 from pydantic import BaseModel
 from database import get_db
 from .auth import require_role
@@ -663,10 +667,12 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     # ── HOJA 1: FACTURACIÓN CLIENTES ──
     data_clientes = []
     for c in clientes:
-        id_str = f"C{c.id:02d}" if c.id is not None else ""
         fact_val = str(c.facturas or "").strip()
         has_factura = bool(fact_val and fact_val.upper() != "NONE" and fact_val != "")
-        
+        if not has_factura:
+            continue
+            
+        id_str = f"C{c.id:02d}" if c.id is not None else ""
         pago_mensual = float(c.pago_mensual or 0.00)
         confirmar = True if (has_factura and pago_mensual > 0) else False
         megas_val = f"{planes_megas.get(c.plan, 0)}MB" if (confirmar and c.plan and c.plan in planes_megas) else "FALSE"
