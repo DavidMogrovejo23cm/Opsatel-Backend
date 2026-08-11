@@ -423,6 +423,7 @@ class Egreso(Base):
     fecha = Column(String(50))          # YYYY-MM-DD
     mes = Column(String(20))            # YYYY-MM  → para filtrado rápido
     metodo_pago = Column(String(100), default="Efectivo")
+    notas = Column(String(255))
 
 
 # ============================================================================
