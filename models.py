@@ -450,18 +450,21 @@ class OLTConfig(Base):
     active = Column(Boolean, default=True, index=True)
     nodo_asociado = Column(String(100), index=True)
     
-    # ── MikroTik Integration Fields ─────────────────────────
-    mikrotik_host = Column(String(50), nullable=True)
-    mikrotik_port = Column(Integer, default=8728)
+    # Credenciales MikroTik (RouterOS API) asociado a este nodo
+    mikrotik_host     = Column(String(50),  nullable=True)
+    mikrotik_port     = Column(Integer,     nullable=True, default=8728)
     mikrotik_username = Column(String(100), nullable=True)
     mikrotik_password = Column(String(100), nullable=True)
-    # ────────────────────────────────────────────────────────
+
+    # Relación con LibreQoS Server
+    libreqos_server_id = Column(Integer, ForeignKey("libreqos_servers.id"), nullable=True)
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     created_by = Column(String(100))
     updated_by = Column(String(100))
     
+    # Relaciones
     tasks = relationship("OLTTask", back_populates="olt_config")
 
 

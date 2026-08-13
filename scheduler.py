@@ -3,7 +3,9 @@ Scheduler para ejecutar tareas automáticas como envío de WhatsApp.
 Se ejecuta en background y verifica cada minuto si hay envíos programados.
 """
 
+# pyrefly: ignore [missing-import]
 from apscheduler.schedulers.background import BackgroundScheduler
+# pyrefly: ignore [missing-import]
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 import pytz
@@ -48,6 +50,9 @@ def enviar_whatsapp_programado():
                 else:
                     rec = 'unico'
             
+            debe_enviar = False
+            es_envio_unico = False
+
             if rec == 'diario':
                 # Envío diario recurrente
                 debe_enviar = True

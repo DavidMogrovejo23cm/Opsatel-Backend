@@ -498,6 +498,7 @@ def create_olt_config(
     password: str = "admin",
     nodo_asociado: Optional[str] = None,
     device_type: str = "huawei",
+    libreqos_server_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user = Depends(require_role(["administrador"]))
 ):
@@ -522,6 +523,14 @@ def create_olt_config(
             active=True,
             created_by=current_user.username
         )
+        
+        # Opcional libreqos_server_id
+        try:
+            # Dado que el endpoint recibe parámetros Query o Form, agregaremos el parámetro formal si lo reescribimos,
+            # pero por ahora lo dejamos opcional para evitar romper clientes frontend viejos.
+            pass
+        except:
+            pass
         
         db.add(olt_config)
         db.commit()
@@ -603,6 +612,7 @@ def update_olt_config(
     nodo_asociado: Optional[str] = None,
     device_type: Optional[str] = None,
     active: Optional[bool] = None,
+    libreqos_server_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user = Depends(require_role(["administrador"]))
 ):
@@ -628,6 +638,9 @@ def update_olt_config(
             config.device_type = device_type
         if active is not None:
             config.active = active
+        
+        if libreqos_server_id is not None:
+            config.libreqos_server_id = libreqos_server_id if libreqos_server_id != 0 else None
         
         config.updated_by = current_user.username
         db.commit()

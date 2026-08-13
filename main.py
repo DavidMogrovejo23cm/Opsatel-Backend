@@ -13,6 +13,8 @@ import models
 import os
 import sys
 import time
+import threading
+import subprocess
 import pymysql
 # pyrefly: ignore [missing-import]
 from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
@@ -22,6 +24,7 @@ from force_fix import force_fix_columns
 import observability
 import discovery_models
 import inventory_models
+import libreqos_models
 from routes import discovery, sync, workflows
 from routes.bulk_activation import bulk_router
 
@@ -213,6 +216,8 @@ app.include_router(rutas_configuraciones.router)
 app.include_router(asistencia.router)
 app.include_router(whatsapp.router)
 app.include_router(olt_tasks.router)
+from routes import libreqos
+app.include_router(libreqos.router)
 
 # pyrefly: ignore [missing-import]
 from fastapi.staticfiles import StaticFiles
@@ -294,10 +299,22 @@ seed_whatsapp_config()
 iniciar_scheduler()
 
 # ========================================================================
+# AUTO-INICIAR EL WORKER DE LIBREQOS EN UN HILO DAEMON
+# ========================================================================
+def iniciar_libreqos_worker():
+    """Arranca el worker de LibreQoS como hilo daemon en segundo plano."""
+    try:
+        from workers.libreqos_worker import LibreQoSWorker
+        worker = LibreQoSWorker()
+        hilo = threading.Thread(target=worker.run, daemon=True, name="libreqos-worker")
+        hilo.start()
+        print("[LibreQoS Worker] Hilo daemon iniciado correctamente.")
+    except Exception as e:
+        print(f"[LibreQoS Worker] Error al iniciar el worker: {e}")
+
+# ========================================================================
 # AUTO-INICIAR EL PUENTE DE WHATSAPP (NODE.JS) EN SEGUNDO PLANO
 # ========================================================================
-import subprocess
-import threading
 
 def iniciar_puente_whatsapp():
     provider = os.getenv("WHATSAPP_PROVIDER", "local-bridge")
@@ -342,6 +359,7 @@ def iniciar_puente_whatsapp():
 @app.on_event("startup")
 async def startup_bridge():
     iniciar_puente_whatsapp()
+    iniciar_libreqos_worker()
 
 @app.on_event("shutdown")
 async def shutdown_bridge():

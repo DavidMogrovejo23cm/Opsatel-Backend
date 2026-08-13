@@ -764,12 +764,35 @@ def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: 
             if existente:
                 raise HTTPException(status_code=400, detail=f"El campo '{campo}' con valor '{nuevo_valor}' ya está en uso globalmente.")
 
+    # Guardar valores anteriores para comparar
+    estado_prev = cliente.estado
+    ip_prev = cliente.ip
+    plan_prev = cliente.plan
+
     for var, value in vars(data).items():
         if value is not None:
             setattr(cliente, var, value)
             
     sync_cliente_balances(cliente, db)
     db.commit()
+
+    # Encolar tareas en LibreQoS basadas en los cambios detectados
+    try:
+        from services.libreqos_manager import LibreQoSManager
+        correlation_id = f"up_client_{id}_{int(datetime.now().timestamp())}"
+        
+        # Caso 1: Cambio de estado a Suspendido
+        if cliente.estado == "Suspendido" and estado_prev != "Suspendido":
+            LibreQoSManager.enqueue_job("SUSPEND", id, db, correlation_id, "CLIENT_UPDATE_API")
+        # Caso 2: Reactivación (de Suspendido a Activo)
+        elif cliente.estado == "Activo" and estado_prev == "Suspendido":
+            LibreQoSManager.enqueue_job("RESUME", id, db, correlation_id, "CLIENT_UPDATE_API")
+        # Caso 3: Cambio de IP o cambio de Plan (velocidades)
+        elif cliente.estado == "Activo" and (cliente.ip != ip_prev or cliente.plan != plan_prev):
+            LibreQoSManager.enqueue_job("UPDATE", id, db, correlation_id, "CLIENT_UPDATE_API")
+    except Exception as lq_err:
+        print(f"Aviso: No se pudo encolar la tarea en LibreQoS tras actualización: {lq_err}")
+
     return {"message": "Cliente actualizado correctamente"}
 
 @router.patch("/{id}/configuracion-tecnica", dependencies=[Depends(require_role(["administrador", "tecnico", "instalador"]))])
@@ -1421,6 +1444,27 @@ def eliminar_cliente(id: int, db: Session = Depends(get_db)):
     except Exception as e:
         print(f"Aviso: No se pudo liberar la IP en el inventario: {e}")
         
+    # Encolar la eliminación en LibreQoS antes de borrar el cliente
+    try:
+        from services.libreqos_manager import LibreQoSManager
+        # Encolar directamente ya que después no existirá el registro Cliente en la BD
+        LibreQoSManager.enqueue_job(
+            operation="REMOVE",
+            cliente_id=id,
+            db=db,
+            correlation_id=f"del_client_{id}_{int(datetime.now().timestamp())}",
+            created_by="CLIENT_DELETE_API"
+        )
+    except Exception as lq_err:
+        print(f"Aviso: No se pudo encolar la eliminación en LibreQoS: {lq_err}")
+
+    # Eliminar registros de ClientQoSState asociados si existen
+    try:
+        from libreqos_models import ClientQoSState
+        db.query(ClientQoSState).filter(ClientQoSState.cliente_id == id).delete()
+    except Exception as qos_err:
+        print(f"Aviso: No se pudo eliminar el estado QoS del cliente: {qos_err}")
+
     db.delete(cliente)
     db.commit()
 

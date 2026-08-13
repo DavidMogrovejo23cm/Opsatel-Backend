@@ -32,6 +32,7 @@ import observability
 from resource_manager import ResourceManager
 from services.olt_interface import OLTInterface
 from network.adapters.mikrotik import MikroTikAdapter, MikroTikAdapterError
+from services.libreqos_manager import LibreQoSManager
 
 logger = logging.getLogger("opsatel.workflow")
 
@@ -189,6 +190,24 @@ class WorkflowEngine:
                     "mac": mac
                 })
                 _add_timeline("EVENT_BUS", "SUCCESS", "Evento CLIENT_NETWORK_READY publicado")
+
+                # ── PASO 4: LIBREQOS AUTOMATION (BEST-EFFORT) ──────────────────────────
+                try:
+                    _add_timeline("LIBREQOS_PROVISIONING", "PENDING", "Encolando tarea asíncrona de QoS en LibreQoS...")
+                    from services.libreqos_manager import LibreQoSManager
+                    job = LibreQoSManager.enqueue_job(
+                        operation="PROVISION",
+                        cliente_id=cliente.id,
+                        db=self.db,
+                        correlation_id=correlation_id,
+                        created_by="WORKFLOW_ENGINE"
+                    )
+                    if job:
+                        _add_timeline("LIBREQOS_PROVISIONING", "SUCCESS", f"Tarea QoS encolada correctamente. Job ID: {job.id}")
+                    else:
+                        _add_timeline("LIBREQOS_PROVISIONING", "WARNING", "No se pudo encolar la tarea QoS (sin LibreQoS configurado o ya encolada)")
+                except Exception as lq_err:
+                    _add_timeline("LIBREQOS_PROVISIONING", "WARNING", f"Error encolando LibreQoS: {lq_err}")
 
             # Auditoría final
             observability.log_audit_event_async(
