@@ -1,6 +1,9 @@
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+# pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Optional
+# pyrefly: ignore [missing-import]
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -8,7 +11,9 @@ from database import get_db
 from routes.auth import require_role
 from libreqos_models import LibreQoSServer, ClientQoSState, LibreQoSJob
 from services.libreqos_manager import LibreQoSManager
+# pyrefly: ignore [missing-import]
 from sync.libreqos_sync import LibreQoSReconciler
+# pyrefly: ignore [missing-import]
 from network.adapters.libreqos import LibreQoSAdapter
 
 router = APIRouter(prefix="/libreqos", tags=["LibreQoS Admin"])
