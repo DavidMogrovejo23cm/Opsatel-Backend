@@ -1052,6 +1052,19 @@ class TaskProcessor:
                                         self.db.commit()
                                         log_mt(f"[MikroTik] IP final asignada y persistida: {target_ip}")
 
+                                        # ── ENCOLAR EN LIBREQOS AUTOMÁTICAMENTE ──────────────────
+                                        try:
+                                            from services.libreqos_manager import LibreQoSManager
+                                            lq_cid = f"ap_{mt_cliente.id}_{int(datetime.now().timestamp())}"
+                                            log_mt(f"[LibreQoS] Encolando aprovisionamiento automático para cliente {mt_cliente.id} con IP {target_ip}...")
+                                            lq_job = LibreQoSManager.enqueue_job("PROVISION", mt_cliente.id, self.db, lq_cid, "OLT_DAEMON_ACTIVATION")
+                                            if lq_job:
+                                                log_mt(f"[LibreQoS] ✓ Tarea de aprovisionamiento encolada (Job ID: {lq_job.id})")
+                                            else:
+                                                log_mt("[LibreQoS] [ADVERTENCIA] No se pudo crear el trabajo de LibreQoS (verificar topología OLT/servidor)")
+                                        except Exception as lq_err:
+                                            log_mt(f"[LibreQoS] [ERROR] Falló encolar LibreQoS: {lq_err}")
+
                                         # Actualizar el lease estático con la IP definitiva
                                         if target_ip and target_ip != lease_ip:
                                             log_mt(f"[MikroTik] Actualizando IP del lease {lease_id}: {lease_ip} → {target_ip}...")

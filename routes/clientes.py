@@ -880,6 +880,15 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
             print(f"Error calculando prorrateo: {e}")
 
         db.commit()
+
+        # Encolar en LibreQoS
+        try:
+            from services.libreqos_manager import LibreQoSManager
+            lq_cid = f"ct_{id}_{int(datetime.now().timestamp())}"
+            LibreQoSManager.enqueue_job("PROVISION", id, db, lq_cid, "CLIENT_UPDATE_API")
+        except Exception as lq_err:
+            print(f"Error al encolar LibreQoS en actualizacion tecnica: {lq_err}")
+
         return {"message": "Configuración técnica guardada, cliente ahora Activo (con pago prorrateado) y con fecha de instalación registrada."}
     except HTTPException:
         raise
@@ -1365,8 +1374,59 @@ def eliminar_todos_clientes(db: Session = Depends(get_db)):
         
         # 2. Eliminar pagos (tienen foreign key a clientes)
         db.query(models.Pago).delete()
+
+        # 3. Eliminar tareas OLT y sus logs
+        try:
+            db.query(models.OLTTaskLog).delete()
+            db.query(models.OLTTask).delete()
+        except Exception as e:
+            print(f"Aviso: No se pudieron eliminar las tareas OLT: {e}")
+
+        # 4. Eliminar verificaciones de potencia OLT
+        try:
+            db.query(models.OLTPowerCheck).delete()
+        except Exception as e:
+            print(f"Aviso: No se pudieron eliminar las verificaciones de potencia OLT: {e}")
+
+        # 5. Limpiar/Resetear tablas de inventario
+        try:
+            import inventory_models
+            db.query(inventory_models.InventoryIpPool).update({
+                inventory_models.InventoryIpPool.estado: "LIBRE",
+                inventory_models.InventoryIpPool.cliente_id: None,
+                inventory_models.InventoryIpPool.updated_at: datetime.now()
+            })
+            db.query(inventory_models.InventoryServicePort).update({
+                inventory_models.InventoryServicePort.estado: "LIBRE",
+                inventory_models.InventoryServicePort.cliente_id: None,
+                inventory_models.InventoryServicePort.updated_at: datetime.now()
+            })
+            db.query(inventory_models.InventoryOntId).update({
+                inventory_models.InventoryOntId.estado: "LIBRE",
+                inventory_models.InventoryOntId.cliente_id: None,
+                inventory_models.InventoryOntId.updated_at: datetime.now()
+            })
+        except Exception as e:
+            print(f"Aviso: No se pudo resetear el inventario: {e}")
+
+        # 6. Limpiar tablas de LibreQoS (estados, trabajos y auditoría)
+        try:
+            from libreqos_models import ClientQoSState, LibreQoSJob, LibreQoSAuditLog
+            db.query(ClientQoSState).delete()
+            db.query(LibreQoSJob).delete()
+            db.query(LibreQoSAuditLog).update({LibreQoSAuditLog.cliente_id: None})
+        except Exception as e:
+            print(f"Aviso: No se pudieron limpiar las tablas de LibreQoS: {e}")
+
+        # 7. Desvincular ONTs y Service Ports descubiertos
+        try:
+            from discovery_models import DiscoveredONT, DiscoveredServicePort
+            db.query(DiscoveredONT).update({DiscoveredONT.cliente_id: None})
+            db.query(DiscoveredServicePort).update({DiscoveredServicePort.cliente_id: None})
+        except Exception as e:
+            print(f"Aviso: No se pudieron desvincular los dispositivos descubiertos: {e}")
         
-        # 3. Eliminar todos los clientes
+        # 8. Eliminar todos los clientes
         db.query(models.Cliente).delete()
         
         db.commit()
@@ -1425,24 +1485,44 @@ def eliminar_cliente(id: int, db: Session = Depends(get_db)):
     except Exception as e:
         print(f"Aviso: No se pudieron eliminar las tareas OLT del cliente: {e}")
 
+    # Eliminar verificaciones de potencia OLT asociadas (para evitar violación de clave foránea)
+    try:
+        db.query(models.OLTPowerCheck).filter(models.OLTPowerCheck.cliente_id == id).delete()
+    except Exception as e:
+        print(f"Aviso: No se pudieron eliminar las verificaciones de potencia OLT: {e}")
+
     # Eliminar pagos asociados (si los hubiera)
     db.query(models.Pago).filter(models.Pago.cliente_id == id).delete()
     
     # Eliminar registros de hoja de ruta asociados (para evitar violación de clave foránea)
     db.query(models.HojaRuta).filter(models.HojaRuta.cliente_id == id).delete()
     
-    # Liberar la IP en inventory_ip_pools
+    # Liberar la IP, Service Port y ONT ID en el inventario
     try:
         import inventory_models
-        pool_ip = db.query(inventory_models.InventoryIpPool).filter(
+        db.query(inventory_models.InventoryIpPool).filter(
             inventory_models.InventoryIpPool.cliente_id == id
-        ).first()
-        if pool_ip:
-            pool_ip.estado = "LIBRE"
-            pool_ip.cliente_id = None
-            pool_ip.updated_at = datetime.now()
+        ).update({
+            inventory_models.InventoryIpPool.estado: "LIBRE",
+            inventory_models.InventoryIpPool.cliente_id: None,
+            inventory_models.InventoryIpPool.updated_at: datetime.now()
+        })
+        db.query(inventory_models.InventoryServicePort).filter(
+            inventory_models.InventoryServicePort.cliente_id == id
+        ).update({
+            inventory_models.InventoryServicePort.estado: "LIBRE",
+            inventory_models.InventoryServicePort.cliente_id: None,
+            inventory_models.InventoryServicePort.updated_at: datetime.now()
+        })
+        db.query(inventory_models.InventoryOntId).filter(
+            inventory_models.InventoryOntId.cliente_id == id
+        ).update({
+            inventory_models.InventoryOntId.estado: "LIBRE",
+            inventory_models.InventoryOntId.cliente_id: None,
+            inventory_models.InventoryOntId.updated_at: datetime.now()
+        })
     except Exception as e:
-        print(f"Aviso: No se pudo liberar la IP en el inventario: {e}")
+        print(f"Aviso: No se pudieron liberar los recursos del inventario: {e}")
         
     # Encolar la eliminación en LibreQoS antes de borrar el cliente
     try:
@@ -1464,6 +1544,28 @@ def eliminar_cliente(id: int, db: Session = Depends(get_db)):
         db.query(ClientQoSState).filter(ClientQoSState.cliente_id == id).delete()
     except Exception as qos_err:
         print(f"Aviso: No se pudo eliminar el estado QoS del cliente: {qos_err}")
+
+    # Eliminar trabajos de LibreQoS asociados si existen
+    try:
+        from libreqos_models import LibreQoSJob
+        db.query(LibreQoSJob).filter(LibreQoSJob.cliente_id == id).delete()
+    except Exception as job_err:
+        print(f"Aviso: No se pudieron eliminar los trabajos de LibreQoS: {job_err}")
+
+    # Desvincular registros de auditoría de LibreQoS asociados si existen
+    try:
+        from libreqos_models import LibreQoSAuditLog
+        db.query(LibreQoSAuditLog).filter(LibreQoSAuditLog.cliente_id == id).update({LibreQoSAuditLog.cliente_id: None})
+    except Exception as audit_err:
+        print(f"Aviso: No se pudieron desvincular los registros de auditoría de LibreQoS: {audit_err}")
+
+    # Desvincular ONTs y Service Ports descubiertos si existen
+    try:
+        from discovery_models import DiscoveredONT, DiscoveredServicePort
+        db.query(DiscoveredONT).filter(DiscoveredONT.cliente_id == id).update({DiscoveredONT.cliente_id: None})
+        db.query(DiscoveredServicePort).filter(DiscoveredServicePort.cliente_id == id).update({DiscoveredServicePort.cliente_id: None})
+    except Exception as disc_err:
+        print(f"Aviso: No se pudieron desvincular los dispositivos descubiertos: {disc_err}")
 
     db.delete(cliente)
     db.commit()
