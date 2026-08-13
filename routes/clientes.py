@@ -787,8 +787,11 @@ def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: 
         # Caso 2: Reactivación (de Suspendido a Activo)
         elif cliente.estado == "Activo" and estado_prev == "Suspendido":
             LibreQoSManager.enqueue_job("RESUME", id, db, correlation_id, "CLIENT_UPDATE_API")
-        # Caso 3: Cambio de IP o cambio de Plan (velocidades)
-        elif cliente.estado == "Activo" and (cliente.ip != ip_prev or cliente.plan != plan_prev):
+        # Caso 3: Aprovisionamiento inicial (Pasa a Activo por primera vez)
+        elif cliente.estado == "Activo" and estado_prev != "Activo":
+            LibreQoSManager.enqueue_job("PROVISION", id, db, correlation_id, "CLIENT_UPDATE_API")
+        # Caso 4: Cambio de IP o cambio de Plan (velocidades) cuando ya está Activo
+        elif cliente.estado == "Activo" and estado_prev == "Activo" and (cliente.ip != ip_prev or cliente.plan != plan_prev):
             LibreQoSManager.enqueue_job("UPDATE", id, db, correlation_id, "CLIENT_UPDATE_API")
     except Exception as lq_err:
         print(f"Aviso: No se pudo encolar la tarea en LibreQoS tras actualización: {lq_err}")
@@ -880,14 +883,6 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
             print(f"Error calculando prorrateo: {e}")
 
         db.commit()
-
-        # Encolar en LibreQoS
-        try:
-            from services.libreqos_manager import LibreQoSManager
-            lq_cid = f"ct_{id}_{int(datetime.now().timestamp())}"
-            LibreQoSManager.enqueue_job("PROVISION", id, db, lq_cid, "CLIENT_UPDATE_API")
-        except Exception as lq_err:
-            print(f"Error al encolar LibreQoS en actualizacion tecnica: {lq_err}")
 
         return {"message": "Configuración técnica guardada, cliente ahora Activo (con pago prorrateado) y con fecha de instalación registrada."}
     except HTTPException:
