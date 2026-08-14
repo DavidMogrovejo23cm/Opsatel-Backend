@@ -98,9 +98,10 @@ class LibreQoSManager:
                 nums = re.findall(r'\d+', cliente.plan)
                 if nums:
                     download_mbps = int(nums[0])
-                    
-        upload_mbps = max(2, download_mbps // 2)
-        return download_mbps, upload_mbps
+        # Aplicar regla del usuario: Máximo de bajada y subida son la mitad de lo que tiene el plan (ej: plan de 800 -> 400 DL y 400 UL)
+        download_max = max(2, download_mbps // 2)
+        upload_max = download_max
+        return download_max, upload_max
 
     @classmethod
     def enqueue_job(
