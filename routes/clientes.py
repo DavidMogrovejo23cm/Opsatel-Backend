@@ -884,7 +884,15 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
 
         db.commit()
 
-        return {"message": "Configuración técnica guardada, cliente ahora Activo (con pago prorrateado) y con fecha de instalación registrada."}
+        # Encolar en LibreQoS de forma automática al completar activación técnica
+        try:
+            from services.libreqos_manager import LibreQoSManager
+            lq_cid = f"ct_{id}_{int(datetime.now().timestamp())}"
+            LibreQoSManager.enqueue_job("PROVISION", id, db, lq_cid, "TECHNICAL_CONFIG_AUTO")
+        except Exception as lq_err:
+            print(f"Error al encolar LibreQoS en actualizacion tecnica: {lq_err}")
+
+        return {"message": "Configuración técnica guardada, cliente ahora Activo (con pago prorrateado) y con fecha de instalación registrada y encolado en LibreQoS."}
     except HTTPException:
         raise
     except Exception as e:
