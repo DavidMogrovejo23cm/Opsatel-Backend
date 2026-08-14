@@ -114,8 +114,13 @@ class LibreQoSWorker:
         logger.info(f"=== INICIANDO LIBREQOS WORKER DAEMON (PID: {self.pid}) ===")
         setup_logger()
         
-        signal.signal(signal.SIGTERM, handle_sigterm)
-        signal.signal(signal.SIGINT, handle_sigterm)
+        import threading
+        if threading.current_thread() == threading.main_thread():
+            try:
+                signal.signal(signal.SIGTERM, handle_sigterm)
+                signal.signal(signal.SIGINT, handle_sigterm)
+            except ValueError:
+                logger.warning("No se pudieron registrar los manejadores de señales (no es el intérprete principal).")
         
         while running:
             self.cycle_count += 1
