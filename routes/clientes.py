@@ -781,17 +781,20 @@ def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: 
         from services.libreqos_manager import LibreQoSManager
         correlation_id = f"up_client_{id}_{int(datetime.now().timestamp())}"
         
+        # Consultar estado actual en la base de datos de QoS
+        qos_state = LibreQoSManager.get_or_create_qos_state(id, db)
+
         # Caso 1: Cambio de estado a Suspendido
         if cliente.estado == "Suspendido" and estado_prev != "Suspendido":
             LibreQoSManager.enqueue_job("SUSPEND", id, db, correlation_id, "CLIENT_UPDATE_API")
         # Caso 2: Reactivación (de Suspendido a Activo)
         elif cliente.estado == "Activo" and estado_prev == "Suspendido":
             LibreQoSManager.enqueue_job("RESUME", id, db, correlation_id, "CLIENT_UPDATE_API")
-        # Caso 3: Aprovisionamiento inicial (Pasa a Activo por primera vez)
-        elif cliente.estado == "Activo" and estado_prev != "Activo":
+        # Caso 3: Aprovisionamiento inicial (Pasa a Activo por primera vez o no ha sido aplicado exitosamente)
+        elif cliente.estado == "Activo" and (estado_prev != "Activo" or qos_state.status != "APPLIED") and cliente.ip:
             LibreQoSManager.enqueue_job("PROVISION", id, db, correlation_id, "CLIENT_UPDATE_API")
-        # Caso 4: Cambio de IP o cambio de Plan (velocidades) cuando ya está Activo
-        elif cliente.estado == "Activo" and estado_prev == "Activo" and (cliente.ip != ip_prev or cliente.plan != plan_prev):
+        # Caso 4: Cambio de IP o cambio de Plan (velocidades) cuando ya está Activo y aplicado
+        elif cliente.estado == "Activo" and estado_prev == "Activo" and qos_state.status == "APPLIED" and (cliente.ip != ip_prev or cliente.plan != plan_prev):
             LibreQoSManager.enqueue_job("UPDATE", id, db, correlation_id, "CLIENT_UPDATE_API")
     except Exception as lq_err:
         print(f"Aviso: No se pudo encolar la tarea en LibreQoS tras actualización: {lq_err}")
