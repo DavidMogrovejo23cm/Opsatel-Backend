@@ -183,3 +183,19 @@ def get_client_qos_status(cliente_id: int, db: Session = Depends(get_db)):
     if not state:
         return {"status": "NOT_CONFIGURED", "detail": "El cliente no tiene QoS aprovisionado."}
     return state
+
+
+@router.post("/clients/{cliente_id}/sync-now", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
+def force_sync_client_now(cliente_id: int, db: Session = Depends(get_db)):
+    """Encola o fuerza una sincronización instantánea de este cliente en LibreQoS."""
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado.")
+    
+    correlation_id = f"manual_sync_{cliente_id}_{int(datetime.now().timestamp())}"
+    job = LibreQoSManager.enqueue_job("PROVISION", cliente_id, db, correlation_id, "MANUAL_UI")
+    if not job:
+         raise HTTPException(status_code=400, detail="No se pudo encolar. Verifica si tiene OLT / Nodo asociado y servidor de LibreQoS activo configurado.")
+    
+    return {"success": True, "detail": "Trabajo de aprovisionamiento encolado con éxito.", "job_id": job.id, "status": job.status}
+
