@@ -131,7 +131,16 @@ def get_pendientes_count(db: Session = Depends(get_db)):
 @router.get("/")
 def listar_clientes(db: Session = Depends(get_db)):
     try:
+        from libreqos_models import ClientQoSState
         data = db.query(models.Cliente).all()
+        
+        # Mapear estados QoS de manera eficiente
+        qos_map = {state.cliente_id: state.status for state in db.query(ClientQoSState).all()}
+        
+        for c in data:
+            # Asociar el estado QoS al objeto
+            c.qos_status = qos_map.get(c.id, "NOT_CONFIGURED")
+            
         return data
     except Exception as e:
         import traceback
