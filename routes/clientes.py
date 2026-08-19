@@ -1800,5 +1800,291 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"Error crítico procesando Excel: {str(e)}")
 
 
+@router.get("/eliminados", dependencies=[Depends(require_role(["administrador"]))])
+def listar_clientes_eliminados(db: Session = Depends(get_db)):
+    """
+    Lista el historial de clientes eliminados.
+    """
+    try:
+        data = db.query(models.ClienteEliminado).order_by(models.ClienteEliminado.deleted_at.desc()).all()
+        return data
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error al listar historial de eliminados: {str(e)}")
+
+
+@router.post("/{id}/eliminar-completamente", dependencies=[Depends(require_role(["administrador"]))])
+async def eliminar_cliente_completamente(
+    id: int,
+    payload_confirm: schemas.ClienteEliminarCompleto,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    """
+    Elimina a un cliente de forma secuencial y controlada de todos los sistemas:
+    OLT, XUI (IPTV), LibreQoS y base de datos local.
+    """
+    # 1. Verificar PIN
+    expected_pin = os.getenv("DELETE_CLIENT_PIN", "1234566")
+    if payload_confirm.pin != expected_pin:
+        raise HTTPException(status_code=400, detail="El PIN de seguridad es incorrecto.")
+        
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado.")
+
+    # 2. Generar Snapshot (fotografía) completa en JSON
+    from decimal import Decimal
+    from datetime import datetime as dt_class, date as d_class
+    
+    snapshot = {}
+    for col in models.Cliente.__table__.columns:
+        val = getattr(cliente, col.key)
+        if isinstance(val, (dt_class, d_class)):
+            val = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, "strftime") else str(val)
+        elif isinstance(val, Decimal):
+            val = float(val)
+        snapshot[col.name] = val
+
+    # Crear el registro de backup en la base de datos (con estado PENDIENTE)
+    backup_rec = models.ClienteEliminado(
+        cliente_id=id,
+        nombre=cliente.nombre,
+        cedula=cliente.cedula,
+        plan=cliente.plan,
+        ip=cliente.ip,
+        mac=cliente.mac,
+        deleted_by=current_user.username,
+        estado_olt="PENDIENTE",
+        estado_xui="PENDIENTE",
+        estado_libreqos="PENDIENTE",
+        estado_db="PENDIENTE",
+        datos_cliente=snapshot
+    )
+    db.add(backup_rec)
+    db.commit()
+    db.refresh(backup_rec)
+
+    # Variables de estado del proceso
+    estado_olt = "OMITIDO"
+    estado_xui = "OMITIDO"
+    estado_libreqos = "OMITIDO"
+    estado_db = "PENDIENTE"
+    
+    # ── ETAPA 1: ELIMINAR DE OLT (SÍNCRONO) ──
+    if cliente.id_port and cliente.service_port:
+        try:
+            from services.olt_interface import OLTInterface
+            from sqlalchemy import or_ as _or
+            
+            # Extraer número de puerto
+            puerto_raw = str(cliente.puerto or "0")
+            import re as _re
+            m = _re.search(r'\d+', puerto_raw)
+            puerto_num = m.group() if m else "0"
+            
+            is_sayausi = str(cliente.nodo or "").upper() == "SAYAUSI"
+            gpon_port = f"0/1/{puerto_num}" if is_sayausi else f"0/0/{puerto_num}"
+            
+            # Obtener OLT activa
+            olt_config = db.query(models.OLTConfig).filter(
+                _or(
+                    models.OLTConfig.nodo_asociado == cliente.nodo,
+                    models.OLTConfig.nodo_asociado == None
+                ),
+                models.OLTConfig.active == True
+            ).first()
+            
+            if not olt_config:
+                raise Exception(f"No hay OLT activa configurada para el nodo '{cliente.nodo}'.")
+                
+            # Conectar y eliminar
+            olt = OLTInterface(
+                host=olt_config.ip,
+                port=olt_config.puerto or 23,
+                username=olt_config.usuario,
+                password=olt_config.password
+            )
+            olt.connect()
+            olt_payload = {
+                "gpon_port": gpon_port,
+                "ont_id": str(cliente.id_port).strip(),
+                "service_port": str(cliente.service_port).strip(),
+                "mac": str(cliente.mac or "000000000000").replace(":", "").replace("-", "")
+            }
+            res_olt = olt.execute_removal_sequence(olt_payload)
+            olt.disconnect()
+            
+            if not res_olt.get("success", False):
+                raise Exception(f"Fallo en la OLT: {res_olt.get('error', 'Error desconocido')}")
+                
+            estado_olt = "ELIMINADO"
+            backup_rec.estado_olt = estado_olt
+            db.commit()
+            
+        except Exception as olt_err:
+            estado_olt = "ERROR"
+            backup_rec.estado_olt = estado_olt
+            backup_rec.detalles_error = f"Error en Etapa OLT: {str(olt_err)}"
+            db.commit()
+            raise HTTPException(
+                status_code=500,
+                detail={"stage": "olt", "message": f"Error al eliminar en la OLT: {str(olt_err)}"}
+            )
+            
+    # ── ETAPA 2: ELIMINAR DE XUI/IPTV (SÍNCRONO) ──
+    if cliente.tv_tipo == "IPTV" and cliente.iptv_user:
+        try:
+            from services.xui_service import delete_xui_user
+            res_xui = await delete_xui_user(cliente.iptv_user)
+            
+            if not res_xui.get("success", False):
+                raise Exception(f"Fallo en panel XUI: {res_xui.get('detail', 'Error desconocido')}")
+                
+            estado_xui = "ELIMINADO"
+            backup_rec.estado_xui = estado_xui
+            db.commit()
+            
+        except Exception as xui_err:
+            estado_xui = "ERROR"
+            backup_rec.estado_xui = estado_xui
+            backup_rec.detalles_error = f"Error en Etapa XUI: {str(xui_err)}"
+            db.commit()
+            raise HTTPException(
+                status_code=500,
+                detail={"stage": "xui", "message": f"Error al eliminar en IPTV XUI: {str(xui_err)}"}
+            )
+
+    # ── ETAPA 3: ELIMINAR DE LIBREQOS ──
+    try:
+        from services.libreqos_manager import LibreQoSManager
+        LibreQoSManager.enqueue_job(
+            operation="REMOVE",
+            cliente_id=id,
+            db=db,
+            correlation_id=f"del_client_{id}_{int(datetime.now().timestamp())}",
+            created_by="CLIENT_DELETE_API"
+        )
+        estado_libreqos = "ELIMINADO"
+        backup_rec.estado_libreqos = estado_libreqos
+        db.commit()
+    except Exception as lq_err:
+        estado_libreqos = "ERROR"
+        backup_rec.estado_libreqos = estado_libreqos
+        backup_rec.detalles_error = f"Error en Etapa LibreQoS: {str(lq_err)}"
+        db.commit()
+        raise HTTPException(
+            status_code=500,
+            detail={"stage": "libreqos", "message": f"Error al encolar eliminación en LibreQoS: {str(lq_err)}"}
+        )
+
+    # ── ETAPA 4: ELIMINAR RELACIONES INTERNAS Y CLIENTE DE LA BASE DE DATOS ──
+    try:
+        # Eliminar archivos de cédula si existen físicamente
+        for file_path in [cliente.cedula_frontal, cliente.cedula_posterior]:
+            if file_path:
+                path_clean = file_path.lstrip("/")
+                if os.path.exists(path_clean):
+                    try: os.remove(path_clean)
+                    except: pass
+
+        # Eliminar logs y tareas OLT asociadas
+        task_ids = [t.id for t in db.query(models.OLTTask).filter(models.OLTTask.cliente_id == id).all()]
+        if task_ids:
+            db.query(models.OLTTaskLog).filter(models.OLTTaskLog.task_id.in_(task_ids)).delete(synchronize_session=False)
+            db.query(models.OLTTask).filter(models.OLTTask.id.in_(task_ids)).delete(synchronize_session=False)
+
+        # Eliminar verificaciones de potencia OLT asociadas
+        db.query(models.OLTPowerCheck).filter(models.OLTPowerCheck.cliente_id == id).delete()
+
+        # Eliminar pagos asociados
+        db.query(models.Pago).filter(models.Pago.cliente_id == id).delete()
+        
+        # Eliminar registros de hoja de ruta asociados
+        db.query(models.HojaRuta).filter(models.HojaRuta.cliente_id == id).delete()
+        
+        # Liberar IP, Service Port y ONT ID en el inventario
+        try:
+            import inventory_models
+            db.query(inventory_models.InventoryIpPool).filter(
+                inventory_models.InventoryIpPool.cliente_id == id
+            ).update({
+                inventory_models.InventoryIpPool.estado: "LIBRE",
+                inventory_models.InventoryIpPool.cliente_id: None,
+                inventory_models.InventoryIpPool.updated_at: datetime.now()
+            })
+            db.query(inventory_models.InventoryServicePort).filter(
+                inventory_models.InventoryServicePort.cliente_id == id
+            ).update({
+                inventory_models.InventoryServicePort.estado: "LIBRE",
+                inventory_models.InventoryServicePort.cliente_id: None,
+                inventory_models.InventoryServicePort.updated_at: datetime.now()
+            })
+            db.query(inventory_models.InventoryOntId).filter(
+                inventory_models.InventoryOntId.cliente_id == id
+            ).update({
+                inventory_models.InventoryOntId.estado: "LIBRE",
+                inventory_models.InventoryOntId.cliente_id: None,
+                inventory_models.InventoryOntId.updated_at: datetime.now()
+            })
+        except Exception as inv_err:
+            print(f"Aviso Inventario al eliminar: {inv_err}")
+
+        # Eliminar registros de ClientQoSState asociados si existen
+        try:
+            from libreqos_models import ClientQoSState
+            db.query(ClientQoSState).filter(ClientQoSState.cliente_id == id).delete()
+        except Exception:
+            pass
+
+        # Eliminar trabajos de LibreQoS asociados si existen
+        try:
+            from libreqos_models import LibreQoSJob
+            db.query(LibreQoSJob).filter(LibreQoSJob.cliente_id == id).delete()
+        except Exception:
+            pass
+
+        # Desvincular registros de auditoría de LibreQoS
+        try:
+            from libreqos_models import LibreQoSAuditLog
+            db.query(LibreQoSAuditLog).filter(LibreQoSAuditLog.cliente_id == id).update({LibreQoSAuditLog.cliente_id: None})
+        except Exception:
+            pass
+
+        # Desvincular ONTs y Service Ports descubiertos
+        try:
+            from discovery_models import DiscoveredONT, DiscoveredServicePort
+            db.query(DiscoveredONT).filter(DiscoveredONT.cliente_id == id).update({DiscoveredONT.cliente_id: None})
+            db.query(DiscoveredServicePort).filter(DiscoveredServicePort.cliente_id == id).update({DiscoveredServicePort.cliente_id: None})
+        except Exception:
+            pass
+
+        # Eliminar finalmente al cliente
+        db.delete(cliente)
+        
+        # Marcar éxito en el registro de backup
+        backup_rec.estado_db = "ELIMINADO"
+        db.commit()
+        
+    except Exception as db_err:
+        backup_rec.estado_db = "ERROR"
+        backup_rec.detalles_error = f"Error en Etapa Base de Datos: {str(db_err)}"
+        db.commit()
+        raise HTTPException(
+            status_code=500,
+            detail={"stage": "database", "message": f"Error al eliminar registros locales: {str(db_err)}"}
+        )
+
+    return {
+        "success": True,
+        "olt": estado_olt,
+        "xui": estado_xui,
+        "libreqos": estado_libreqos,
+        "database": "ELIMINADO"
+    }
+
+
+
 
 

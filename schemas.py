@@ -98,6 +98,10 @@ class ClienteUpdateAdmin(BaseModel):
 
 class ClienteUpdateGeneral(BaseModel):
     nombre: Optional[str] = None
+
+class ClienteEliminarCompleto(BaseModel):
+    pin: str
+
     cedula: Optional[str] = None
     celular: Optional[str] = None
     correo: Optional[str] = None

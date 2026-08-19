@@ -656,3 +656,23 @@ class CajaNap(Base):
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String(100), unique=True, index=True)
     nodo_id = Column(Integer, ForeignKey("nodos.id"), nullable=True)
+
+class ClienteEliminado(Base):
+    """Historial de auditoría para clientes eliminados"""
+    __tablename__ = "clientes_eliminados"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cliente_id = Column(Integer, index=True)
+    nombre = Column(String(255))
+    cedula = Column(String(100))
+    plan = Column(String(255))
+    ip = Column(String(50))
+    mac = Column(String(50))
+    deleted_at = Column(DateTime, default=datetime.datetime.utcnow)
+    deleted_by = Column(String(100))
+    estado_olt = Column(String(50))      # "ELIMINADO", "OMITIDO", "ERROR"
+    estado_xui = Column(String(50))      # "ELIMINADO", "OMITIDO", "ERROR"
+    estado_libreqos = Column(String(50)) # "ELIMINADO", "OMITIDO", "ERROR"
+    estado_db = Column(String(50))       # "ELIMINADO", "ERROR"
+    datos_cliente = Column(JSON)         # Fotografía completa (snapshot)
+    detalles_error = Column(Text)        # Logs o detalles de error si los hay

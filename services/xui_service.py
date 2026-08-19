@@ -165,3 +165,68 @@ async def create_xui_user(
     except Exception as e:
         logger.error(f"XUI: Fallo al crear línea {username}: {e}")
         raise
+
+async def delete_xui_user(username: str) -> Dict:
+    """
+    Busca el ID de línea para el usuario especificado en XUI.one y lo elimina del panel.
+    """
+    session = _get_session()
+    
+    # Asegurar sesión activa de login
+    cookies = dict(session.cookies)
+    if "PHPSESSID" not in cookies:
+        await do_login()
+        
+    # Buscar el usuario en la lista de líneas para obtener su ID
+    search_url = f"{XUI_URL}/lines?search={username}"
+    headers = {
+        "Referer": f"{XUI_URL}/lines",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    }
+    
+    try:
+        r = await session.get(search_url, headers=headers)
+        if "XUI | Login" in r.text or 'data-id="login"' in r.text:
+            await do_login()
+            r = await session.get(search_url, headers=headers)
+            
+        html = r.text
+        # Buscar el ID de línea en los checkbox o enlaces correspondientes
+        # Ej: line?id=123 o checkbox name="list[]" value="123"
+        match = re.search(r'line\?id=(\d+)', html)
+        if not match:
+            match = re.search(r'name="list\[\]"\s+value="(\d+)"', html)
+        if not match:
+            # Búsqueda genérica alrededor del nombre de usuario
+            pattern = rf'value="(\d+)"[^>]*>[^<]*{re.escape(username)}'
+            match = re.search(pattern, html, re.IGNORECASE)
+            if not match:
+                pattern = rf'{re.escape(username)}[^<]*value="(\d+)"'
+                match = re.search(pattern, html, re.IGNORECASE)
+                
+        if not match:
+            logger.warning(f"XUI: No se encontró ID de línea para el usuario {username} en la búsqueda.")
+            return {"success": False, "detail": "User ID not found in search results"}
+            
+        line_id = match.group(1)
+        logger.info(f"XUI: Encontrado ID de línea {line_id} para {username}. Eliminando...")
+        
+        # Enviar petición POST para borrar
+        delete_url = f"{XUI_URL}/post.php?action=delete&referrer=lines"
+        post_data = {
+            "list[]": line_id
+        }
+        headers_post = {
+            "Referer": f"{XUI_URL}/lines",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Requested-With": "XMLHttpRequest"
+        }
+        
+        resp = await session.post(delete_url, data=post_data, headers=headers_post)
+        logger.info(f"XUI: Respuesta de eliminación para {username} (ID {line_id}): {resp.text[:200]}")
+        return {"success": True, "detail": "Línea eliminada exitosamente en XUI"}
+        
+    except Exception as e:
+        logger.error(f"XUI: Error al intentar eliminar el usuario {username}: {e}")
+        return {"success": False, "error": str(e)}
+
