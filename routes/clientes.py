@@ -2014,7 +2014,7 @@ async def eliminar_cliente_completamente(
             print(f"[WARN] Error eliminando de MikroTik (cliente {id}): {mt_err}")
 
     # ── ETAPA 3: ELIMINAR DE XUI/IPTV (SÍNCRONO) ──
-    if cliente.tv_tipo == "IPTV" and cliente.iptv_user:
+    if cliente.iptv_user and str(cliente.iptv_user).strip():
         try:
             from services.xui_service import delete_xui_user
             res_xui = await delete_xui_user(cliente.iptv_user)

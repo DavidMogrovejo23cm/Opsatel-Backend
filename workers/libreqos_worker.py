@@ -192,11 +192,11 @@ class LibreQoSWorker:
             self.handle_job_failure(job, db, "El servidor LibreQoS no existe o está deshabilitado.")
             return
 
-        if not cliente:
+        if not cliente and job.operation != "REMOVE":
             self.handle_job_failure(job, db, "El cliente asociado a este trabajo ya no existe.")
             return
 
-        if not cliente.ip:
+        if cliente and not cliente.ip and job.operation != "REMOVE":
             self.handle_job_failure(job, db, "El cliente no cuenta con una IP asignada. QoS imposible.")
             return
 
@@ -217,7 +217,16 @@ class LibreQoSWorker:
             
             with LibreQoSAdapter(server) as adapter:
                 payload = job.payload or {}
-                ip = payload.get("ip") or cliente.ip
+                ip = payload.get("ip") or (cliente.ip if cliente else None)
+                if not ip and job.operation == "REMOVE":
+                    # Intentamos buscar en el historial de eliminados como fallback
+                    backup = db.query(models.ClienteEliminado).filter(models.ClienteEliminado.cliente_id == job.cliente_id).first()
+                    if backup:
+                        ip = backup.ip
+                
+                if not ip and job.operation != "REMOVE":
+                    raise Exception("IP no disponible para el cliente")
+                
                 down = payload.get("download_mbps") or 100
                 up = payload.get("upload_mbps") or 50
                 comment = payload.get("comment") or f"CLIENT {job.cliente_id}"
