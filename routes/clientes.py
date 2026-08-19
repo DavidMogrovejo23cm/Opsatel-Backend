@@ -1840,7 +1840,15 @@ async def eliminar_cliente_completamente(
     
     snapshot = {}
     for col in models.Cliente.__table__.columns:
-        val = getattr(cliente, col.key)
+        # col.key o col.name pueden diferir de los atributos declarativos de SQLAlchemy (ej: 'id' vs 'NUMERO')
+        val = None
+        if hasattr(cliente, col.key):
+            val = getattr(cliente, col.key)
+        elif col.key == "NUMERO" and hasattr(cliente, "id"):
+            val = getattr(cliente, "id")
+        else:
+            val = getattr(cliente, col.name, None)
+
         if isinstance(val, (dt_class, d_class)):
             val = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, "strftime") else str(val)
         elif isinstance(val, Decimal):
@@ -1876,6 +1884,7 @@ async def eliminar_cliente_completamente(
     if cliente.id_port and cliente.service_port:
         try:
             from services.olt_interface import OLTInterface
+            # pyrefly: ignore [missing-import]
             from sqlalchemy import or_ as _or
             
             # Extraer número de puerto
