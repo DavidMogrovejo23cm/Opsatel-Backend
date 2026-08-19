@@ -1910,9 +1910,9 @@ async def eliminar_cliente_completamente(
                 
             # Conectar y eliminar
             olt = OLTInterface(
-                host=olt_config.ip,
-                port=olt_config.puerto or 23,
-                username=olt_config.usuario,
+                host=olt_config.host,
+                port=olt_config.port or 23,
+                username=olt_config.username,
                 password=olt_config.password
             )
             olt.connect()
