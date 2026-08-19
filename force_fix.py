@@ -62,10 +62,17 @@ def force_fix_columns():
                     print(f"AVISO en {table_name}.{col_name}: {e}")
             conn.commit()
 
+    # 5. Tabla clientes_eliminados
+    table_eliminados = "clientes_eliminados"
+    columns_eliminados = [
+        ("estado_mikrotik", "VARCHAR(50)")
+    ]
+
     process_table(table_clientes, columns_clientes)
     process_table(table_pagos, columns_pagos)
     process_table(table_asistencias, columns_asistencias)
     process_table(table_olt_tasks, columns_olt_tasks)
+    process_table(table_eliminados, columns_eliminados)
     
     print("Reparación terminada.")
 

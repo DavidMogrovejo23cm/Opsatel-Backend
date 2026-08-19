@@ -672,6 +672,7 @@ class ClienteEliminado(Base):
     deleted_by = Column(String(100))
     estado_olt = Column(String(50))      # "ELIMINADO", "OMITIDO", "ERROR"
     estado_xui = Column(String(50))      # "ELIMINADO", "OMITIDO", "ERROR"
+    estado_mikrotik = Column(String(50)) # "ELIMINADO", "OMITIDO", "ERROR"
     estado_libreqos = Column(String(50)) # "ELIMINADO", "OMITIDO", "ERROR"
     estado_db = Column(String(50))       # "ELIMINADO", "ERROR"
     datos_cliente = Column(JSON)         # Fotografía completa (snapshot)

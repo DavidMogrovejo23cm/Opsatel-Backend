@@ -733,6 +733,20 @@ def descargar_completa_base_datos(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error al generar la descarga de la base de datos: {str(e)}")
 
 
+@router.get("/eliminados", dependencies=[Depends(require_role(["administrador"]))])
+def listar_clientes_eliminados(db: Session = Depends(get_db)):
+    """
+    Lista el historial de clientes eliminados.
+    """
+    try:
+        data = db.query(models.ClienteEliminado).order_by(models.ClienteEliminado.deleted_at.desc()).all()
+        return data
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error al listar historial de eliminados: {str(e)}")
+
+
 @router.get("/{id}", response_model=schemas.ClienteResponse)
 def obtener_cliente(id: int, db: Session = Depends(get_db)):
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
@@ -1800,18 +1814,6 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"Error crítico procesando Excel: {str(e)}")
 
 
-@router.get("/eliminados", dependencies=[Depends(require_role(["administrador"]))])
-def listar_clientes_eliminados(db: Session = Depends(get_db)):
-    """
-    Lista el historial de clientes eliminados.
-    """
-    try:
-        data = db.query(models.ClienteEliminado).order_by(models.ClienteEliminado.deleted_at.desc()).all()
-        return data
-    except Exception as e:
-        import traceback
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error al listar historial de eliminados: {str(e)}")
 
 
 @router.post("/{id}/eliminar-completamente", dependencies=[Depends(require_role(["administrador"]))])
@@ -1865,6 +1867,7 @@ async def eliminar_cliente_completamente(
         mac=cliente.mac,
         deleted_by=current_user.username,
         estado_olt="PENDIENTE",
+        estado_mikrotik="PENDIENTE",
         estado_xui="PENDIENTE",
         estado_libreqos="PENDIENTE",
         estado_db="PENDIENTE",
@@ -1876,6 +1879,7 @@ async def eliminar_cliente_completamente(
 
     # Variables de estado del proceso
     estado_olt = "OMITIDO"
+    estado_mikrotik = "OMITIDO"
     estado_xui = "OMITIDO"
     estado_libreqos = "OMITIDO"
     estado_db = "PENDIENTE"
@@ -1942,7 +1946,74 @@ async def eliminar_cliente_completamente(
                 detail={"stage": "olt", "message": f"Error al eliminar en la OLT: {str(olt_err)}"}
             )
             
-    # ── ETAPA 2: ELIMINAR DE XUI/IPTV (SÍNCRONO) ──
+    # ── ETAPA 2: ELIMINAR DE MIKROTIK (DHCP LEASE) ──
+    if cliente.mac:
+        try:
+            from network.adapters.mikrotik import MikroTikAdapter
+            # pyrefly: ignore [missing-import]
+            from sqlalchemy import or_ as _or_mt
+            
+            olt_config_mt = db.query(models.OLTConfig).filter(
+                _or_mt(
+                    models.OLTConfig.nodo_asociado == cliente.nodo,
+                    models.OLTConfig.nodo_asociado == None
+                ),
+                models.OLTConfig.active == True
+            ).first()
+            
+            if olt_config_mt and olt_config_mt.mikrotik_host:
+                mt = MikroTikAdapter(
+                    host=olt_config_mt.mikrotik_host,
+                    port=olt_config_mt.mikrotik_port or 8728,
+                    username=olt_config_mt.mikrotik_username or "admin",
+                    password=olt_config_mt.mikrotik_password or ""
+                )
+                mt.connect()
+                
+                # Buscar el lease DHCP del cliente por MAC
+                clean_mac = str(cliente.mac).replace(":", "").replace("-", "").upper()
+                resource = mt.api.get_resource('/ip/dhcp-server/lease')
+                all_leases = resource.get()
+                
+                removed_count = 0
+                for lease in all_leases:
+                    lease_mac = lease.get('mac-address', '').replace(":", "").replace("-", "").upper()
+                    if lease_mac == clean_mac:
+                        lease_id = lease.get('.id') or lease.get('id')
+                        if lease_id:
+                            resource.remove(**{'.id': lease_id})
+                            removed_count += 1
+                
+                # También buscar por IP si la MAC no matcheó
+                if removed_count == 0 and cliente.ip:
+                    for lease in all_leases:
+                        if lease.get('address') == cliente.ip:
+                            lease_id = lease.get('.id') or lease.get('id')
+                            if lease_id:
+                                resource.remove(**{'.id': lease_id})
+                                removed_count += 1
+                
+                mt.disconnect()
+                
+                if removed_count > 0:
+                    estado_mikrotik = "ELIMINADO"
+                else:
+                    estado_mikrotik = "OMITIDO"  # No se encontró lease, no es error
+            else:
+                estado_mikrotik = "OMITIDO"  # MikroTik no configurado para este nodo
+                
+            backup_rec.estado_mikrotik = estado_mikrotik
+            db.commit()
+                
+        except Exception as mt_err:
+            estado_mikrotik = "ERROR"
+            backup_rec.estado_mikrotik = estado_mikrotik
+            backup_rec.detalles_error = (backup_rec.detalles_error or "") + f" | Error en Etapa MikroTik: {str(mt_err)}"
+            db.commit()
+            # No detenemos el proceso por MikroTik - se registra el error pero se continúa
+            print(f"[WARN] Error eliminando de MikroTik (cliente {id}): {mt_err}")
+
+    # ── ETAPA 3: ELIMINAR DE XUI/IPTV (SÍNCRONO) ──
     if cliente.tv_tipo == "IPTV" and cliente.iptv_user:
         try:
             from services.xui_service import delete_xui_user
@@ -1965,7 +2036,7 @@ async def eliminar_cliente_completamente(
                 detail={"stage": "xui", "message": f"Error al eliminar en IPTV XUI: {str(xui_err)}"}
             )
 
-    # ── ETAPA 3: ELIMINAR DE LIBREQOS ──
+    # ── ETAPA 4: ELIMINAR DE LIBREQOS ──
     try:
         from services.libreqos_manager import LibreQoSManager
         LibreQoSManager.enqueue_job(
@@ -1988,7 +2059,7 @@ async def eliminar_cliente_completamente(
             detail={"stage": "libreqos", "message": f"Error al encolar eliminación en LibreQoS: {str(lq_err)}"}
         )
 
-    # ── ETAPA 4: ELIMINAR RELACIONES INTERNAS Y CLIENTE DE LA BASE DE DATOS ──
+    # ── ETAPA 5: ELIMINAR RELACIONES INTERNAS Y CLIENTE DE LA BASE DE DATOS ──
     try:
         # Eliminar archivos de cédula si existen físicamente
         for file_path in [cliente.cedula_frontal, cliente.cedula_posterior]:
@@ -2088,6 +2159,7 @@ async def eliminar_cliente_completamente(
     return {
         "success": True,
         "olt": estado_olt,
+        "mikrotik": estado_mikrotik,
         "xui": estado_xui,
         "libreqos": estado_libreqos,
         "database": "ELIMINADO"
