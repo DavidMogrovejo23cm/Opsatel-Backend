@@ -2020,21 +2020,23 @@ async def eliminar_cliente_completamente(
             res_xui = await delete_xui_user(cliente.iptv_user)
             
             if not res_xui.get("success", False):
-                raise Exception(f"Fallo en panel XUI: {res_xui.get('detail', 'Error desconocido')}")
+                # Si no se encontró el usuario en el panel, se puede considerar omitido o ya eliminado
+                if "not found" in str(res_xui.get("detail", "")).lower():
+                    estado_xui = "OMITIDO"
+                else:
+                    raise Exception(f"Fallo en panel XUI: {res_xui.get('detail', 'Error desconocido')}")
+            else:
+                estado_xui = "ELIMINADO"
                 
-            estado_xui = "ELIMINADO"
             backup_rec.estado_xui = estado_xui
             db.commit()
             
         except Exception as xui_err:
             estado_xui = "ERROR"
             backup_rec.estado_xui = estado_xui
-            backup_rec.detalles_error = f"Error en Etapa XUI: {str(xui_err)}"
+            backup_rec.detalles_error = (backup_rec.detalles_error or "") + f" | Error en Etapa XUI: {str(xui_err)}"
             db.commit()
-            raise HTTPException(
-                status_code=500,
-                detail={"stage": "xui", "message": f"Error al eliminar en IPTV XUI: {str(xui_err)}"}
-            )
+            print(f"[WARN] Error eliminando de XUI IPTV (cliente {id}): {xui_err}")
 
     # ── ETAPA 4: ELIMINAR DE LIBREQOS ──
     try:
