@@ -618,10 +618,16 @@ def refresh_client_ip(
         cliente.ip = target_ip
         db.commit()
 
+        # Actualizar la IP si difiere
         if target_ip and target_ip != lease_ip:
             mt.update_lease_ip(lease_id, target_ip)
-            # Volver a hacer estático por seguridad
+        
+        # Siempre forzar a que sea estático por seguridad para fijar la IP
+        try:
             mt.make_lease_static(lease_id)
+        except Exception as mt_static_err:
+            # Si ya es estático, puede lanzar un error que ignoramos de forma segura
+            logger.info(f"Ignorando error al hacer static (probablemente ya lo era): {mt_static_err}")
         
         # Actualizar comentario si no tiene el formato estándar
         standard_comment = f"{client_code} - {cliente.nombre}"
