@@ -348,7 +348,8 @@ class OLTInterface:
                         strip_prompt=False,
                         strip_command=False,
                         delay_factor=delay_factor,
-                        read_timeout=timeout_to_use
+                        read_timeout=timeout_to_use,
+                        cmd_verify=False
                     )
                 else:
                     response = self.connection.send_command(
