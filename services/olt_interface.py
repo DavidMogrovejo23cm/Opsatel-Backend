@@ -336,11 +336,17 @@ class OLTInterface:
             else:
                 # Enviar comando
                 if expect_string:
+                    # Forzar strip_command=False cuando usamos expect_string:
+                    # Netmiko intenta hacer regex-match del eco del comando para
+                    # quitarlo del output. Comandos largos (ont add con desc)
+                    # se parten en varias líneas en el terminal de la OLT y el
+                    # regex falla con "Pattern not detected". Al desactivar el
+                    # strip, Netmiko solo busca el expect_string.
                     response = self.connection.send_command(
                         command,
                         expect_string=expect_string,
-                        strip_prompt=strip_prompt,
-                        strip_command=strip_command,
+                        strip_prompt=False,
+                        strip_command=False,
                         delay_factor=delay_factor,
                         read_timeout=timeout_to_use
                     )
