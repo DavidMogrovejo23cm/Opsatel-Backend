@@ -167,8 +167,8 @@ class OLTInterface:
             'password': self.password,
             'port': self.port,
             'timeout': self.timeout,
-            'read_timeout_override': self.timeout,
-            'global_delay_factor': 0.3,
+            'read_timeout_override': 15,
+            'global_delay_factor': 0.2,
             'fast_cli': True,
             'session_log': log_path,
             'banner_timeout': 15,
@@ -221,6 +221,12 @@ class OLTInterface:
                 
                 # Limpiar buffer inicial
                 self._cleanup_buffer()
+                
+                # Deshabilitar paginación (More) para evitar bloqueos
+                try:
+                    self.connection.send_command_timing("scroll 512", delay_factor=0.1, max_loops=50)
+                except Exception:
+                    pass
                 
                 return True
                 
@@ -1014,11 +1020,28 @@ class OLTInterface:
                     already_exists_msg = str(e)
                     responses.append((cmd, f"Warning/Already Exists: {e}"))
 
-            # ── 8. VERIFICACIÓN POST-ACTIVACIÓN: Potencia óptica (Removido de la ruta crítica para velocidad) ──
+            # ── 8. VERIFICACIÓN POST-ACTIVACIÓN: Potencia óptica (inline) ──
             rx_power = None
             tx_power = None
             ont_status_live = None
             optical_raw = ""
+            try:
+                gpon_port_val = meta.get('gpon_port', '0/0/0')
+                ont_id_val = meta.get('ont_id', '0')
+                port_num_val = meta.get('port_num', '0')
+                # Entrar a interfaz GPON para leer potencia
+                self.enter_gpon_interface(gpon_port_val)
+                opt_cmd = f"display ont optical-info {port_num_val} {ont_id_val}"
+                opt_resp = self.send_command(opt_cmd, expect_string=r'\(config-if-gpon-', delay_factor=0.3, read_timeout=10)
+                optical_raw = opt_resp
+                power_data = self.parse_ont_power(opt_resp)
+                rx_power = power_data.get('rx_power')
+                tx_power = power_data.get('tx_power')
+                ont_status_live = self.parse_ont_status(opt_resp)
+                self.exit_gpon_interface()
+                logger.info(f"[Power-Inline] RX={rx_power} TX={tx_power} Status={ont_status_live}")
+            except Exception as pw_inline_err:
+                logger.warning(f"[Power-Inline] No se pudo leer potencia inline (no crítico): {pw_inline_err}")
 
             # Base del resultado enriquecido — incluye todos los datos técnicos
             # que el task_processor necesita para persistir en el modelo Cliente.

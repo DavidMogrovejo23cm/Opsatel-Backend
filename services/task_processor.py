@@ -766,7 +766,6 @@ class TaskProcessor:
                         else:
                             # ── 2. Fallback: consulta adicional a la OLT ──────────
                             logger.info("[Power] Potencia no disponible en result, haciendo check_ont_power fallback...")
-                            time.sleep(3)  # Esperar a que ONT se sincronice
                             power_check = olt.check_ont_power(gpon_port, ont_id)
                             power_val   = power_check.get('rx_power') or power_check.get('power')
                             tx_val      = power_check.get('tx_power')
