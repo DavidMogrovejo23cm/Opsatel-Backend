@@ -499,9 +499,14 @@ class OLTInterface:
         # ── 2. Consultar ONTs registrados en el puerto ─────────────────────
         cmd = f"display ont info {port_num} all"
         logger.info(f"[AutoScale] Ejecutando: {cmd}")
-        # Usar send_command con read_timeout extendido (no timing) para que Netmiko
-        # espere el prompt final completo y no corte la tabla a mitad.
-        response = self.send_command(cmd, delay_factor=1.0, read_timeout=30)
+        # Usar expect_string con el prompt de GPON para retornar inmediatamente sin esperar timeouts
+        response = self.send_command(
+            cmd,
+            expect_string=r'\(config-if-gpon-',
+            delay_factor=0.3,
+            read_timeout=15,
+            cmd_verify=False
+        )
 
         # ── 3. Salir de la interfaz GPON → volver a (config)# ─────────────
         self.exit_gpon_interface()
@@ -628,7 +633,13 @@ class OLTInterface:
 
         existing_sps: set = set()
         try:
-            response = self.send_command(cmd, expect_string=r'\(config\)#', delay_factor=0.5)
+            response = self.send_command(
+                cmd,
+                expect_string=r'\(config\)#',
+                delay_factor=0.3,
+                cmd_verify=False,
+                read_timeout=15
+            )
             logger.debug(f"[AutoScale-SP] Respuesta OLT:\n{response[:500]}")
 
             for line in response.splitlines():
