@@ -451,11 +451,8 @@ class OLTInterface:
             responses = []
             for i, cmd in enumerate(commands, 1):
                 logger.debug(f"[{i}/{len(commands)}] {cmd}")
-                response = self.send_command(cmd, delay_factor=1.5)
+                response = self.send_command(cmd, delay_factor=0.5)
                 responses.append(response)
-                
-                # Pequeño delay entre comandos
-                time.sleep(0.2)
             
             full_response = "\n".join(responses)
             logger.info(f"✓ Configuración completada ({len(commands)} comandos)")
@@ -497,7 +494,7 @@ class OLTInterface:
         logger.info(f"[AutoScale] Ejecutando: {cmd}")
         # Usar send_command con read_timeout extendido (no timing) para que Netmiko
         # espere el prompt final completo y no corte la tabla a mitad.
-        response = self.send_command(cmd, delay_factor=3.0, read_timeout=60)
+        response = self.send_command(cmd, delay_factor=1.0, read_timeout=30)
 
         # ── 3. Salir de la interfaz GPON → volver a (config)# ─────────────
         self.exit_gpon_interface()
@@ -582,7 +579,7 @@ class OLTInterface:
         """
         cmd = f"display service-port {service_port}"
         try:
-            response = self.send_command(cmd, use_timing=True, delay_factor=1.5)
+            response = self.send_command(cmd, expect_string=r'\(config\)#', delay_factor=0.3)
             resp_lower = response.lower()
             # Huawei responde "does not exist" / "not exist" cuando el SP está libre
             if "does not exist" in resp_lower or "not exist" in resp_lower:
@@ -624,7 +621,7 @@ class OLTInterface:
 
         existing_sps: set = set()
         try:
-            response = self.send_command(cmd, use_timing=True, delay_factor=2.0)
+            response = self.send_command(cmd, expect_string=r'\(config\)#', delay_factor=0.5)
             logger.debug(f"[AutoScale-SP] Respuesta OLT:\n{response[:500]}")
 
             for line in response.splitlines():
@@ -662,11 +659,11 @@ class OLTInterface:
 
     def enter_privileged_mode(self) -> str:
         """Entra al modo privilegiado de Huawei."""
-        return self.send_command('enable', use_timing=True, delay_factor=1.2)
+        return self.send_command('enable', expect_string=r'#', delay_factor=0.3)
 
     def enter_config_mode(self) -> str:
         """Entra al modo de configuración global."""
-        return self.send_command('config', use_timing=True, delay_factor=1.2)
+        return self.send_command('config', expect_string=r'\(config\)#', delay_factor=0.3)
 
     def enter_gpon_interface(self, gpon_port: str) -> str:
         """Entra a la interfaz GPON."""
@@ -677,8 +674,8 @@ class OLTInterface:
         
         resp = self.send_command(
             f'interface gpon {interface}',
-            use_timing=True,
-            delay_factor=1.2,
+            expect_string=r'\(config-if-gpon-',
+            delay_factor=0.3,
         )
         self._current_mode = "gpon"
         self._current_gpon = interface
@@ -692,8 +689,8 @@ class OLTInterface:
             
         resp = self.send_command(
             'quit',
-            use_timing=True,
-            delay_factor=1.2,
+            expect_string=r'\(config\)#',
+            delay_factor=0.3,
         )
         self._current_mode = "config"
         self._current_gpon = None
@@ -867,10 +864,10 @@ class OLTInterface:
                 
                 if current.endswith('#') or '(' in current:
                     logger.info("Prompt en submodo o habilitado. Enviando 'quit'...")
-                    current = self.connection.send_command_timing('quit', delay_factor=1.0)
+                    current = self.connection.send_command_timing('quit', delay_factor=0.3)
                     logger.info(f"Nuevo prompt: {current}")
                 else:
-                    current = self.connection.send_command_timing('\n', delay_factor=1.0)
+                    current = self.connection.send_command_timing('\n', delay_factor=0.3)
         except Exception as e:
             logger.warning(f"No se pudo resetear el prompt al modo base: {e}")
 
@@ -902,30 +899,28 @@ class OLTInterface:
             # Dentro de una sub-interfaz → quit
             if '(' in prompt and prompt.endswith('#') and '(config)' not in prompt:
                 logger.info(f"[_ensure_config_mode] En sub-interfaz '{prompt}', enviando quit...")
-                self.send_command('quit', use_timing=True, delay_factor=1.0)
+                self.send_command('quit', expect_string=r'[#>]', delay_factor=0.3)
                 prompt = self.connection.find_prompt()
                 continue
             # Prompt privilegiado (#) sin paréntesis → entrar a config
             if prompt.endswith('#') and '(' not in prompt:
                 logger.info(f"[_ensure_config_mode] En modo privilegiado, enviando config...")
-                resp = self.send_command('config', use_timing=True, delay_factor=1.2)
+                resp = self.send_command('config', expect_string=r'\(config\)#', delay_factor=0.3)
                 self.check_response_for_errors('config', resp)
                 self._current_mode = "config"
                 return
             # Prompt de usuario (>) → enable + config
             if prompt.endswith('>'):
                 logger.info(f"[_ensure_config_mode] En modo usuario, enviando enable + config...")
-                resp = self.send_command('enable', use_timing=True, delay_factor=1.2)
+                resp = self.send_command('enable', expect_string=r'#', delay_factor=0.3)
                 self.check_response_for_errors('enable', resp)
-                resp = self.send_command('config', use_timing=True, delay_factor=1.2)
+                resp = self.send_command('config', expect_string=r'\(config\)#', delay_factor=0.3)
                 self.check_response_for_errors('config', resp)
                 self._current_mode = "config"
                 return
             # Cualquier otro estado → quit e iterar
-            self.send_command('quit', use_timing=True, delay_factor=1.0)
+            self.send_command('quit', expect_string=r'[#>]', delay_factor=0.3)
             prompt = self.connection.find_prompt()
-
-        logger.warning("[_ensure_config_mode] No se pudo alcanzar (config)# en 6 intentos.")
 
         logger.warning("[_ensure_config_mode] No se pudo alcanzar (config)# en 6 intentos.")
 
@@ -960,16 +955,18 @@ class OLTInterface:
 
             # 4. Entrar a interfaz GPON  ((config)# → (config-if-gpon-X/X)#)
             resp = self.enter_gpon_interface(payload.get('gpon_port', '0/0/0'))
-            self.check_response_for_errors('interface gpon', resp)
-            responses.append(('interface gpon', resp))
+            if resp:
+                self.check_response_for_errors('interface gpon', resp)
+                responses.append(('interface gpon', resp))
 
             # 5. Comandos dentro de (config-if-gpon-X/X)#
             for cmd in gpon_cmds:
                 try:
+                    # Usar expect_string para detectar inmediatamente el prompt de GPON sin esperas por timing
                     resp = self.send_command(
                         cmd,
-                        use_timing=True,
-                        delay_factor=2.5,  # Delay mayor para comandos interactivos y pesados
+                        expect_string=r'\(config-if-gpon-',
+                        delay_factor=0.5,
                     )
                     self.check_response_for_errors(cmd, resp)
                     responses.append((cmd, resp))
@@ -981,15 +978,17 @@ class OLTInterface:
 
             # 6. Salir de interfaz GPON  ((config-if-gpon-X/X)# → (config)#)
             resp = self.exit_gpon_interface()
-            responses.append(('quit', resp))
+            if resp:
+                responses.append(('quit', resp))
 
             # 7. Comandos desde (config)#  (service-port, etc.)
             for cmd in config_cmds:
                 try:
+                    # Usar expect_string de config para respuestas rápidas deterministas
                     resp = self.send_command(
                         cmd,
-                        use_timing=True,
-                        delay_factor=2.0,
+                        expect_string=r'\(config\)#',
+                        delay_factor=0.5,
                     )
                     self.check_response_for_errors(cmd, resp)
                     responses.append((cmd, resp))
@@ -1059,13 +1058,13 @@ class OLTInterface:
                 # Undo service-port si se llegó a enviar
                 if sp and str(sp).isdigit():
                     logger.info(f"[Rollback OLT] Deshaciendo service-port {sp}...")
-                    self.send_command(f"undo service-port {sp}", use_timing=True, delay_factor=1.5)
+                    self.send_command(f"undo service-port {sp}", expect_string=r'\(config\)#', delay_factor=0.5)
                 
                 # Undo ont delete si la ONT fue creada
                 if gpon_port and ont_id is not None:
                     logger.info(f"[Rollback OLT] Eliminando ONT {ont_id} en GPON {gpon_port}...")
                     self.enter_gpon_interface(gpon_port)
-                    self.send_command(f"ont delete {port_num} {ont_id}", use_timing=True, delay_factor=2.0)
+                    self.send_command(f"ont delete {port_num} {ont_id}", expect_string=r'\(config-if-gpon-', delay_factor=0.5)
                     self.exit_gpon_interface()
                 logger.info("[Rollback OLT] ✓ Rollback ejecutado correctamente en Huawei OLT.")
             except Exception as rollback_err:
@@ -1154,8 +1153,8 @@ class OLTInterface:
                     logger.info(f"Ejecutando en (config)#: {cmd}")
                     resp = self.send_command(
                         cmd,
-                        use_timing=True,
-                        delay_factor=2.0,
+                        expect_string=r'\(config\)#',
+                        delay_factor=0.5,
                     )
                     self.check_response_for_errors(cmd, resp)
                     responses.append((cmd, resp))
@@ -1180,8 +1179,8 @@ class OLTInterface:
                 try:
                     resp = self.send_command(
                         cmd,
-                        use_timing=True,
-                        delay_factor=2.0,
+                        expect_string=r'\(config-if-gpon-',
+                        delay_factor=0.5,
                     )
                     self.check_response_for_errors(cmd, resp)
                     responses.append((cmd, resp))
@@ -1305,12 +1304,12 @@ class OLTInterface:
                     f'ont add {port_num} {ont_id} sn-auth "{mac}" omci '
                     f'ont-lineprofile-id {profile_id} ont-srvprofile-id {profile_id} desc "PRUEBAS CHAT"'
                 )
-                resp_add = self.send_command(cmd_add, use_timing=True, delay_factor=2.5)
+                resp_add = self.send_command(cmd_add, expect_string=r'\(config-if-gpon-', delay_factor=0.5)
                 responses.append((cmd_add, resp_add))
 
                 # --- 3. ont port native-vlan ---
                 cmd_vlan = f'ont port native-vlan {port_num} {ont_id} eth 1 vlan {profile_id} priority 0'
-                resp_vlan = self.send_command(cmd_vlan, use_timing=True, delay_factor=2.0)
+                resp_vlan = self.send_command(cmd_vlan, expect_string=r'\(config-if-gpon-', delay_factor=0.5)
                 responses.append((cmd_vlan, resp_vlan))
 
                 # --- 4. quit ---
@@ -1321,12 +1320,12 @@ class OLTInterface:
                     f'service-port {service_port} vlan {vlan} gpon {gpon_port} ont {ont_id} '
                     f'gemport {profile_id} multi-service user-vlan {profile_id} tag-transform translate'
                 )
-                resp_sp = self.send_command(cmd_sp, use_timing=True, delay_factor=2.0)
+                resp_sp = self.send_command(cmd_sp, expect_string=r'\(config\)#', delay_factor=0.5)
                 responses.append((cmd_sp, resp_sp))
 
                 # --- 6. undo service-port ---
                 cmd_undo_sp = f"undo service-port {service_port}"
-                resp_undo = self.send_command(cmd_undo_sp, use_timing=True, delay_factor=1.5)
+                resp_undo = self.send_command(cmd_undo_sp, expect_string=r'\(config\)#', delay_factor=0.5)
                 responses.append((cmd_undo_sp, resp_undo))
 
                 # --- 7. interface gpon 0/0 ---
@@ -1334,7 +1333,7 @@ class OLTInterface:
 
                 # --- 8. ont delete ---
                 cmd_del = f"ont delete {port_num} {ont_id}"
-                resp_del = self.send_command(cmd_del, use_timing=True, delay_factor=2.0)
+                resp_del = self.send_command(cmd_del, expect_string=r'\(config-if-gpon-', delay_factor=0.5)
                 responses.append((cmd_del, resp_del))
 
                 # --- 9. quit ---
@@ -1432,8 +1431,8 @@ class OLTInterface:
                 try:
                     resp = self.send_command(
                         cmd,
-                        use_timing=True,
-                        delay_factor=1.5,
+                        expect_string=r'\(config-if-gpon-',
+                        delay_factor=0.5,
                     )
                     self.check_response_for_errors(cmd, resp)
                     responses.append((cmd, resp))
@@ -1682,7 +1681,7 @@ class OLTInterface:
             # read_timeout alto porque la OLT puede tardar en responder con múltiples ONTs
             response = self.send_command(
                 'display ont autofind all',
-                delay_factor=3.0,
+                delay_factor=1.0,
                 expect_string=r'\(config\)#'
             )
             logger.info(f"Respuesta cruda autofind ({len(response)} chars):\n{response[:3000]}")
@@ -1722,7 +1721,7 @@ class OLTInterface:
             try:
                 self.enter_privileged_mode()
                 self.enter_config_mode()
-                self.send_command(f"interface gpon {interface}", delay_factor=1.2)
+                self.send_command(f"interface gpon {interface}", expect_string=r'\(config-if-gpon-', delay_factor=0.3)
             except Exception as nav_err:
                 logger.warning(f"Error navegando a interfaz gpon para verificar potencia: {nav_err}")
 
@@ -1734,7 +1733,7 @@ class OLTInterface:
             last_response = ""
             for command in commands:
                 try:
-                    response = self.send_command(command, delay_factor=2.0)
+                    response = self.send_command(command, delay_factor=0.5)
                     last_response = response
                     power_data = self.parse_ont_power(response)
                     rx_power = power_data['rx_power']
@@ -1744,7 +1743,7 @@ class OLTInterface:
                     if rx_power is not None:
                         # Salir de la interfaz GPON
                         try:
-                            self.send_command("quit", delay_factor=1.0)
+                            self.send_command("quit", expect_string=r'\(config\)#', delay_factor=0.3)
                         except:
                             pass
                         return {
@@ -1764,7 +1763,7 @@ class OLTInterface:
             
             # Salir de la interfaz GPON
             try:
-                self.send_command("quit", delay_factor=1.0)
+                self.send_command("quit", expect_string=r'\(config\)#', delay_factor=0.3)
             except:
                 pass
 
@@ -1798,7 +1797,7 @@ class OLTInterface:
             self._ensure_config_mode()
             command = f"display mac-address service-port {service_port}"
             logger.info(f"[OLTInterface] Obteniendo MAC del service-port {service_port}...")
-            response = self.send_command(command, delay_factor=1.5)
+            response = self.send_command(command, delay_factor=0.5)
             
             # Buscar formato xxxx-xxxx-xxxx (ej: e484-2b46-42d0)
             mac_match = re.search(r'([0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4})', response)
@@ -1851,19 +1850,19 @@ class OLTInterface:
             # Entrar a la interfaz GPON
             resp = self.send_command(
                 f"interface gpon {gpon_interface}",
-                use_timing=True, delay_factor=1.5
+                expect_string=r'\(config-if-gpon-', delay_factor=0.3
             )
             logger.info(f"[OLTInterface] [reset_ont] interface gpon {gpon_interface}: {resp.strip()[:120]}")
 
             # Ejecutar ont reset
             resp = self.send_command(
                 f"ont reset {port_num} {ont_id}",
-                use_timing=True, delay_factor=2.0
+                expect_string=r'\(config-if-gpon-', delay_factor=0.5
             )
             logger.info(f"[OLTInterface] [reset_ont] ont reset {port_num} {ont_id}: {resp.strip()[:120]}")
 
             # Salir de la interfaz GPON
-            self.send_command('quit', use_timing=True, delay_factor=1.0)
+            self.send_command('quit', expect_string=r'\(config\)#', delay_factor=0.3)
 
             logger.info(f"[OLTInterface] ✓ ONT {gpon_port} / id {ont_id} reiniciado correctamente.")
             return True

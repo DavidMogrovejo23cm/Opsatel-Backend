@@ -310,7 +310,7 @@ class TaskProcessor:
         
         try:
             logger.info(f"[Tarea {task_id}] Ejecutando: {command}")
-            response = olt.send_command(command, delay_factor=2.0)
+            response = olt.send_command(command, delay_factor=0.5)
             duration_ms = int((time.time() - start_time) * 1000)
             
             # Consideramos éxito si no hay error en la respuesta
@@ -1181,7 +1181,7 @@ class TaskProcessor:
                 # Comprobar si la sesión está viva enviando newline (rápido/silencioso)
                 if olt.is_connected and olt.connection and self._check_olt_alive(olt):
                     # Enviar comando ligero
-                    olt.send_command("display clock", use_timing=True, delay_factor=1.0)
+                    olt.send_command("display clock", expect_string=r'[#>]', delay_factor=0.3)
                     logger.debug(f"✓ Keepalive ('display clock') enviado exitosamente a OLT ID {olt_id}")
                     continue
                 
