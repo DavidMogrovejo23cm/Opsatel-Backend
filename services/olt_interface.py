@@ -164,7 +164,7 @@ class OLTInterface:
             'port': self.port,
             'timeout': self.timeout,
             'read_timeout_override': self.timeout,
-            'global_delay_factor': 1.5,
+            'global_delay_factor': 0.3,
             'fast_cli': True,
             'session_log': log_path,
             'banner_timeout': 15,
