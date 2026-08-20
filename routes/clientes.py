@@ -102,6 +102,13 @@ def clean_existing_database_formats(db: Session):
 
 
 def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
+    if getattr(cliente, 'cortesia_total', False):
+        cliente.total_pago = 0.00
+        cliente.saldo = 0.00
+        cliente.plus = "0"
+        cliente.adicional = ""
+        return
+
     # El total_pago representa el total real adeudado en tiempo real.
     # Incluye Saldo (deuda histórica neta de pagos) + Tarifa (valor del plan actual) + IPTV + Adicional.
     tarifa = 0.00
@@ -980,7 +987,7 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
             internet_sugerido = float(cliente.total_pago or 0) - try_float(cliente.plus)
             # Si el usuario puso un valor menor al sugerido, la diferencia es descuento promo
             if ip_enviado < internet_sugerido and internet_sugerido > 0:
-                descuento_promo = internet_sugerido - ip_enviado
+                descuento_promo = max(0.0, (internet_sugerido - ip_enviado) - (pago_data.descuento_internet or 0.0))
 
         # Calculamos la reducción total de deuda: Cash + Descuentos explícitos + Descuento promo
         deuda_internet = m_internet_cash + (pago_data.descuento_internet or 0.0) + descuento_promo

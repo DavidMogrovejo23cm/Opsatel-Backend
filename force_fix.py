@@ -14,7 +14,8 @@ def force_fix_columns():
         ("BREACH", "VARCHAR(2000)"),
         ("SERVICE PORT", "VARCHAR(2000)"),
         ("PARROQUIA", "VARCHAR(100)"),
-        ("IPTV_OUTPUTS", "VARCHAR(1255)")
+        ("IPTV_OUTPUTS", "VARCHAR(1255)"),
+        ("CORTESIA_TOTAL", "BOOLEAN DEFAULT FALSE")
     ]
     
     # 2. Tabla Historial Pagos

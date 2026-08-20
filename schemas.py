@@ -95,6 +95,7 @@ class ClienteUpdateAdmin(BaseModel):
     saldo: Optional[float] = None
     tercera_edad: Optional[bool] = None
     precio_plan_especial: Optional[float] = None
+    cortesia_total: Optional[bool] = None
 
 class ClienteUpdateGeneral(BaseModel):
     nombre: Optional[str] = None
