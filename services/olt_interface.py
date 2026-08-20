@@ -119,6 +119,10 @@ class OLTInterface:
         self.last_command = ""
         self.connection_time: Optional[datetime] = None
         self.command_count = 0
+
+        # Estados de prompt/interfaz cacheados para evitar find_prompt redundantes
+        self._current_mode = None  # None, "base", "config", "gpon"
+        self._current_gpon = None  # Ejemplo: "0/0"
         
         logger.info(f"OLTInterface inicializado: {host}:{port} ({device_type})")
     
@@ -667,19 +671,33 @@ class OLTInterface:
     def enter_gpon_interface(self, gpon_port: str) -> str:
         """Entra a la interfaz GPON."""
         interface = self._get_gpon_interface(gpon_port)
-        return self.send_command(
+        if self._current_mode == "gpon" and self._current_gpon == interface:
+            logger.debug(f"[enter_gpon_interface] Ya en gpon interface {interface} según cache. Omitiendo comando.")
+            return ""
+        
+        resp = self.send_command(
             f'interface gpon {interface}',
             use_timing=True,
             delay_factor=1.2,
         )
+        self._current_mode = "gpon"
+        self._current_gpon = interface
+        return resp
 
     def exit_gpon_interface(self) -> str:
         """Sale de la interfaz GPON con 'quit'."""
-        return self.send_command(
+        if self._current_mode == "config":
+            logger.debug("[exit_gpon_interface] Ya en config según cache. Omitiendo quit.")
+            return ""
+            
+        resp = self.send_command(
             'quit',
             use_timing=True,
             delay_factor=1.2,
         )
+        self._current_mode = "config"
+        self._current_gpon = None
+        return resp
 
     def build_activation_commands(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Construye la secuencia de comandos Huawei para activar un ONT.
@@ -858,17 +876,15 @@ class OLTInterface:
 
     def _ensure_config_mode(self) -> None:
         """
-        Asegura que el prompt esté en (config)# de la forma más directa posible,
-        sin enviar comandos redundantes que provoquen 'Unknown command'.
-
-        Reglas:
-          - Si ya está en (config)#          → no hace nada.
-          - Si está en (config-if-...)#       → envía 'quit' hasta llegar a (config)#.
-          - Si está en #  (privilegiado)      → envía 'config'.
-          - Si está en >  (usuario normal)    → envía 'enable' luego 'config'.
+        Asegura que el prompt esté en (config)# de la forma más directa posible.
+        Utiliza el estado de prompt cacheado para acelerar la comprobación.
         """
         if not self.is_connected or not self.connection:
             raise OLTConnectionError("No hay sesión activa.")
+
+        if self._current_mode == "config":
+            logger.debug("[_ensure_config_mode] Ya en (config)# según cache. Omitiendo find_prompt.")
+            return
 
         try:
             prompt = self.connection.find_prompt()
@@ -878,21 +894,23 @@ class OLTInterface:
 
         # Salir de sub-interfaces hasta llegar a (config)# o #
         for _ in range(6):
-            prompt = self.connection.find_prompt()
             # Ya estamos en (config)#
             if '(config)' in prompt and prompt.endswith('#'):
                 logger.info("[_ensure_config_mode] Ya en (config)#. No se hacen cambios.")
+                self._current_mode = "config"
                 return
             # Dentro de una sub-interfaz → quit
             if '(' in prompt and prompt.endswith('#') and '(config)' not in prompt:
                 logger.info(f"[_ensure_config_mode] En sub-interfaz '{prompt}', enviando quit...")
                 self.send_command('quit', use_timing=True, delay_factor=1.0)
+                prompt = self.connection.find_prompt()
                 continue
             # Prompt privilegiado (#) sin paréntesis → entrar a config
             if prompt.endswith('#') and '(' not in prompt:
                 logger.info(f"[_ensure_config_mode] En modo privilegiado, enviando config...")
                 resp = self.send_command('config', use_timing=True, delay_factor=1.2)
                 self.check_response_for_errors('config', resp)
+                self._current_mode = "config"
                 return
             # Prompt de usuario (>) → enable + config
             if prompt.endswith('>'):
@@ -901,9 +919,13 @@ class OLTInterface:
                 self.check_response_for_errors('enable', resp)
                 resp = self.send_command('config', use_timing=True, delay_factor=1.2)
                 self.check_response_for_errors('config', resp)
+                self._current_mode = "config"
                 return
             # Cualquier otro estado → quit e iterar
             self.send_command('quit', use_timing=True, delay_factor=1.0)
+            prompt = self.connection.find_prompt()
+
+        logger.warning("[_ensure_config_mode] No se pudo alcanzar (config)# en 6 intentos.")
 
         logger.warning("[_ensure_config_mode] No se pudo alcanzar (config)# en 6 intentos.")
 
@@ -977,43 +999,11 @@ class OLTInterface:
                     already_exists_msg = str(e)
                     responses.append((cmd, f"Warning/Already Exists: {e}"))
 
-            # ── 8. VERIFICACIÓN POST-ACTIVACIÓN: Potencia óptica ──────────────
-            # Ejecutamos 'display ont optical-info' usando la sesión ya activa
-            # (en este punto estamos en (config)# después del service-port).
-            # No reconectamos ni hacemos login nuevamente.
+            # ── 8. VERIFICACIÓN POST-ACTIVACIÓN: Potencia óptica (Removido de la ruta crítica para velocidad) ──
             rx_power = None
             tx_power = None
             ont_status_live = None
             optical_raw = ""
-            try:
-                _gpon_iface = f"{meta['gpon_port'].rsplit('/', 1)[0]}" if '/' in str(meta['gpon_port']) else "0/0"
-                _port_num   = meta['port_num']
-                _ont_id     = meta['ont_id']
-
-                # Entrar a la interfaz GPON para leer optical-info
-                self.send_command(
-                    f"interface gpon {_gpon_iface}",
-                    use_timing=True,
-                    delay_factor=1.2,
-                )
-                optical_raw = self.send_command(
-                    f"display ont optical-info {_port_num} {_ont_id}",
-                    use_timing=True,
-                    delay_factor=2.5,
-                )
-                logger.info(f"[PostActivation] Respuesta optical-info ({len(optical_raw)} chars): {optical_raw[:400]}")
-
-                power_data  = self.parse_ont_power(optical_raw)
-                rx_power    = power_data['rx_power']
-                tx_power    = power_data['tx_power']
-                ont_status_live = self.parse_ont_status(optical_raw)
-
-                # Salir de la interfaz GPON de vuelta a (config)#
-                self.send_command("quit", use_timing=True, delay_factor=1.0)
-                logger.info(f"[PostActivation] RX={rx_power} dBm | TX={tx_power} dBm | Status={ont_status_live}")
-
-            except Exception as opt_err:
-                logger.warning(f"[PostActivation] No se pudo leer potencia óptica (no es crítico): {opt_err}")
 
             # Base del resultado enriquecido — incluye todos los datos técnicos
             # que el task_processor necesita para persistir en el modelo Cliente.
