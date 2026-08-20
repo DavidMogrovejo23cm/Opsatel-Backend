@@ -504,8 +504,7 @@ class OLTInterface:
             cmd,
             expect_string=r'\(config-if-gpon-',
             delay_factor=0.3,
-            read_timeout=15,
-            cmd_verify=False
+            read_timeout=15
         )
 
         # ── 3. Salir de la interfaz GPON → volver a (config)# ─────────────
@@ -637,7 +636,6 @@ class OLTInterface:
                 cmd,
                 expect_string=r'\(config\)#',
                 delay_factor=0.3,
-                cmd_verify=False,
                 read_timeout=15
             )
             logger.debug(f"[AutoScale-SP] Respuesta OLT:\n{response[:500]}")
