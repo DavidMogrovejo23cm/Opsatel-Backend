@@ -312,6 +312,22 @@ def iniciar_libreqos_worker():
     except Exception as e:
         print(f"[LibreQoS Worker] Error al iniciar el worker: {e}")
 
+
+def iniciar_olt_worker():
+    """Arranca el worker OLT en segundo plano cuando no hay servicio externo."""
+    if os.getenv("OLT_WORKER_AUTOSTART", "true").lower() not in ("1", "true", "yes", "si"):
+        print("[OLT Worker] Autostart desactivado por OLT_WORKER_AUTOSTART.")
+        return
+    try:
+        from workers.olt_daemon import OLTDaemon
+        worker = OLTDaemon()
+        hilo = threading.Thread(target=worker.start, daemon=True, name="olt-worker")
+        hilo.start()
+        app.state.olt_worker = worker
+        print("[OLT Worker] Hilo daemon iniciado correctamente.")
+    except Exception as e:
+        print(f"[OLT Worker] Error al iniciar el worker: {e}")
+
 # ========================================================================
 # AUTO-INICIAR EL PUENTE DE WHATSAPP (NODE.JS) EN SEGUNDO PLANO
 # ========================================================================
@@ -360,6 +376,7 @@ def iniciar_puente_whatsapp():
 async def startup_bridge():
     iniciar_puente_whatsapp()
     iniciar_libreqos_worker()
+    iniciar_olt_worker()
 
 @app.on_event("shutdown")
 async def shutdown_bridge():

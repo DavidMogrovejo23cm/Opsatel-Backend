@@ -846,6 +846,15 @@ def ver_potencia_ont(
     if not gpon_port or not ont_id_str:
         raise HTTPException(status_code=400, detail="El cliente no tiene puerto GPON asignado")
 
+    # El modelo suele guardar "Puerto 10"; la OLT necesita 0/0/10 o 0/1/10.
+    if "/" not in str(gpon_port):
+        import re
+        match = re.search(r"\d+", str(gpon_port))
+        if not match:
+            raise HTTPException(status_code=400, detail=f"Puerto GPON inválido: {gpon_port}")
+        frame = "1" if str(getattr(cliente, "nodo", "")).upper() == "SAYAUSI" else "0"
+        gpon_port = f"0/{frame}/{match.group()}"
+
     try:
         ont_id = int(ont_id_str)
     except (ValueError, TypeError):

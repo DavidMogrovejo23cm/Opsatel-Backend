@@ -456,6 +456,7 @@ def refresh_client_ip(
                 username=olt_config.username or "admin",
                 password=olt_config.password or ""
             )
+            olt.connect()
             # Intentar aprender la MAC real del cliente (3 intentos)
             for mac_attempt in range(3):
                 time.sleep(1)
@@ -464,6 +465,11 @@ def refresh_client_ip(
                     break
         except Exception as olt_err:
             logger.warning(f"No se pudo consultar la MAC en la OLT para cliente {cliente.id}: {olt_err}")
+        finally:
+            try:
+                olt.disconnect()
+            except Exception:
+                pass
 
     mt_mac = real_client_mac or cliente.mac or ""
     client_code = str(cliente.id).zfill(6)

@@ -989,6 +989,7 @@ class OLTInterface:
                         cmd,
                         expect_string=r'\(config-if-gpon-',
                         delay_factor=0.5,
+                        read_timeout=20,
                     )
                     self.check_response_for_errors(cmd, resp)
                     responses.append((cmd, resp))
@@ -1011,6 +1012,7 @@ class OLTInterface:
                         cmd,
                         expect_string=r'\(config\)#',
                         delay_factor=0.5,
+                        read_timeout=20,
                     )
                     self.check_response_for_errors(cmd, resp)
                     responses.append((cmd, resp))
@@ -1772,7 +1774,12 @@ class OLTInterface:
             last_response = ""
             for command in commands:
                 try:
-                    response = self.send_command(command, delay_factor=0.5)
+                    response = self.send_command(
+                        command,
+                        expect_string=r'\(config-if-gpon-',
+                        delay_factor=0.3,
+                        read_timeout=10,
+                    )
                     last_response = response
                     power_data = self.parse_ont_power(response)
                     rx_power = power_data['rx_power']

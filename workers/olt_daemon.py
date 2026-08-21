@@ -25,6 +25,7 @@ import signal
 import time
 import fcntl
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -118,9 +119,11 @@ class OLTDaemon:
         self.last_keepalive_time = 0
         
         # Registrar handlers de señales
-        signal.signal(signal.SIGTERM, self._handle_sigterm)
-        signal.signal(signal.SIGINT, self._handle_sigterm)
-        signal.signal(signal.SIGHUP, self._handle_sighup)
+        # Los handlers solo pueden registrarse desde el hilo principal.
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGTERM, self._handle_sigterm)
+            signal.signal(signal.SIGINT, self._handle_sigterm)
+            signal.signal(signal.SIGHUP, self._handle_sighup)
         
         logger.info("OLTDaemon inicializado")
     

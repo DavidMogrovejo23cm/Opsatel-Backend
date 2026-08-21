@@ -873,9 +873,11 @@ class TaskProcessor:
                             real_client_mac = None
                             if service_port_val:
                                 log_mt(f"[MikroTik] Intentando aprender la MAC real del cliente desde el service-port {service_port_val} en la OLT...")
-                                for mac_attempt in range(1, 6): # 5 intentos x 3 segundos
+                                mac_attempts = max(1, int(os.getenv("OLT_MAC_LEARN_ATTEMPTS", "2")))
+                                for mac_attempt in range(1, mac_attempts + 1):
                                     try:
-                                        _time.sleep(3)
+                                        if mac_attempt > 1:
+                                            _time.sleep(1)
                                         real_client_mac = olt.get_mac_from_service_port(str(service_port_val))
                                         if real_client_mac:
                                             log_mt(f"[MikroTik] ¡MAC real aprendida desde la OLT!: {real_client_mac}")
@@ -922,9 +924,11 @@ class TaskProcessor:
                                     lease = None
                                     clean_mac = mt_mac.replace(':', '').replace('-', '').upper()
 
-                                    # Polling: hasta 30s (15 intentos x 2s)
-                                    for poll_attempt in range(1, 16):
-                                        log_mt(f"[MikroTik] Buscando lease dinámico (Intento {poll_attempt}/15)...")
+                                    # Polling corto: la activación OLT no debe quedar bloqueada
+                                    # esperando DHCP; refresh-ip puede completar después.
+                                    lease_attempts = max(1, int(os.getenv("OLT_LEASE_POLL_ATTEMPTS", "5")))
+                                    for poll_attempt in range(1, lease_attempts + 1):
+                                        log_mt(f"[MikroTik] Buscando lease dinámico (Intento {poll_attempt}/{lease_attempts})...")
                                         
                                         # Obtener leases de los servidores candidatos
                                         dynamic_leases = []
@@ -993,7 +997,7 @@ class TaskProcessor:
                                             _time.sleep(1)
                                             break
 
-                                        _time.sleep(2)
+                                        _time.sleep(1)
 
                                     if not lease:
                                         log_mt(f"[MikroTik] [ADVERTENCIA] No se encontró lease dinámico para MAC {mt_mac} tras 30s.")
