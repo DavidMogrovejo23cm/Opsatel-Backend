@@ -86,13 +86,19 @@ class TaskProcessor:
         logger.info("TaskProcessor inicializado (sin sesión BD todavía)")
 
     def pre_connect_active_olts(self, db: Session):
-        """Pre-conecta a todas las OLTs activas al iniciar el worker"""
+        """Registra OLTs activas sin bloquear el arranque por una OLT caída.
+
+        La conexión se establece bajo demanda cuando aparece una tarea para esa
+        OLT. Así una OLT secundaria inaccesible no retrasa las demás.
+        """
         self.db = db
         try:
             active_olts = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).all()
             for config in active_olts:
-                logger.info(f"Pre-conectando a OLT {config.nombre} (ID {config.id})...")
-                self.get_olt_connection(config.id)
+                logger.info(
+                    f"OLT disponible bajo demanda: {config.nombre} "
+                    f"(ID {config.id}, {config.host}:{config.port})"
+                )
         except Exception as e:
             logger.error(f"Error en pre-conexión de OLTs: {e}")
         finally:
@@ -107,11 +113,10 @@ class TaskProcessor:
         try:
             if not olt.connection or not olt.is_connected:
                 return False
-            # Enviar un newline como keepalive silencioso y rápido
-            prompt = olt.connection.send_command_timing("\n", delay_factor=0.5)
-            if prompt:
-                return True
-            return False
+            # Netmiko mantiene el estado TCP; enviar un newline a Huawei puede
+            # devolver una respuesta vacía aunque la sesión siga siendo válida.
+            is_alive = getattr(olt.connection, "is_alive", None)
+            return bool(is_alive() if callable(is_alive) else olt.connection.is_alive)
         except Exception:
             return False
 
@@ -799,12 +804,13 @@ class TaskProcessor:
                             tx_val     = inline_tx
                             status_val = inline_st
                         else:
-                            # ── 2. Fallback: consulta adicional a la OLT ──────────
-                            logger.info("[Power] Potencia no disponible en result, haciendo check_ont_power fallback...")
-                            power_check = olt.check_ont_power(gpon_port, ont_id)
-                            power_val   = power_check.get('rx_power') or power_check.get('power')
-                            tx_val      = power_check.get('tx_power')
-                            status_val  = power_check.get('status')
+                            # No repetir dos comandos ópticos dentro de la misma
+                            # activación. Si la ONT aún está offline, la potencia
+                            # se consulta desde el endpoint de potencia después.
+                            logger.info("[Power] ONT aún sin potencia inline; se consultará posteriormente.")
+                            power_val = None
+                            tx_val = None
+                            status_val = None
 
                         # ── 3. Guardar en response_json ───────────────────────────
                         if isinstance(task.response_json, dict):
@@ -873,7 +879,7 @@ class TaskProcessor:
                             real_client_mac = None
                             if service_port_val:
                                 log_mt(f"[MikroTik] Intentando aprender la MAC real del cliente desde el service-port {service_port_val} en la OLT...")
-                                mac_attempts = max(1, int(os.getenv("OLT_MAC_LEARN_ATTEMPTS", "2")))
+                                mac_attempts = max(1, int(os.getenv("OLT_MAC_LEARN_ATTEMPTS", "1")))
                                 for mac_attempt in range(1, mac_attempts + 1):
                                     try:
                                         if mac_attempt > 1:
@@ -926,7 +932,7 @@ class TaskProcessor:
 
                                     # Polling corto: la activación OLT no debe quedar bloqueada
                                     # esperando DHCP; refresh-ip puede completar después.
-                                    lease_attempts = max(1, int(os.getenv("OLT_LEASE_POLL_ATTEMPTS", "5")))
+                                    lease_attempts = max(1, int(os.getenv("OLT_LEASE_POLL_ATTEMPTS", "1")))
                                     for poll_attempt in range(1, lease_attempts + 1):
                                         log_mt(f"[MikroTik] Buscando lease dinámico (Intento {poll_attempt}/{lease_attempts})...")
                                         
@@ -997,10 +1003,10 @@ class TaskProcessor:
                                             _time.sleep(1)
                                             break
 
-                                        _time.sleep(1)
+                                        _time.sleep(0.2)
 
                                     if not lease:
-                                        log_mt(f"[MikroTik] [ADVERTENCIA] No se encontró lease dinámico para MAC {mt_mac} tras 30s.")
+                                        log_mt(f"[MikroTik] [ADVERTENCIA] No se encontró lease dinámico para MAC {mt_mac}; se puede reintentar desde refresh-ip.")
                                     else:
                                         # Soporte para .id (RouterOS estándar) y id
                                         lease_id = lease.get('.id') or lease.get('id')
@@ -1217,11 +1223,10 @@ class TaskProcessor:
         logger.debug(f"Ejecutando keepalive en {len(self.olt_connections)} conexiones OLT cacheables...")
         for olt_id, olt in list(self.olt_connections.items()):
             try:
-                # Comprobar si la sesión está viva enviando newline (rápido/silencioso)
+                # Solo consultar el estado TCP; no enviar comandos que puedan
+                # cambiar el prompt o provocar falsos fallos en Huawei.
                 if olt.is_connected and olt.connection and self._check_olt_alive(olt):
-                    # Enviar comando ligero
-                    olt.send_command("display clock", expect_string=r'[#>]', delay_factor=0.3)
-                    logger.debug(f"✓ Keepalive ('display clock') enviado exitosamente a OLT ID {olt_id}")
+                    logger.debug(f"✓ Sesión OLT ID {olt_id} sigue viva")
                     continue
                 
                 logger.warning(f"✗ Keepalive falló para OLT ID {olt_id} (sin respuesta). Reconectando...")
