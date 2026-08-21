@@ -934,8 +934,15 @@ class OLTInterface:
             # Prompt de usuario (>) → enable + config
             if prompt.endswith('>'):
                 logger.info(f"[_ensure_config_mode] En modo usuario, enviando enable + config...")
-                resp = self.send_command('enable', expect_string=r'#', delay_factor=0.3)
-                self.check_response_for_errors('enable', resp)
+                resp = self.send_command('enable', expect_string=r'[#>]', delay_factor=0.3)
+                try:
+                    self.check_response_for_errors('enable', resp)
+                except OLTCommandError as enable_error:
+                    # Algunas Huawei exponen directamente el comando config y
+                    # responden Unknown command a enable aunque el acceso sea válido.
+                    if 'unknown command' not in resp.lower():
+                        raise enable_error
+                    logger.info("[_ensure_config_mode] 'enable' no disponible; probando 'config' directamente.")
                 resp = self.send_command('config', expect_string=r'\(config\)#', delay_factor=0.3)
                 self.check_response_for_errors('config', resp)
                 self._current_mode = "config"
@@ -1172,18 +1179,9 @@ class OLTInterface:
             if not self.is_connected:
                 raise OLTConnectionError("No hay sesión activa. Llama connect() antes de ejecutar secuencias.")
 
-            # Resetear prompt al estado base antes de iniciar
-            self._reset_to_base_prompt()
-
-            # 1. Modo Privilegiado  (> → #)
-            resp = self.enter_privileged_mode()
-            self.check_response_for_errors('enable', resp)
-            responses.append(('enable', resp))
-
-            # 2. Modo Configuración  (# → (config)#)
-            resp = self.enter_config_mode()
-            self.check_response_for_errors('config', resp)
-            responses.append(('config', resp))
+            # Navegar según el prompt real. No forzar 'enable': algunas Huawei
+            # aceptan 'config' directamente y devuelven Unknown command para él.
+            self._ensure_config_mode()
 
             # 3. Obtener grupos de comandos
             cmd_groups = self.build_removal_commands(payload)
