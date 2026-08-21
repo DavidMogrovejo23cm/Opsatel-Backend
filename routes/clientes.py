@@ -967,7 +967,16 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
         m_total_cash = float(pago_data.monto)
         m_adic_cash = try_float(pago_data.adicional)
         m_plus_cash = try_float(pago_data.plus)
-        m_internet_cash = m_total_cash - m_plus_cash - m_adic_cash
+        if min(m_total_cash, m_adic_cash, m_plus_cash) < 0:
+            raise HTTPException(status_code=400, detail="Los montos de pago no pueden ser negativos")
+
+        componentes_cash = m_plus_cash + m_adic_cash
+        if componentes_cash > m_total_cash + 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail="La suma de Plus y Adicional no puede superar el monto total recibido"
+            )
+        m_internet_cash = round(m_total_cash - componentes_cash, 2)
 
         # Validar que no haya NaN
         import math
@@ -1046,9 +1055,20 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
         db.commit()
 
         nuevo_saldo = float(cliente.saldo or 0)
+        remaining_plus = round(try_float(cliente.plus), 2)
+        remaining_adicional = round(try_float(cliente.adicional), 2)
+        remaining_internet = round(max(0, nuevo_saldo), 2)
+        response = {
+            "message": f"Pago registrado. Saldo pendiente: ${nuevo_saldo:.2f}",
+            "nuevo_saldo": nuevo_saldo,
+            "saldo_internet": remaining_internet,
+            "saldo_plus": remaining_plus,
+            "saldo_adicional": remaining_adicional,
+            "saldo_extras": round(remaining_plus + remaining_adicional, 2),
+        }
         if nuevo_saldo < 0:
-            return {"message": f"Pago registrado. Excedente: ${abs(nuevo_saldo):.2f}", "nuevo_saldo": nuevo_saldo}
-        return {"message": f"Pago registrado. Saldo pendiente: ${nuevo_saldo:.2f}", "nuevo_saldo": nuevo_saldo}
+            response["message"] = f"Pago registrado. Excedente: ${abs(nuevo_saldo):.2f}"
+        return response
     except HTTPException:
         raise
     except Exception as e:
