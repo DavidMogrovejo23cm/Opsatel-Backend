@@ -11,6 +11,7 @@ Versión: 1.0.0
 import logging
 import json
 import time
+import os
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 # pyrefly: ignore [missing-import]
@@ -67,6 +68,11 @@ class TaskProcessor:
         """
         self.db: Optional[Session] = None
         self.olt_connections: Dict[int, OLTInterface] = {}  # Caché SSH permanente
+        self.olt_health_checked_at: Dict[int, float] = {}
+        self.olt_health_check_interval = max(
+            1, int(os.getenv("OLT_HEALTH_CHECK_INTERVAL", "30"))
+        )
+        self.olt_inventory_cache: Dict[Tuple[int, str], Dict[str, set]] = {}
         self.failed_olts_this_run = set()  # Evita reintentar conexiones SSH fallidas en el mismo ciclo
         self.current_task = None
         self.current_task_id = None
@@ -155,7 +161,11 @@ class TaskProcessor:
         # Verificar caché
         if olt_id in self.olt_connections:
             conn = self.olt_connections[olt_id]
-            if conn.is_connected and self._check_olt_alive(conn):
+            last_health_check = self.olt_health_checked_at.get(olt_id, 0)
+            health_check_due = time.time() - last_health_check >= self.olt_health_check_interval
+            if conn.is_connected and (not health_check_due or self._check_olt_alive(conn)):
+                if health_check_due:
+                    self.olt_health_checked_at[olt_id] = time.time()
                 logger.debug(f"Reutilizando sesión SSH cacheada para OLT {olt_id}")
                 return conn
             else:
@@ -165,6 +175,7 @@ class TaskProcessor:
                 except Exception:
                     pass
                 del self.olt_connections[olt_id]
+                self.olt_health_checked_at.pop(olt_id, None)
 
         # Obtener configuración de BD
         try:
@@ -193,6 +204,7 @@ class TaskProcessor:
                 self.olt_connection_failures.pop(olt_id, None)
                 self.olt_next_retry_time.pop(olt_id, None)
                 self.olt_connections[olt_id] = olt
+                self.olt_health_checked_at[olt_id] = time.time()
                 logger.info(f"Conexión SSH OLT {olt_config.nombre} (ID {olt_id}) establecida")
                 return olt
             else:
@@ -440,10 +452,24 @@ class TaskProcessor:
                         # solo envía enable/config si son necesarios.
                         olt._ensure_config_mode()
 
-                        # ── 1. ONT IDs en uso en la OLT (requiere estar en config) ──
-                        # get_existing_ont_ids hace: interface gpon X/X →
-                        # display ont info <port> all → quit (vuelve a config).
-                        existing_ont_ids = olt.get_existing_ont_ids(gpon_port)
+                        inventory_key = (task.olt_id, str(gpon_port))
+                        inventory = self.olt_inventory_cache.get(inventory_key)
+                        if inventory is None:
+                            # ── 1. ONT IDs en uso en la OLT (requiere estar en config) ──
+                            # get_existing_ont_ids hace: interface gpon X/X →
+                            # display ont info <port> all → quit (vuelve a config).
+                            existing_ont_ids = set(olt.get_existing_ont_ids(gpon_port))
+
+                            # Consultar una sola vez el inventario del puerto durante
+                            # este lote; el worker procesa tareas secuencialmente.
+                            occupied_sps = set(olt.get_existing_service_ports(gpon_port))
+                            inventory = {
+                                'ont_ids': existing_ont_ids,
+                                'service_ports': occupied_sps,
+                            }
+                            self.olt_inventory_cache[inventory_key] = inventory
+                        else:
+                            existing_ont_ids = inventory['ont_ids']
 
                         # ── 2. IDs reservados en la cola de tareas pendientes ──
                         pending_tasks = self.db.query(models.OLTTask).filter(
@@ -503,8 +529,9 @@ class TaskProcessor:
                             f"rango service-port [{sp_range_start}..{sp_range_end}]"
                         )
 
-                        # Consultar la OLT directamente
-                        olt_occupied_sps = set(olt.get_existing_service_ports(gpon_port))
+                        # La OLT se consulta al iniciar el inventario del puerto;
+                        # las reservas exitosas del lote se agregan localmente.
+                        olt_occupied_sps = inventory['service_ports']
 
                         # Combinar con SPs reservados en tareas pendientes
                         all_occupied_sps = olt_occupied_sps | reserved_sps
@@ -561,6 +588,9 @@ class TaskProcessor:
                     # execute_activation_sequence llama _ensure_config_mode internamente
                     # y detecta que ya estamos en (config)# → no reenvía enable/config.
                     result = olt.execute_activation_sequence(validated_payload)
+                    if result.get('success'):
+                        inventory['ont_ids'].add(calculated_ont_id)
+                        inventory['service_ports'].add(calculated_sp)
                 elif task.action == 'remove_ont':
                     result = olt.execute_removal_sequence(validated_payload)
                 elif task.action == 'set_breach':
@@ -574,6 +604,11 @@ class TaskProcessor:
                 if not result.get('success') and not olt.is_connected:
                     logger.warning(f"Sesión OLT {task.olt_id} rota tras error. Eliminando del caché.")
                     self.olt_connections.pop(task.olt_id, None)
+                    for inventory_key in [
+                        key for key in self.olt_inventory_cache
+                        if key[0] == task.olt_id
+                    ]:
+                        self.olt_inventory_cache.pop(inventory_key, None)
                 
                 success = result.get('success', False)
                 result_status = result.get('status', 'SUCCESS')
@@ -1137,6 +1172,7 @@ class TaskProcessor:
         try:
             # Limpiar caché de fallos para esta ejecución
             self.failed_olts_this_run.clear()
+            self.olt_inventory_cache.clear()
 
             # Obtener tareas pendientes (ordenadas por prioridad y fecha)
             pending_tasks = self.db.query(models.OLTTask).filter(

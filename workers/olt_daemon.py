@@ -57,8 +57,8 @@ LOG_FILE = LOG_DIR / "olt-worker.log"
 LOG_LEVEL = logging.DEBUG if os.getenv("DEBUG", "false").lower() == "true" else logging.INFO
 
 # Parámetros del worker
-POLL_INTERVAL = int(os.getenv("WORKER_POLL_INTERVAL", "5"))  # Segundos entre polls
-BATCH_SIZE = int(os.getenv("WORKER_BATCH_SIZE", "1"))  # Tareas por ciclo
+POLL_INTERVAL = int(os.getenv("WORKER_POLL_INTERVAL", "1"))  # Segundos entre polls
+BATCH_SIZE = int(os.getenv("WORKER_BATCH_SIZE", "5"))  # Tareas por ciclo
 STARTUP_DELAY = int(os.getenv("WORKER_STARTUP_DELAY", "2"))  # Segundos antes de empezar
 
 # ============================================================================
