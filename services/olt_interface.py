@@ -951,7 +951,7 @@ class OLTInterface:
             self.send_command('quit', expect_string=r'[#>]', delay_factor=0.3)
             prompt = self.connection.find_prompt()
 
-        logger.warning("[_ensure_config_mode] No se pudo alcanzar (config)# en 6 intentos.")
+        raise OLTCommandError("No se pudo alcanzar el modo de configuración de la OLT")
 
     def execute_activation_sequence(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Ejecuta el flujo completo de activación con sincronización explícita de prompts.
@@ -1041,12 +1041,25 @@ class OLTInterface:
                 # Entrar a interfaz GPON para leer potencia
                 self.enter_gpon_interface(gpon_port_val)
                 opt_cmd = f"display ont optical-info {port_num_val} {ont_id_val}"
-                opt_resp = self.send_command(opt_cmd, expect_string=r'\(config-if-gpon-', delay_factor=0.3, read_timeout=10)
-                optical_raw = opt_resp
-                power_data = self.parse_ont_power(opt_resp)
-                rx_power = power_data.get('rx_power')
-                tx_power = power_data.get('tx_power')
-                ont_status_live = self.parse_ont_status(opt_resp)
+                # Huawei puede tardar unos segundos en publicar la ONT online.
+                # Reintentar aquí evita mostrar potencia vacía por una lectura
+                # demasiado temprana, sin bloquear la activación más de 2s.
+                for power_attempt in range(3):
+                    opt_resp = self.send_command(
+                        opt_cmd,
+                        expect_string=r'\(config-if-gpon-',
+                        delay_factor=0.3,
+                        read_timeout=10,
+                    )
+                    optical_raw = opt_resp
+                    power_data = self.parse_ont_power(opt_resp)
+                    rx_power = power_data.get('rx_power')
+                    tx_power = power_data.get('tx_power')
+                    ont_status_live = self.parse_ont_status(opt_resp)
+                    if rx_power is not None:
+                        break
+                    if power_attempt < 2:
+                        time.sleep(1)
                 self.exit_gpon_interface()
                 logger.info(f"[Power-Inline] RX={rx_power} TX={tx_power} Status={ont_status_live}")
             except Exception as pw_inline_err:
@@ -1074,6 +1087,7 @@ class OLTInterface:
                 # ─── Potencia óptica post-activación ────────────────────────
                 'rx_power':     rx_power,
                 'tx_power':     tx_power,
+                'potencia':     rx_power,
                 'ont_status':   ont_status_live,
                 'optical_raw':  optical_raw[:500] if optical_raw else None,
             }
@@ -1529,19 +1543,19 @@ class OLTInterface:
         try:
             rx_patterns = [
                 # Formato más común en MA5608T / MA5683T
-                r'OLT\s+Rx\s+ONT\s+optical\s+power\s*\(dBm\)\s*:\s*([-\d.]+)',
-                r'Rx\s+optical\s+power\s*\(dBm\)\s*:\s*([-\d.]+)',
-                r'RX\s*power\s*\(dBm\)\s*:\s*([-\d.]+)',
-                r'Rx\s*power\s*\(dBm\)\s*:\s*([-\d.]+)',
+                r'OLT\s+Rx\s+ONT\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                r'Rx\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                r'RX\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                r'Rx\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
                 r'(?:RX|Rx)\s*power.*?:\s*([-\d.]+)',
                 # Fallback genérico
                 r'optical\s+power.*?:\s*([-\d.]+)',
             ]
             tx_patterns = [
-                r'ONT\s+Tx\s+power\s*\(dBm\)\s*:\s*([-\d.]+)',
-                r'Tx\s+optical\s+power\s*\(dBm\)\s*:\s*([-\d.]+)',
-                r'TX\s*power\s*\(dBm\)\s*:\s*([-\d.]+)',
-                r'Tx\s*power\s*\(dBm\)\s*:\s*([-\d.]+)',
+                r'ONT\s+Tx\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                r'Tx\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                r'TX\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                r'Tx\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
             ]
 
             for pattern in rx_patterns:
