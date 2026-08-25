@@ -128,6 +128,7 @@ class Cliente(Base):
     iptv_member_id = Column("IPTV_MEMBER_ID", Integer, default=1)
     tv_tipo = Column("TV_TIPO", String(50), default="Ninguno")
     cortesia_total = Column("CORTESIA_TOTAL", Boolean, default=False)
+    fecha_prorroga = Column("FECHA_PRORROGA", String(50), nullable=True)
 
     pagos = relationship("Pago", back_populates="cliente")
 
@@ -156,10 +157,16 @@ class Pago(Base):
     monto_plus = Column(Numeric(precision=10, scale=2), default=0.00)
     monto_adicional = Column(Numeric(precision=10, scale=2), default=0.00)
 
-
-
+    # Contabilidad y Auditoría avanzada
+    anulado = Column(Boolean, default=False)
+    fecha_anulacion = Column(DateTime, nullable=True)
+    anulado_por = Column(String(100), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
+    estado = Column(String(50), default="Completado") # Completado, Pendiente_Verificacion
+    turnocaja_id = Column(Integer, ForeignKey("turnos_cajas.id"), nullable=True)
 
     cliente = relationship("Cliente", back_populates="pagos")
+    turno = relationship("TurnoCaja", back_populates="pagos")
 
 
 
@@ -366,7 +373,16 @@ class PagoExtra(Base):
     referencia = Column(String(100))
     factura = Column(String(100))
     
+    # Contabilidad y Auditoría avanzada
+    anulado = Column(Boolean, default=False)
+    fecha_anulacion = Column(DateTime, nullable=True)
+    anulado_por = Column(String(100), nullable=True)
+    motivo_anulacion = Column(Text, nullable=True)
+    estado = Column(String(50), default="Completado") # Completado, Pendiente_Verificacion
+    turnocaja_id = Column(Integer, ForeignKey("turnos_cajas.id"), nullable=True)
+
     cliente = relationship("ClienteExtra", back_populates="pagos")
+    turno = relationship("TurnoCaja", back_populates="pagos_extras")
 
 class HojaRuta(Base):
     __tablename__ = "hoja_ruta"
@@ -677,4 +693,41 @@ class ClienteEliminado(Base):
     estado_libreqos = Column(String(50)) # "ELIMINADO", "OMITIDO", "ERROR"
     estado_db = Column(String(50))       # "ELIMINADO", "ERROR"
     datos_cliente = Column(JSON)         # Fotografía completa (snapshot)
-    detalles_error = Column(Text)        # Logs o detalles de error si los hay
+    detalles_error = Column(Text)        # Logs o detalles de error si los hay
+
+class TurnoCaja(Base):
+    __tablename__ = "turnos_cajas"
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
+    fecha_apertura = Column(DateTime, default=datetime.datetime.utcnow)
+    fecha_cierre = Column(DateTime, nullable=True)
+    
+    # Apertura
+    efectivo_apertura = Column(Numeric(precision=10, scale=2), default=0.00)
+    pichincha_apertura = Column(Numeric(precision=10, scale=2), default=0.00)
+    jep_apertura = Column(Numeric(precision=10, scale=2), default=0.00)
+    
+    # Cierre (calculados)
+    efectivo_cierre = Column(Numeric(precision=10, scale=2), default=0.00)
+    pichincha_cierre = Column(Numeric(precision=10, scale=2), default=0.00)
+    jep_cierre = Column(Numeric(precision=10, scale=2), default=0.00)
+    
+    # Conteo Físico
+    efectivo_real = Column(Numeric(precision=10, scale=2), default=0.00)
+    pichincha_real = Column(Numeric(precision=10, scale=2), default=0.00)
+    jep_real = Column(Numeric(precision=10, scale=2), default=0.00)
+    
+    estado = Column(String(20), default="Abierto") # "Abierto", "Cerrado"
+    observaciones = Column(Text, nullable=True)
+    
+    usuario = relationship("Usuario", backref="turnos")
+    pagos = relationship("Pago", back_populates="turno")
+    pagos_extras = relationship("PagoExtra", back_populates="turno")
+
+class LogFacturacion(Base):
+    __tablename__ = "log_facturacion"
+    id = Column(Integer, primary_key=True, index=True)
+    periodo_mes = Column(String(20), unique=True, index=True) # YYYY-MM
+    fecha_ejecucion = Column(DateTime, default=datetime.datetime.utcnow)
+    estado = Column(String(50), default="Completado")
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)

@@ -405,8 +405,24 @@ def eliminar_gasto_fijo(id: int, db: Session = Depends(get_db)):
 
 @router.get("/reporte-mensual")
 def reporte_mensual(mes: str, db: Session = Depends(get_db)):
-    pagos = db.query(models.Pago).all()
-    pagos_mes = [p for p in pagos if str(p.fecha_pago)[:7] == mes]
+    try:
+        year, month = map(int, mes.split("-"))
+        import calendar
+        _, last_day = calendar.monthrange(year, month)
+        start_date = datetime.datetime(year, month, 1, 0, 0, 0)
+        end_date = datetime.datetime(year, month, last_day, 23, 59, 59)
+        pagos_mes = db.query(models.Pago).filter(
+            models.Pago.fecha_pago >= start_date,
+            models.Pago.fecha_pago <= end_date,
+            models.Pago.anulado == False,
+            models.Pago.estado == "Completado"
+        ).all()
+    except Exception as e:
+        pagos = db.query(models.Pago).filter(
+            models.Pago.anulado == False,
+            models.Pago.estado == "Completado"
+        ).all()
+        pagos_mes = [p for p in pagos if str(p.fecha_pago)[:7] == mes]
 
     internet_ef = internet_pich = internet_jep = 0.0
     plus_ef = plus_pich = 0.0
@@ -533,9 +549,17 @@ def reporte_anual(anio: int, db: Session = Depends(get_db)):
         "05":"mayo","06":"junio","07":"julio","08":"agosto",
         "09":"septiembre","10":"octubre","11":"noviembre","12":"diciembre"
     }
-    pagos = db.query(models.Pago).all()
+    start_date = datetime.datetime(anio, 1, 1, 0, 0, 0)
+    end_date = datetime.datetime(anio, 12, 31, 23, 59, 59)
+    pagos = db.query(models.Pago).filter(
+        models.Pago.fecha_pago >= start_date,
+        models.Pago.fecha_pago <= end_date,
+        models.Pago.anulado == False,
+        models.Pago.estado == "Completado"
+    ).all()
+    
     extras_all = db.query(models.ClienteExtra).all()
-    egresos_all = db.query(models.Egreso).all()
+    egresos_all = db.query(models.Egreso).filter(models.Egreso.mes.like(f"{anio}-%")).all()
     proyectos_all = db.query(models.Proyecto).all()
 
     data_mensual = []

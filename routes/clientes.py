@@ -14,6 +14,9 @@ from services.smart_parser import parse_unstructured_client_data
 
 router = APIRouter(prefix="/clientes", tags=["clientes"])
 
+_stats_cache = None
+_stats_cache_time = None
+
 import traceback
 from datetime import datetime
 from config_manager import get_config, save_config
@@ -109,23 +112,12 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
         cliente.adicional = ""
         return
 
-    # El total_pago representa el total real adeudado en tiempo real.
-    # Incluye Saldo (deuda histórica neta de pagos) + Tarifa (valor del plan actual) + IPTV + Adicional.
-    tarifa = 0.00
-    if cliente.tercera_edad and cliente.precio_plan_especial is not None:
-        tarifa = float(cliente.precio_plan_especial)
-    elif db:
-        plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
-        if plan_info:
-            tarifa = float(plan_info.precio or 0)
-            
     plus = try_float(cliente.plus)
-    adicional = try_float(cliente.adicional)
     saldo = float(cliente.saldo or 0)
     
     # El Pendiente Principal (total_pago) SEPARA el cargo adicional según requerimiento v1.2.
     # El adicional es un servicio aparte que NO afecta la deuda de internet/iptv en Pagos y Cobros.
-    cliente.total_pago = saldo + tarifa + plus
+    cliente.total_pago = saldo + plus
 
 @router.get("/pendientes-count")
 def get_pendientes_count(db: Session = Depends(get_db)):
@@ -156,36 +148,42 @@ def listar_clientes(db: Session = Depends(get_db)):
 
 @router.get("/dashboard-stats")
 def get_dashboard_stats(db: Session = Depends(get_db)):
-    pagos = db.query(models.Pago).all()
+    global _stats_cache, _stats_cache_time
+    now = datetime.now()
+    if _stats_cache is not None and _stats_cache_time is not None and (now - _stats_cache_time).total_seconds() < 300:
+        return _stats_cache
+
+    # pyrefly: ignore [missing-import]
+    from sqlalchemy import func
+    # Consulta SQL optimizada agrupada por método de pago
+    results = db.query(
+        models.Pago.metodo_pago,
+        func.sum(models.Pago.monto).label("total"),
+        func.sum(models.Pago.monto_internet).label("internet"),
+        func.sum(models.Pago.monto_plus).label("plus")
+    ).filter(
+        models.Pago.anulado == False,
+        models.Pago.estado == "Completado"
+    ).group_by(models.Pago.metodo_pago).all()
     
     # Inicializamos contadores
     internet = {"Efectivo": 0.0, "Pichincha": 0.0, "JEP": 0.0}
     plus = {"Efectivo": 0.0, "Pichincha": 0.0}
     
-    for p in pagos:
-        metodo = (p.metodo_pago or "").upper()
-        # Intentamos obtener valores flotantes
-        try:
-            m_total = float(p.monto or 0)
-            m_internet = float(p.monto_internet or 0)
-            m_plus = float(p.monto_plus or 0)
-        except:
-            continue
+    for r in results:
+        metodo = (r.metodo_pago or "").upper()
+        m_total = float(r.total or 0)
+        m_internet = float(r.internet or 0)
+        m_plus = float(r.plus or 0)
             
         # Reglas Internet
         if "JEP" in metodo:
             internet["JEP"] += m_total
         elif "PICHINCHA" in metodo:
             internet["Pichincha"] += m_internet
-        elif "EFECTIVO" in metodo:
-            internet["Efectivo"] += m_internet
-        else: # Si no especifica, asumimos internet efectivo para no perder el registro
-            internet["Efectivo"] += m_internet
-            
-        # Reglas Plus
-        if "PICHINCHA" in metodo:
             plus["Pichincha"] += m_plus
-        elif "JEP" not in metodo:
+        else:
+            internet["Efectivo"] += m_internet
             plus["Efectivo"] += m_plus
             
     # Calculate Finanzas Globales
@@ -200,7 +198,9 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         "JEP": b_jep + internet["JEP"]
     }
             
-    return {"internet": internet, "plus": plus, "finanzas_globales": finanzas_globales}
+    _stats_cache = {"internet": internet, "plus": plus, "finanzas_globales": finanzas_globales}
+    _stats_cache_time = now
+    return _stats_cache
 
 @router.post("/parse-smart", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def parse_smart_client_data(request: schemas.SmartParseRequest, db: Session = Depends(get_db)):
@@ -906,11 +906,12 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
                 tarifa_base = float(plan_info.precio or 0) if plan_info else 0.00
             
             plus_base = try_float(cliente.plus)
-            total_full_month = tarifa_base + plus_base
             
-            if total_days_in_month > 0 and total_full_month > 0:
-                prorated_amount = (total_full_month / total_days_in_month) * active_days
-                cliente.saldo = round(prorated_amount - total_full_month, 2)
+            if total_days_in_month > 0:
+                prorated_internet = (tarifa_base / total_days_in_month) * active_days
+                prorated_plus = (plus_base / total_days_in_month) * active_days
+                cliente.saldo = round(prorated_internet, 2)
+                cliente.plus = str(round(prorated_plus, 2))
                 sync_cliente_balances(cliente, db)
         except Exception as e:
             print(f"Error calculando prorrateo: {e}")
@@ -956,12 +957,28 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
     db.commit()
     return {"message": "Datos de administración actualizados"}
 
-@router.post("/{id}/pagar", dependencies=[Depends(require_role(["administrador", "secretario"]))])
-def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends(get_db)):
+@router.post("/{id}/pagar")
+def registrar_pago(
+    id: int, 
+    pago_data: schemas.PagoCreate, 
+    db: Session = Depends(get_db), 
+    current_user: models.Usuario = Depends(require_role(["administrador", "secretario"]))
+):
     try:
         cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
         if not cliente:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+        # Verificar caja abierta obligatoriamente
+        turno = db.query(models.TurnoCaja).filter(
+            models.TurnoCaja.usuario_id == current_user.id,
+            models.TurnoCaja.estado == "Abierto"
+        ).first()
+        if not turno:
+            raise HTTPException(
+                status_code=400, 
+                detail="Debe abrir un turno de caja antes de poder registrar un pago."
+            )
 
         # Extraemos montos reales pagados (Cash)
         m_total_cash = float(pago_data.monto)
@@ -984,26 +1001,19 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
             raise HTTPException(status_code=400, detail="Monto inválido (NaN)")
 
         # ─── LÓGICA DE PROMOCIÓN / DESCUENTO POR INTERNET_PAYMENT MODIFICADO ───
-        # El frontend sugiere un internet_payment = total_pago - plus (saldo + tarifa).
-        # Si el usuario modifica ese valor a uno menor (promo), la diferencia entre
-        # lo sugerido originalmente y lo que el usuario definió es un descuento implícito
-        # que debe reducir la deuda como si fuera una cortesía parcial.
         descuento_promo = 0.0
         ip_enviado = try_float(pago_data.internet_payment) if pago_data.internet_payment and pago_data.internet_payment != "NONE" else None
         
         if ip_enviado is not None:
-            # Calcular lo que el backend habría sugerido (mismo cálculo que el frontend)
             internet_sugerido = float(cliente.total_pago or 0) - try_float(cliente.plus)
-            # Si el usuario puso un valor menor al sugerido, la diferencia es descuento promo
             if ip_enviado < internet_sugerido and internet_sugerido > 0:
                 descuento_promo = max(0.0, (internet_sugerido - ip_enviado) - (pago_data.descuento_internet or 0.0))
 
-        # Calculamos la reducción total de deuda: Cash + Descuentos explícitos + Descuento promo
         deuda_internet = m_internet_cash + (pago_data.descuento_internet or 0.0) + descuento_promo
         deuda_plus = m_plus_cash + (pago_data.descuento_plus or 0.0)
         deuda_adicional = m_adic_cash + (pago_data.descuento_adicional or 0.0)
 
-        # Usamos el Cash real en models.Pago para mantener Finanzas correctas
+        # Crear registro de Pago en base de datos
         nuevo_pago = models.Pago(
             cliente_id=id,
             monto=m_total_cash,
@@ -1012,15 +1022,30 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
             referencia=pago_data.referencia,
             monto_internet=m_internet_cash,
             monto_plus=m_plus_cash,
-            monto_adicional=m_adic_cash
+            monto_adicional=m_adic_cash,
+            estado=pago_data.estado or "Completado",
+            turnocaja_id=turno.id
         )
         db.add(nuevo_pago)
+
+        # Si el pago es Pendiente de Verificación, no aplicamos balances aún
+        if nuevo_pago.estado == "Pendiente_Verificacion":
+            db.commit()
+            global _stats_cache
+            _stats_cache = None # Vaciar caché
+            return {
+                "message": "Pago registrado y pendiente de verificación bancaria. El saldo del cliente no se actualizará hasta que la transferencia sea confirmada.",
+                "nuevo_saldo": float(cliente.saldo or 0),
+                "saldo_internet": float(cliente.saldo or 0),
+                "saldo_plus": round(try_float(cliente.plus), 2),
+                "saldo_adicional": round(try_float(cliente.adicional), 2),
+                "saldo_extras": round(try_float(cliente.plus) + try_float(cliente.adicional), 2)
+            }
 
         # 1. ACTUALIZAR ADICIONAL
         if deuda_adicional > 0:
             curr_adic = try_float(cliente.adicional)
             cliente.adicional = str(max(0, curr_adic - deuda_adicional))
-            # Pagado refleja solo el efectivo
             if m_adic_cash > 0:
                 cliente.adicional_pagado = float(cliente.adicional_pagado or 0) + m_adic_cash
             if cliente.adicional == "0.0": cliente.adicional = ""
@@ -1029,14 +1054,12 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
         if deuda_plus > 0:
             curr_plus = try_float(cliente.plus)
             cliente.plus = str(max(0, curr_plus - deuda_plus))
-            # Pagado refleja solo el efectivo
             if m_plus_cash > 0:
                 cliente.plus_pagado = float(cliente.plus_pagado or 0) + m_plus_cash
             if cliente.plus == "0.0": cliente.plus = ""
 
         # 3. ACTUALIZAR SALDO PRINCIPAL
         cliente.saldo = float(cliente.saldo or 0) - deuda_internet
-        # El pago mensual refleja solo el dinero real ingresado a caja. Los descuentos no aumentan el total cobrado.
         cliente.pago_mensual = float(cliente.pago_mensual or 0) + m_total_cash
 
         if pago_data.facturas is not None: cliente.facturas = pago_data.facturas
@@ -1045,14 +1068,26 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
         if pago_data.bank is not None: cliente.bank = pago_data.bank
         if pago_data.notas_pago is not None: cliente.notas_pago = pago_data.notas_pago
 
-        # 4. GUARDAR INTERNET PAYMENT para que General.jsx muestre que ya se pagó internet.
+        # 4. GUARDAR INTERNET PAYMENT
         if pago_data.internet_payment is not None and pago_data.internet_payment != "NONE":
             cliente.internet_payment = pago_data.internet_payment
         else:
             cliente.internet_payment = str(round(m_internet_cash, 2))
 
+        # 5. Reactivación automática si corresponde
+        if cliente.estado == "Suspendido" and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
+            cliente.estado = "Activo"
+            try:
+                from services.libreqos_manager import LibreQoSManager
+                correlation_id = f"auto_res_{id}_{int(datetime.now().timestamp())}"
+                LibreQoSManager.enqueue_job("RESUME", id, db, correlation_id, "AUTO_REACTIVATION_PAYMENT")
+            except Exception as lq_err:
+                print(f"Error al encolar LibreQoS tras reactivación automática: {lq_err}")
+
         sync_cliente_balances(cliente, db)
         db.commit()
+
+        _stats_cache = None # Vaciar caché
 
         nuevo_saldo = float(cliente.saldo or 0)
         remaining_plus = round(try_float(cliente.plus), 2)
@@ -1074,43 +1109,207 @@ def registrar_pago(id: int, pago_data: schemas.PagoCreate, db: Session = Depends
     except Exception as e:
         db.rollback()
         print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error al registrar pago: {str(e)}")
+
+@router.post("/{id}/pagos/{pago_id}/confirmar")
+def confirmar_pago(
+    id: int, 
+    pago_id: int, 
+    db: Session = Depends(get_db), 
+    current_user: models.Usuario = Depends(require_role(["administrador", "secretario"]))
+):
+    pago = db.query(models.Pago).filter(models.Pago.id == pago_id, models.Pago.cliente_id == id).first()
+    if not pago:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+    if pago.estado != "Pendiente_Verificacion":
+        raise HTTPException(status_code=400, detail="El pago ya está confirmado o anulado.")
+    if pago.anulado:
+        raise HTTPException(status_code=400, detail="No se puede confirmar un pago anulado.")
+        
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        
+    deuda_internet = float(pago.monto_internet or 0)
+    deuda_plus = float(pago.monto_plus or 0)
+    deuda_adicional = float(pago.monto_adicional or 0)
+    
+    if deuda_adicional > 0:
+        curr_adic = try_float(cliente.adicional)
+        cliente.adicional = str(max(0, curr_adic - deuda_adicional))
+        cliente.adicional_pagado = float(cliente.adicional_pagado or 0) + float(pago.monto_adicional)
+        if cliente.adicional == "0.0": cliente.adicional = ""
+        
+    if deuda_plus > 0:
+        curr_plus = try_float(cliente.plus)
+        cliente.plus = str(max(0, curr_plus - deuda_plus))
+        cliente.plus_pagado = float(cliente.plus_pagado or 0) + float(pago.monto_plus)
+        if cliente.plus == "0.0": cliente.plus = ""
+        
+    cliente.saldo = float(cliente.saldo or 0) - deuda_internet
+    cliente.pago_mensual = float(cliente.pago_mensual or 0) + float(pago.monto)
+    
+    pago.estado = "Completado"
+    
+    if cliente.estado == "Suspendido" and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
+        cliente.estado = "Activo"
+        try:
+            from services.libreqos_manager import LibreQoSManager
+            correlation_id = f"auto_res_{id}_{int(datetime.now().timestamp())}"
+            LibreQoSManager.enqueue_job("RESUME", id, db, correlation_id, "AUTO_REACTIVATION_PAYMENT_CONFIRM")
+        except Exception as lq_err:
+            print(f"Error al encolar LibreQoS tras reactivación automática: {lq_err}")
+             
+    sync_cliente_balances(cliente, db)
+    db.commit()
+    
+    global _stats_cache
+    _stats_cache = None
+    
+    return {"message": "Pago confirmado exitosamente. Balances de cliente actualizados."}
+
+@router.post("/{id}/pagos/{pago_id}/anular")
+def anular_pago(
+    id: int, 
+    pago_id: int, 
+    request_data: schemas.PagoAnularRequest, 
+    db: Session = Depends(get_db), 
+    current_user: models.Usuario = Depends(require_role(["administrador", "secretario"]))
+):
+    try:
+        pago = db.query(models.Pago).filter(models.Pago.id == pago_id, models.Pago.cliente_id == id).first()
+        if not pago:
+            raise HTTPException(status_code=404, detail="Pago no encontrado")
+        if pago.anulado:
+            raise HTTPException(status_code=400, detail="Este pago ya se encuentra anulado.")
+            
+        cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+            
+        if pago.estado == "Completado":
+            deuda_internet = float(pago.monto_internet or 0)
+            deuda_plus = float(pago.monto_plus or 0)
+            deuda_adicional = float(pago.monto_adicional or 0)
+            
+            if deuda_adicional > 0:
+                curr_adic = try_float(cliente.adicional)
+                cliente.adicional = str(curr_adic + deuda_adicional)
+                cliente.adicional_pagado = max(0.0, float(cliente.adicional_pagado or 0) - float(pago.monto_adicional))
+                
+            if deuda_plus > 0:
+                curr_plus = try_float(cliente.plus)
+                cliente.plus = str(curr_plus + deuda_plus)
+                cliente.plus_pagado = max(0.0, float(cliente.plus_pagado or 0) - float(pago.monto_plus))
+                
+            cliente.saldo = float(cliente.saldo or 0) + deuda_internet
+            cliente.pago_mensual = max(0.0, float(cliente.pago_mensual or 0) - float(pago.monto))
+            
+        pago.anulado = True
+        pago.fecha_anulacion = datetime.utcnow()
+        pago.anulado_por = current_user.username
+        pago.motivo_anulacion = request_data.motivo_anulacion
+        
+        sync_cliente_balances(cliente, db)
+        db.commit()
+        
+        global _stats_cache
+        _stats_cache = None
+        
+        return {"message": "Pago anulado exitosamente. Balances revertidos contablemente."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error al procesar pago: {str(e)}")
 
-@router.post("/facturacion-mensual-global", dependencies=[Depends(require_role(["administrador"]))])
-def ejecutar_facturacion_mensual(db: Session = Depends(get_db)):
-    config_sys = get_config()
-    current_month = datetime.now().strftime("%Y-%m")
-    
-    # Primera vez (sistema nuevo): permitir facturación sin cierre previo
-    # Después del primer mes, siempre se requiere cierre antes de facturar
-    es_primera_vez = not config_sys.get("ultimo_cierre")
-    
-    if not es_primera_vez and config_sys.get("ultimo_cierre") != current_month:
-        raise HTTPException(status_code=400, detail="Debe realizar el Cierre de Mes (en Reportes) antes de ejecutar la Facturación Mensual.")
-    
-    if config_sys.get("ultima_facturacion") == current_month:
-        raise HTTPException(status_code=400, detail="La facturación para este mes ya fue realizada. Debe esperar al próximo mes.")
-
+def procesar_facturacion_global(db: Session):
     clientes = db.query(models.Cliente).all()
     clientes_activos = [c for c in clientes if c.estado and c.estado.upper() == "ACTIVO"]
     
     count = 0
     for cliente in clientes_activos:
         # 1. Recargo mensual de IPTV PLUS ($2 por pantalla adicional contratada)
-        # Obtenemos pantallas base del plan
         plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
         base_screens = (plan_info.pantallas if plan_info.pantallas is not None else 0) if plan_info else 0
         
+        cargo_plus = 0.0
         if (cliente.iptv_max_conn or 0) > base_screens:
-            cargo_plus = (cliente.iptv_max_conn - base_screens) * 2
+            cargo_plus = float((cliente.iptv_max_conn - base_screens) * 2)
             cliente.plus = str(try_float(cliente.plus) + cargo_plus)
             
-        # 2. La tarifa de internet se refleja en Pendiente vía sync_balances
+        # 2. La tarifa de internet se agrega al saldo directamente
+        tarifa = 0.00
+        if cliente.tercera_edad and cliente.precio_plan_especial is not None:
+            tarifa = float(cliente.precio_plan_especial)
+        elif plan_info:
+            tarifa = float(plan_info.precio or 0)
+            
+        cliente.saldo = float(cliente.saldo or 0) + tarifa
+        
+        # 3. Sincronizar balances
+        sync_cliente_balances(cliente, db)
         count += 1
         
-    save_config({"ultima_facturacion": current_month})
     db.commit()
-    return {"message": f"Facturación procesada para {count} clientes exitosamente."}
+    return count
+
+@router.post("/facturacion-mensual-global")
+def ejecutar_facturacion_mensual(
+    db: Session = Depends(get_db), 
+    current_user: models.Usuario = Depends(require_role(["administrador"]))
+):
+    config_sys = get_config()
+    current_month = datetime.now().strftime("%Y-%m")
+    
+    # 1. Comprobar que el mes anterior esté cerrado
+    from datetime import timedelta
+    first_day_current = datetime.now().replace(day=1)
+    prev_month_date = first_day_current - timedelta(days=1)
+    prev_month_str = prev_month_date.strftime("%Y-%m")
+    
+    if config_sys.get("ultimo_cierre") != prev_month_str and config_sys.get("ultimo_cierre") != current_month:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Debe realizar el Cierre de Mes correspondiente al período anterior ({prev_month_str}) antes de facturar."
+        )
+
+    # 2. Intentar registrar de forma atómica la facturación para evitar carrera de hilos
+    # pyrefly: ignore [missing-import]
+    from sqlalchemy.exc import IntegrityError
+    log_fact = models.LogFacturacion(
+        periodo_mes=current_month,
+        fecha_ejecucion=datetime.utcnow(),
+        estado="Procesando",
+        usuario_id=current_user.id
+    )
+    db.add(log_fact)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400, 
+            detail="La facturación de este mes ya fue realizada anteriormente."
+        )
+        
+    try:
+        count = procesar_facturacion_global(db)
+        log_fact.estado = "Completado"
+        save_config({"ultima_facturacion": current_month})
+        db.commit()
+        return {"message": f"Facturación procesada para {count} clientes exitosamente."}
+    except Exception as e:
+        db.rollback()
+        db.query(models.LogFacturacion).filter(models.LogFacturacion.periodo_mes == current_month).delete()
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Error en facturación: {str(e)}")
+    except Exception as e:
+        db.rollback()
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error en facturación: {str(e)}")
 
 @router.post("/cierre-mensual-global", dependencies=[Depends(require_role(["administrador"]))])
 def ejecutar_cierre_mensual(db: Session = Depends(get_db)):

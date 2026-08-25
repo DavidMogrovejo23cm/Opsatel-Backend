@@ -151,7 +151,7 @@ def init_db(max_retries=12, retry_interval=5):
 # Ejecutar inicialización ANTES de importar rutas
 init_db()
 
-from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance, asistencia, whatsapp, olt_tasks
+from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance, asistencia, whatsapp, olt_tasks, caja
 import rutas_configuraciones
 
 # ========================================================================
@@ -206,6 +206,7 @@ app.add_middleware(
 
 # Enrutadores
 app.include_router(auth.router)
+app.include_router(caja.router)
 app.include_router(clientes.router)
 app.include_router(extras.router)
 app.include_router(hoja_ruta.router)

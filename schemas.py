@@ -196,6 +196,7 @@ class PagoCreate(BaseModel):
     descuento_internet: Optional[float] = 0.0
     descuento_plus: Optional[float] = 0.0
     descuento_adicional: Optional[float] = 0.0
+    estado: Optional[str] = "Completado" # Completado, Pendiente_Verificacion
 
 class ClienteResponse(BaseModel):
     id: int
@@ -522,6 +523,7 @@ class PagoExtraCreate(BaseModel):
     mes_correspondiente: str
     referencia: Optional[str] = None
     factura: Optional[str] = None
+    estado: Optional[str] = "Completado" # Completado, Pendiente_Verificacion
 
 class HojaRutaBase(BaseModel):
     fecha: Optional[str] = None
@@ -681,6 +683,40 @@ class CajaNapUpdate(BaseModel):
 
 class SmartParseRequest(BaseModel):
     text: str
+
+class PagoAnularRequest(BaseModel):
+    motivo_anulacion: str
+
+class TurnoCajaCreate(BaseModel):
+    efectivo_apertura: Optional[float] = 0.0
+    pichincha_apertura: Optional[float] = 0.0
+    jep_apertura: Optional[float] = 0.0
+
+class TurnoCajaClose(BaseModel):
+    efectivo_real: float
+    pichincha_real: float
+    jep_real: float
+    observaciones: Optional[str] = None
+
+class TurnoCajaResponse(BaseModel):
+    id: int
+    usuario_id: int
+    fecha_apertura: datetime
+    fecha_cierre: Optional[datetime] = None
+    efectivo_apertura: float
+    pichincha_apertura: float
+    jep_apertura: float
+    efectivo_cierre: float
+    pichincha_cierre: float
+    jep_cierre: float
+    efectivo_real: float
+    pichincha_real: float
+    jep_real: float
+    estado: str
+    observaciones: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 
