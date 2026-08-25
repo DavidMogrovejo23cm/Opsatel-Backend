@@ -1259,17 +1259,17 @@ def ejecutar_facturacion_mensual(
     config_sys = get_config()
     current_month = datetime.now().strftime("%Y-%m")
     
-    # 1. Comprobar que el mes anterior esté cerrado
-    from datetime import timedelta
-    first_day_current = datetime.now().replace(day=1)
-    prev_month_date = first_day_current - timedelta(days=1)
-    prev_month_str = prev_month_date.strftime("%Y-%m")
-    
-    if config_sys.get("ultimo_cierre") != prev_month_str and config_sys.get("ultimo_cierre") != current_month:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Debe realizar el Cierre de Mes correspondiente al período anterior ({prev_month_str}) antes de facturar."
-        )
+    # 1. Comprobar que el mes anterior esté cerrado (Bypassed as per requirements: no report generation required)
+    # from datetime import timedelta
+    # first_day_current = datetime.now().replace(day=1)
+    # prev_month_date = first_day_current - timedelta(days=1)
+    # prev_month_str = prev_month_date.strftime("%Y-%m")
+    # 
+    # if config_sys.get("ultimo_cierre") != prev_month_str and config_sys.get("ultimo_cierre") != current_month:
+    #     raise HTTPException(
+    #         status_code=400, 
+    #         detail=f"Debe realizar el Cierre de Mes correspondiente al período anterior ({prev_month_str}) antes de facturar."
+    #     )
 
     # 2. Intentar registrar de forma atómica la facturación para evitar carrera de hilos
     # pyrefly: ignore [missing-import]
