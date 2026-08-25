@@ -125,16 +125,12 @@ def registrar_pago_extra(
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente extra no encontrado")
 
-    # Enforzar caja abierta
+    # Obtener turno de caja abierto (si existe)
     turno = db.query(models.TurnoCaja).filter(
         models.TurnoCaja.usuario_id == current_user.id,
         models.TurnoCaja.estado == "Abierto"
     ).first()
-    if not turno:
-        raise HTTPException(
-            status_code=400, 
-            detail="Debe abrir un turno de caja antes de poder registrar un pago."
-        )
+    turno_id = turno.id if turno else None
 
     monto = float(pago_data.monto)
 
@@ -147,7 +143,7 @@ def registrar_pago_extra(
         referencia=pago_data.referencia,
         factura=pago_data.factura,
         estado=pago_data.estado or "Completado",
-        turnocaja_id=turno.id
+        turnocaja_id=turno_id
     )
     db.add(nuevo_pago)
 

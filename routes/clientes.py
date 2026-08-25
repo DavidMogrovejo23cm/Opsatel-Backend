@@ -969,16 +969,12 @@ def registrar_pago(
         if not cliente:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-        # Verificar caja abierta obligatoriamente
+        # Obtener turno de caja abierto (si existe)
         turno = db.query(models.TurnoCaja).filter(
             models.TurnoCaja.usuario_id == current_user.id,
             models.TurnoCaja.estado == "Abierto"
         ).first()
-        if not turno:
-            raise HTTPException(
-                status_code=400, 
-                detail="Debe abrir un turno de caja antes de poder registrar un pago."
-            )
+        turno_id = turno.id if turno else None
 
         # Extraemos montos reales pagados (Cash)
         m_total_cash = float(pago_data.monto)
@@ -1024,7 +1020,7 @@ def registrar_pago(
             monto_plus=m_plus_cash,
             monto_adicional=m_adic_cash,
             estado=pago_data.estado or "Completado",
-            turnocaja_id=turno.id
+            turnocaja_id=turno_id
         )
         db.add(nuevo_pago)
 
