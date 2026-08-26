@@ -1082,6 +1082,8 @@ def registrar_pago(
         if pago_data.app is not None: cliente.app = pago_data.app
         if pago_data.payment_date is not None: cliente.payment_date = pago_data.payment_date
         if pago_data.bank is not None: cliente.bank = pago_data.bank
+        if pago_data.cod is not None: cliente.cod = pago_data.cod
+        if pago_data.bank_plus is not None: cliente.bank_plus = pago_data.bank_plus
         if pago_data.notas_pago is not None: cliente.notas_pago = pago_data.notas_pago
 
         # 4. GUARDAR INTERNET PAYMENT
@@ -1253,7 +1255,11 @@ def procesar_facturacion_global(db: Session):
         cargo_plus = 0.0
         if (cliente.iptv_max_conn or 0) > base_screens:
             cargo_plus = float((cliente.iptv_max_conn - base_screens) * 2)
-            cliente.plus = str(try_float(cliente.plus) + cargo_plus)
+            
+        if getattr(cliente, 'cortesia_total', False):
+            cliente.plus = "0"
+        else:
+            cliente.plus = str(cargo_plus) if cargo_plus > 0 else ""
             
         # 2. La tarifa de internet se agrega al saldo directamente
         tarifa = 0.00
@@ -1264,7 +1270,19 @@ def procesar_facturacion_global(db: Session):
             
         cliente.saldo = float(cliente.saldo or 0) + tarifa
         
-        # 3. Sincronizar balances
+        # 3. Reiniciar campos mensuales para la vista General
+        cliente.facturas = ""
+        cliente.payment_date = ""
+        cliente.bank = ""
+        cliente.cod = ""
+        cliente.bank_plus = ""
+        cliente.adicional = ""
+        cliente.internet_payment = ""
+        cliente.pago_mensual = 0.00
+        cliente.plus_pagado = 0.00
+        cliente.adicional_pagado = 0.00
+        
+        # 4. Sincronizar balances
         sync_cliente_balances(cliente, db)
         count += 1
         
