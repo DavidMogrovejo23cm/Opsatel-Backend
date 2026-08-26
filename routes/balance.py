@@ -726,13 +726,20 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
 
     # ── HOJA 2: RESUMEN POR PLAN (SOLO CLIENTES CON FACTURA) ──
     pagos_todos = db.query(models.Pago).all()
-    pagos_mes = [p for p in pagos_todos if str(p.fecha_pago)[:7] == mes and p.cliente_id in clientes_con_factura_ids]
+    pagos_mes = [
+        p for p in pagos_todos 
+        if str(p.fecha_pago)[:7] == mes 
+        and p.cliente_id in clientes_con_factura_ids 
+        and not getattr(p, 'anulado', False)
+    ]
     
     pago_por_cliente = {}
     pago_por_cliente_metodo = {}
     for p in pagos_mes:
         if p.cliente_id:
-            monto_total_pago = float(p.monto_internet or 0) + float(p.monto_plus or 0) + float(p.monto_adicional or 0)
+            m_total = float(p.monto or 0)
+            m_parts = float(p.monto_internet or 0) + float(p.monto_plus or 0) + float(p.monto_adicional or 0)
+            monto_total_pago = m_total if m_total > 0 else m_parts
             pago_por_cliente[p.cliente_id] = pago_por_cliente.get(p.cliente_id, 0.0) + monto_total_pago
             metodo = (p.metodo_pago or "Efectivo").upper()
             key = (p.cliente_id, metodo)
@@ -759,6 +766,8 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         m_internet = float(p.monto_internet or 0)
         m_plus    = float(p.monto_plus or 0)
         m_adic    = float(p.monto_adicional or 0)
+        if m_internet == 0 and m_plus == 0 and float(p.monto or 0) > 0:
+            m_internet = float(p.monto or 0)
         adicional_total += m_adic
         if "JEP" in metodo:
             internet_jep += m_internet
@@ -773,7 +782,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     total_plus     = plus_ef + plus_pich
     
     for plan_nombre in planes_nombres:
-        clientes_en_plan = [c for c in clientes_con_factura if c.plan == plan_nombre and c.estado == "Activo"]
+        clientes_en_plan = [c for c in clientes_con_factura if c.plan and c.plan.strip() == plan_nombre.strip() and (c.estado and c.estado.strip().upper() == "ACTIVO")]
         cant_clientes = len(clientes_en_plan)
         precio_plan = planes_precios.get(plan_nombre, 0.0)
         megas_plan = planes_megas.get(plan_nombre, 0)

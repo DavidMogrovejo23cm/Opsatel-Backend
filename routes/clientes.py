@@ -1450,13 +1450,20 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     
     # ── HOJA 2: RESUMEN POR PLAN (SOLO CLIENTES CON FACTURA) ──
     pagos_todos = db.query(models.Pago).all()
-    pagos_mes_actual = [p for p in pagos_todos if str(p.fecha_pago)[:7] == current_month and p.cliente_id in clientes_con_factura_ids]
+    pagos_mes_actual = [
+        p for p in pagos_todos 
+        if str(p.fecha_pago)[:7] == current_month 
+        and p.cliente_id in clientes_con_factura_ids 
+        and not getattr(p, 'anulado', False)
+    ]
     
     # Acumular pagos por cliente y por método de pago
     pago_por_cliente_metodo = {}
     for p in pagos_mes_actual:
         if p.cliente_id:
-            monto_total_pago = float(p.monto_internet or 0) + float(p.monto_plus or 0) + float(p.monto_adicional or 0)
+            m_total = float(p.monto or 0)
+            m_parts = float(p.monto_internet or 0) + float(p.monto_plus or 0) + float(p.monto_adicional or 0)
+            monto_total_pago = m_total if m_total > 0 else m_parts
             metodo = (p.metodo_pago or "Efectivo").upper()
             key = (p.cliente_id, metodo)
             pago_por_cliente_metodo[key] = pago_por_cliente_metodo.get(key, 0.0) + monto_total_pago
@@ -1472,7 +1479,7 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     gran_total_reunido = 0.0
     
     for plan_nombre in planes_nombres:
-        clientes_en_plan = [c for c in clientes_con_factura if c.plan == plan_nombre and c.estado == "Activo"]
+        clientes_en_plan = [c for c in clientes_con_factura if c.plan and c.plan.strip() == plan_nombre.strip() and (c.estado and c.estado.strip().upper() == "ACTIVO")]
         cant_clientes = len(clientes_en_plan)
         precio_plan = planes_precios.get(plan_nombre, 0.0)
         megas_plan = planes_megas.get(plan_nombre, 0)
