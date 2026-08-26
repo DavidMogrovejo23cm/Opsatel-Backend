@@ -1417,25 +1417,29 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     data = []
     for c in clientes:
         id_str = f"C{c.id:02d}" if c.id is not None else ""
-        fact_val = str(c.facturas or "").strip()
-        has_factura = bool(fact_val and fact_val.upper() != "NONE" and fact_val != "")
+        fact_raw = str(c.facturas or "").strip().upper()
+        has_factura = (fact_raw == "SI")
+        
+        fact_result = "SI" if has_factura else "NONE"
+        cod_result = str(c.cod or "").strip() if c.cod else (fact_raw if fact_raw not in ["SI", "NONE"] else "")
         
         pago_mensual = float(c.pago_mensual or 0.00)
         confirmar = True if (has_factura and pago_mensual > 0) else False
         megas_val = f"{planes_megas.get(c.plan, 0)}MB" if (confirmar and c.plan and c.plan in planes_megas) else "FALSE"
-        factura_val = fact_val if has_factura else "SIN FACTURA"
 
         data.append({
             "ID": id_str,
+            "RUC / CEDULA": str(c.cedula or "").strip(),
             "NAME": c.nombre or "",
             "DIRECTION": c.direccion or "",
-            "CEL": c.celular or "",
+            "CEL": str(c.celular or "").strip(),
             "PARISH": c.parroquia or "",
             "PLAN": c.plan or "",
-            f"FACT {month_name_en}": factura_val,
+            f"FACT {month_name_en}": fact_result,
+            "ESTADO": c.estado or "Pendiente",
             "CONFIRMAR": confirmar,
             f"MEGAS {month_name_en}": megas_val,
-            "FACTURAS": factura_val,
+            "FACTURAS": cod_result,
         })
         
     df_clientes = pd.DataFrame(data)

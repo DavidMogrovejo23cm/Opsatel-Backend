@@ -691,30 +691,30 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     # ── HOJA 1: FACTURACIÓN CLIENTES ──
     data_clientes = []
     for c in clientes:
-        fact_val = str(c.facturas or "").strip()
-        has_factura = bool(fact_val and fact_val.upper() != "NONE" and fact_val != "")
-        if not has_factura:
-            continue
-            
+        fact_raw = str(c.facturas or "").strip().upper()
+        has_factura = (fact_raw == "SI")
+        
+        fact_result = "SI" if has_factura else "NONE"
+        cod_result = str(c.cod or "").strip() if c.cod else (fact_raw if fact_raw not in ["SI", "NONE"] else "")
+        
         id_str = f"C{c.id:02d}" if c.id is not None else ""
         pago_mensual = float(c.pago_mensual or 0.00)
         confirmar = True if (has_factura and pago_mensual > 0) else False
         megas_val = f"{planes_megas.get(c.plan, 0)}MB" if (confirmar and c.plan and c.plan in planes_megas) else "FALSE"
-        factura_val = fact_val if has_factura else "SIN FACTURA"
         
         data_clientes.append({
             "ID": id_str,
-            "RUC / CEDULA": c.cedula or "—",
+            "RUC / CEDULA": str(c.cedula or "").strip(),
             "NAME": c.nombre or "",
             "DIRECTION": c.direccion or "",
-            "CEL": c.celular or "",
+            "CEL": str(c.celular or "").strip(),
             "PARISH": c.parroquia or "",
             "PLAN": c.plan or "",
-            f"FACT {month_name_en}": factura_val,
+            f"FACT {month_name_en}": fact_result,
             "ESTADO": c.estado or "Pendiente",
             "CONFIRMAR": confirmar,
             f"MEGAS {month_name_en}": megas_val,
-            "FACTURAS": factura_val
+            "FACTURAS": cod_result
         })
     df_clientes = pd.DataFrame(data_clientes)
     if not df_clientes.empty:
@@ -1170,7 +1170,18 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
                 val = cell.value
                 col_name = str(ws.cell(row=5, column=col).value or "").strip().upper()
                 
-                if isinstance(val, (int, float)) or (isinstance(val, str) and val.replace(".", "", 1).isdigit()):
+                # Si la columna es un identificador, código, cédula o teléfono, debe conservarse como TEXTO puro preservando ceros
+                is_text_code_col = any(kw in col_name for kw in ["CEDULA", "RUC", "CEL", "TELEFONO", "COD", "FACTURAS", "FACTURA", "ID"])
+                
+                if is_text_code_col:
+                    if val is not None and not isinstance(val, bool):
+                        val_str = str(val).strip()
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        cell.value = val_str
+                        cell.number_format = '@'
+                    cell.alignment = align_center
+                elif isinstance(val, (int, float)) or (isinstance(val, str) and val.replace(".", "", 1).isdigit()):
                     try:
                         if isinstance(val, str):
                             val = float(val)
