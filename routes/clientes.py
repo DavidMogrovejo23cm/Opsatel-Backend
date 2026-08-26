@@ -1257,26 +1257,27 @@ def ejecutar_facturacion_mensual(
     current_user: models.Usuario = Depends(require_role(["administrador"]))
 ):
     config_sys = get_config()
-    current_month = datetime.now().strftime("%Y-%m")
+    now_utc = datetime.utcnow()
+    current_month = now_utc.strftime("%Y-%m")
     
-    # 1. Comprobar que el mes anterior esté cerrado (Bypassed as per requirements: no report generation required)
-    # from datetime import timedelta
-    # first_day_current = datetime.now().replace(day=1)
-    # prev_month_date = first_day_current - timedelta(days=1)
-    # prev_month_str = prev_month_date.strftime("%Y-%m")
-    # 
-    # if config_sys.get("ultimo_cierre") != prev_month_str and config_sys.get("ultimo_cierre") != current_month:
-    #     raise HTTPException(
-    #         status_code=400, 
-    #         detail=f"Debe realizar el Cierre de Mes correspondiente al período anterior ({prev_month_str}) antes de facturar."
-    #     )
+    # 1. Comprobar que hayan transcurrido al menos 60 segundos (1 minuto) desde la última facturación (modo prueba)
+    last_log = db.query(models.LogFacturacion).order_by(models.LogFacturacion.fecha_ejecucion.desc()).first()
+    if last_log and last_log.fecha_ejecucion:
+        elapsed = (now_utc - last_log.fecha_ejecucion).total_seconds()
+        if elapsed < 60:
+            remaining = int(60 - elapsed)
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Modo de prueba: Debe esperar {remaining} segundos antes de ejecutar la facturación nuevamente (límite: 1 por minuto)."
+            )
 
     # 2. Intentar registrar de forma atómica la facturación para evitar carrera de hilos
     # pyrefly: ignore [missing-import]
     from sqlalchemy.exc import IntegrityError
+    periodo_key = now_utc.strftime("%Y-%m-%d %H:%M:%S")
     log_fact = models.LogFacturacion(
-        periodo_mes=current_month,
-        fecha_ejecucion=datetime.utcnow(),
+        periodo_mes=periodo_key,
+        fecha_ejecucion=now_utc,
         estado="Procesando",
         usuario_id=current_user.id
     )
@@ -1287,7 +1288,7 @@ def ejecutar_facturacion_mensual(
         db.rollback()
         raise HTTPException(
             status_code=400, 
-            detail="La facturación de este mes ya fue realizada anteriormente."
+            detail="Error al iniciar la facturación. Intente nuevamente en unos segundos."
         )
         
     try:
@@ -1298,11 +1299,8 @@ def ejecutar_facturacion_mensual(
         return {"message": f"Facturación procesada para {count} clientes exitosamente."}
     except Exception as e:
         db.rollback()
-        db.query(models.LogFacturacion).filter(models.LogFacturacion.periodo_mes == current_month).delete()
+        db.query(models.LogFacturacion).filter(models.LogFacturacion.periodo_mes == periodo_key).delete()
         db.commit()
-        raise HTTPException(status_code=500, detail=f"Error en facturación: {str(e)}")
-    except Exception as e:
-        db.rollback()
         import traceback
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error en facturación: {str(e)}")
