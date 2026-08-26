@@ -1401,7 +1401,6 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     
     clientes = db.query(models.Cliente).all()
     
-    # ── HOJA 1: FACTURACIÓN CLIENTES ──
     month_num = current_month.split("-")[1]
     month_name_en = {
         "01": "JANUARY", "02": "FEBRUARY", "03": "MARCH", "04": "APRIL",
@@ -1413,18 +1412,23 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     planes = db.query(models.PlanInternet).all()
     planes_precios = {p.nombre: float(p.precio) for p in planes}
     planes_megas = {p.nombre: int(p.megas or 0) for p in planes}
-
-    data = []
+    
+    # ── FILTRAR SOLO CLIENTES CON FACTURA Y CÓDIGO VÁLIDO ──
+    clientes_con_factura = []
+    clientes_con_factura_ids = set()
     for c in clientes:
-        id_str = f"C{c.id:02d}" if c.id is not None else ""
         fact_raw = str(c.facturas or "").strip().upper()
-        has_factura = (fact_raw == "SI")
-        
-        fact_result = "SI" if has_factura else "NONE"
-        cod_result = str(c.cod or "").strip() if c.cod else (fact_raw if fact_raw not in ["SI", "NONE"] else "")
-        
+        cod_raw = str(c.cod or "").strip()
+        if fact_raw == "SI" and cod_raw:
+            clientes_con_factura.append(c)
+            clientes_con_factura_ids.add(c.id)
+
+    # ── HOJA 1: FACTURACIÓN CLIENTES ──
+    data = []
+    for c in clientes_con_factura:
+        id_str = f"C{c.id:02d}" if c.id is not None else ""
         pago_mensual = float(c.pago_mensual or 0.00)
-        confirmar = True if (has_factura and pago_mensual > 0) else False
+        confirmar = True if pago_mensual > 0 else False
         megas_val = f"{planes_megas.get(c.plan, 0)}MB" if (confirmar and c.plan and c.plan in planes_megas) else "FALSE"
 
         data.append({
@@ -1435,19 +1439,18 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
             "CEL": str(c.celular or "").strip(),
             "PARISH": c.parroquia or "",
             "PLAN": c.plan or "",
-            f"FACT {month_name_en}": fact_result,
+            f"FACT {month_name_en}": "SI",
             "ESTADO": c.estado or "Pendiente",
             "CONFIRMAR": confirmar,
             f"MEGAS {month_name_en}": megas_val,
-            "FACTURAS": cod_result,
+            "FACTURAS": str(c.cod or "").strip(),
         })
         
     df_clientes = pd.DataFrame(data)
     
-    # ── HOJA 2: RESUMEN POR PLAN ──
-    # Consultar todos los pagos del mes correspondiente
+    # ── HOJA 2: RESUMEN POR PLAN (SOLO CLIENTES CON FACTURA) ──
     pagos_todos = db.query(models.Pago).all()
-    pagos_mes_actual = [p for p in pagos_todos if str(p.fecha_pago)[:7] == current_month]
+    pagos_mes_actual = [p for p in pagos_todos if str(p.fecha_pago)[:7] == current_month and p.cliente_id in clientes_con_factura_ids]
     
     # Acumular pagos por cliente y por método de pago
     pago_por_cliente_metodo = {}
@@ -1458,8 +1461,7 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
             key = (p.cliente_id, metodo)
             pago_por_cliente_metodo[key] = pago_por_cliente_metodo.get(key, 0.0) + monto_total_pago
             
-    # Obtener planes únicos presentes en los clientes
-    planes_nombres = sorted(list(set(c.plan for c in clientes if c.plan)))
+    planes_nombres = sorted(list(set(c.plan for c in clientes_con_factura if c.plan)))
     
     resumen_data = []
     gran_total_clientes = 0
@@ -1470,7 +1472,7 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     gran_total_reunido = 0.0
     
     for plan_nombre in planes_nombres:
-        clientes_en_plan = [c for c in clientes if c.plan == plan_nombre and c.estado == "Activo"]
+        clientes_en_plan = [c for c in clientes_con_factura if c.plan == plan_nombre and c.estado == "Activo"]
         cant_clientes = len(clientes_en_plan)
         precio_plan = planes_precios.get(plan_nombre, 0.0)
         megas_plan = planes_megas.get(plan_nombre, 0)

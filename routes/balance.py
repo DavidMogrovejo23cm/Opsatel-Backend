@@ -688,18 +688,22 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     }.get(month_num, "Mes")
     mes_label = f"{month_name_es} {parts[0]}" if len(parts) == 2 else mes
 
-    # ── HOJA 1: FACTURACIÓN CLIENTES ──
-    data_clientes = []
+    # ── FILTRAR SOLO CLIENTES CON FACTURA Y CÓDIGO VÁLIDO ──
+    clientes_con_factura = []
+    clientes_con_factura_ids = set()
     for c in clientes:
         fact_raw = str(c.facturas or "").strip().upper()
-        has_factura = (fact_raw == "SI")
-        
-        fact_result = "SI" if has_factura else "NONE"
-        cod_result = str(c.cod or "").strip() if c.cod else (fact_raw if fact_raw not in ["SI", "NONE"] else "")
-        
+        cod_raw = str(c.cod or "").strip()
+        if fact_raw == "SI" and cod_raw:
+            clientes_con_factura.append(c)
+            clientes_con_factura_ids.add(c.id)
+
+    # ── HOJA 1: FACTURACIÓN CLIENTES ──
+    data_clientes = []
+    for c in clientes_con_factura:
         id_str = f"C{c.id:02d}" if c.id is not None else ""
         pago_mensual = float(c.pago_mensual or 0.00)
-        confirmar = True if (has_factura and pago_mensual > 0) else False
+        confirmar = True if pago_mensual > 0 else False
         megas_val = f"{planes_megas.get(c.plan, 0)}MB" if (confirmar and c.plan and c.plan in planes_megas) else "FALSE"
         
         data_clientes.append({
@@ -710,19 +714,19 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
             "CEL": str(c.celular or "").strip(),
             "PARISH": c.parroquia or "",
             "PLAN": c.plan or "",
-            f"FACT {month_name_en}": fact_result,
+            f"FACT {month_name_en}": "SI",
             "ESTADO": c.estado or "Pendiente",
             "CONFIRMAR": confirmar,
             f"MEGAS {month_name_en}": megas_val,
-            "FACTURAS": cod_result
+            "FACTURAS": str(c.cod or "").strip()
         })
     df_clientes = pd.DataFrame(data_clientes)
     if not df_clientes.empty:
         df_clientes = df_clientes.sort_values(by=["ESTADO", "NAME"])
 
-    # ── HOJA 2: RESUMEN POR PLAN ──
+    # ── HOJA 2: RESUMEN POR PLAN (SOLO CLIENTES CON FACTURA) ──
     pagos_todos = db.query(models.Pago).all()
-    pagos_mes = [p for p in pagos_todos if str(p.fecha_pago)[:7] == mes]
+    pagos_mes = [p for p in pagos_todos if str(p.fecha_pago)[:7] == mes and p.cliente_id in clientes_con_factura_ids]
     
     pago_por_cliente = {}
     pago_por_cliente_metodo = {}
@@ -734,9 +738,8 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
             key = (p.cliente_id, metodo)
             pago_por_cliente_metodo[key] = pago_por_cliente_metodo.get(key, 0.0) + monto_total_pago
             
-    # Obtener todos los planes configurados en la base de datos más los que tengan los clientes asignados
     planes_db_nombres = set(p.nombre for p in planes if p.nombre)
-    planes_clientes_nombres = set(c.plan for c in clientes if c.plan)
+    planes_clientes_nombres = set(c.plan for c in clientes_con_factura if c.plan)
     planes_nombres = sorted(list(planes_db_nombres.union(planes_clientes_nombres)))
     
     resumen_data = []
@@ -770,7 +773,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     total_plus     = plus_ef + plus_pich
     
     for plan_nombre in planes_nombres:
-        clientes_en_plan = [c for c in clientes if c.plan == plan_nombre and c.estado == "Activo"]
+        clientes_en_plan = [c for c in clientes_con_factura if c.plan == plan_nombre and c.estado == "Activo"]
         cant_clientes = len(clientes_en_plan)
         precio_plan = planes_precios.get(plan_nombre, 0.0)
         megas_plan = planes_megas.get(plan_nombre, 0)
