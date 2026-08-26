@@ -343,14 +343,34 @@ async def upload_cedula(id: int, frontal: UploadFile = File(None), posterior: Up
     os.makedirs(upload_dir, exist_ok=True)
     
     if frontal:
-        ext = os.path.splitext(frontal.filename)[1]
+        ext = os.path.splitext(frontal.filename)[1] if frontal.filename else ""
+        if not ext:
+            ctype = str(getattr(frontal, 'content_type', '') or '').lower()
+            if 'jpeg' in ctype or 'jpg' in ctype:
+                ext = ".jpg"
+            elif 'webp' in ctype:
+                ext = ".webp"
+            elif 'gif' in ctype:
+                ext = ".gif"
+            else:
+                ext = ".png"
         file_path = f"{upload_dir}/frontal_{id}_{int(datetime.now().timestamp())}{ext}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(frontal.file, buffer)
         cliente.cedula_frontal = f"/{file_path}"
         
     if posterior:
-        ext = os.path.splitext(posterior.filename)[1]
+        ext = os.path.splitext(posterior.filename)[1] if posterior.filename else ""
+        if not ext:
+            ctype = str(getattr(posterior, 'content_type', '') or '').lower()
+            if 'jpeg' in ctype or 'jpg' in ctype:
+                ext = ".jpg"
+            elif 'webp' in ctype:
+                ext = ".webp"
+            elif 'gif' in ctype:
+                ext = ".gif"
+            else:
+                ext = ".png"
         file_path = f"{upload_dir}/posterior_{id}_{int(datetime.now().timestamp())}{ext}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(posterior.file, buffer)
