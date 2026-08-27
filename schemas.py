@@ -1,6 +1,6 @@
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional
+from typing import Optional, List, Dict
 from datetime import datetime
 
 class ClienteCreate(BaseModel):
