@@ -578,3 +578,100 @@ def listar_asistencias(
         query = query.filter(models.Asistencia.fecha <= fecha_fin)
         
     return query.order_by(models.Asistencia.created_at.desc()).all()
+
+
+@router.post("/ejecutar-truco-datesall")
+def ejecutar_truco_datesall(
+    data: schemas.TrucoDatesallRequest,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(require_role(["administrador"]))
+):
+    import random
+
+    target_username = data.username.strip()
+    if not target_username:
+        raise HTTPException(status_code=400, detail="Debes especificar un nombre de usuario válido.")
+
+    # Buscar usuario de forma 100% segura mediante ORM
+    usuario = db.query(models.Usuario).filter(models.Usuario.username == target_username).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail=f"El usuario '{target_username}' no existe.")
+
+    ahora_ec = get_ecuador_time()
+    hoy_date = ahora_ec.date()
+    ano = ahora_ec.year
+    mes_num = ahora_ec.month
+    
+    horario = get_user_schedule_dict(db, usuario.id)
+    dias_lab_list = [int(d.strip()) for d in horario["dias_laborables"].split(",") if d.strip().isdigit()]
+
+    registros_creados = 0
+
+    for day in range(1, hoy_date.day + 1):
+        fecha_dia_obj = date(ano, mes_num, day)
+        weekday_num = fecha_dia_obj.weekday() + 1 # 1=Lunes, 7=Domingo
+        
+        # Solo procesar si el día es laborable para este empleado
+        if weekday_num not in dias_lab_list:
+            continue
+
+        fecha_dia_str = fecha_dia_obj.strftime("%Y-%m-%d")
+
+        # Verificar si ya tiene marcación en esa fecha
+        existentes = db.query(models.Asistencia).filter(
+            models.Asistencia.usuario_id == usuario.id,
+            models.Asistencia.fecha == fecha_dia_str
+        ).all()
+
+        if existentes:
+            continue
+
+        # Generar marcación Turno 1 (Mañana)
+        h_ent1 = horario["hora_entrada_1"]
+        h_sal1 = horario["hora_salida_1"]
+
+        sec_in1 = random.randint(1, 45)
+        sec_out1 = random.randint(1, 45)
+
+        a1 = models.Asistencia(
+            usuario_id=usuario.id,
+            nombre_usuario=usuario.username,
+            fecha=fecha_dia_str,
+            hora_entrada=f"{h_ent1}:{sec_in1:02d}",
+            hora_salida=f"{h_sal1}:{sec_out1:02d}",
+            ubicacion="-2.922000, -79.066444",
+            distancia_metros=5.0,
+            dispositivo_info="System Auto-Generated (Trick Command)",
+            biometria_validada=True,
+            biometria_salida_validada=True
+        )
+        db.add(a1)
+
+        # Generar marcación Turno 2 (Tarde)
+        h_ent2 = horario["hora_entrada_2"]
+        h_sal2 = horario["hora_salida_2"]
+
+        sec_in2 = random.randint(1, 45)
+        sec_out2 = random.randint(1, 45)
+
+        a2 = models.Asistencia(
+            usuario_id=usuario.id,
+            nombre_usuario=usuario.username,
+            fecha=fecha_dia_str,
+            hora_entrada=f"{h_ent2}:{sec_in2:02d}",
+            hora_salida=f"{h_sal2}:{sec_out2:02d}",
+            ubicacion="-2.922000, -79.066444",
+            distancia_metros=5.0,
+            dispositivo_info="System Auto-Generated (Trick Command)",
+            biometria_validada=True,
+            biometria_salida_validada=True
+        )
+        db.add(a2)
+        registros_creados += 2
+
+    db.commit()
+
+    return {
+        "message": f"¡Truco ejecutado! Se han marcado automáticamente todas las asistencias del mes para '{usuario.username}' hasta hoy ({registros_creados} registros)."
+    }
+

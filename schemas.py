@@ -699,6 +699,9 @@ class ReporteAsistenciaMensualResponse(BaseModel):
     total_horas_extras: float
     resumen_empleados: List[ResumenEmpleadoMensual]
 
+class TrucoDatesallRequest(BaseModel):
+    username: str
+
 
 class WhatsAppConfiguracionCreate(BaseModel):
     hora: str
