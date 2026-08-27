@@ -1016,16 +1016,7 @@ def registrar_pago(
         if math.isnan(m_total_cash) or math.isnan(m_internet_cash):
             raise HTTPException(status_code=400, detail="Monto inválido (NaN)")
 
-        # ─── LÓGICA DE PROMOCIÓN / DESCUENTO POR INTERNET_PAYMENT MODIFICADO ───
-        descuento_promo = 0.0
-        ip_enviado = try_float(pago_data.internet_payment) if pago_data.internet_payment and pago_data.internet_payment != "NONE" else None
-        
-        if ip_enviado is not None:
-            internet_sugerido = float(cliente.total_pago or 0) - try_float(cliente.plus)
-            if ip_enviado < internet_sugerido and internet_sugerido > 0:
-                descuento_promo = max(0.0, (internet_sugerido - ip_enviado) - (pago_data.descuento_internet or 0.0))
-
-        deuda_internet = m_internet_cash + (pago_data.descuento_internet or 0.0) + descuento_promo
+        deuda_internet = m_internet_cash + (pago_data.descuento_internet or 0.0)
         deuda_plus = m_plus_cash + (pago_data.descuento_plus or 0.0)
         deuda_adicional = m_adic_cash + (pago_data.descuento_adicional or 0.0)
 
