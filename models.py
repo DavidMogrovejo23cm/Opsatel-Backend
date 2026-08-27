@@ -644,6 +644,23 @@ class Asistencia(Base):
 
     usuario = relationship("Usuario")
 
+
+class HorarioEmpleado(Base):
+    __tablename__ = "horarios_empleados"
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), unique=True, nullable=False)
+    hora_entrada_1 = Column(String(10), default="08:00")
+    hora_salida_1 = Column(String(10), default="13:00")
+    hora_entrada_2 = Column(String(10), default="14:00")
+    hora_salida_2 = Column(String(10), default="18:00")
+    horas_diarias_esperadas = Column(Float, default=8.0)
+    dias_laborables = Column(String(50), default="1,2,3,4,5")
+    tolerancia_minutos = Column(Integer, default=15)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    usuario = relationship("Usuario", backref="horario")
+
+
 class WhatsAppHistorial(Base):
     """Historial de mensajes WhatsApp enviados"""
     __tablename__ = "whatsapp_historial"

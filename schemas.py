@@ -641,8 +641,64 @@ class AsistenciaStatusResponse(BaseModel):
     ha_salido: bool
     hora_entrada: Optional[str] = None
     asistencia_id: Optional[int] = None
-    puede_salir: bool = False
+    puede_salir: bool = True
     mensaje_restriccion: Optional[str] = None
+    horario: Optional[dict] = None
+    punches_today: Optional[List[dict]] = None
+
+
+class HorarioEmpleadoBase(BaseModel):
+    hora_entrada_1: str = "08:00"
+    hora_salida_1: str = "13:00"
+    hora_entrada_2: str = "14:00"
+    hora_salida_2: str = "18:00"
+    horas_diarias_esperadas: float = 8.0
+    dias_laborables: str = "1,2,3,4,5"
+    tolerancia_minutos: int = 15
+
+class HorarioEmpleadoCreate(HorarioEmpleadoBase):
+    usuario_id: int
+
+class HorarioEmpleadoResponse(HorarioEmpleadoBase):
+    id: int
+    usuario_id: int
+    nombre_usuario: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DetalleAsistenciaDia(BaseModel):
+    fecha: str
+    dia_nombre: str
+    entrado: bool
+    salido: bool
+    hora_entrada: Optional[str] = None
+    hora_salida: Optional[str] = None
+    horas_trabajadas: float = 0.0
+    horas_extras: float = 0.0
+    atraso_minutos: int = 0
+    estado: str # "Presente", "Atraso", "Incompleto", "Ausente", "Descanso"
+
+class ResumenEmpleadoMensual(BaseModel):
+    usuario_id: int
+    nombre_usuario: str
+    rol: str
+    dias_trabajados: int
+    horas_trabajadas: float
+    horas_esperadas: float
+    horas_extras: float
+    atraso_minutos: int
+    detalles_dias: List[DetalleAsistenciaDia] = []
+
+class ReporteAsistenciaMensualResponse(BaseModel):
+    mes: str
+    total_empleados: int
+    total_horas_trabajadas: float
+    total_horas_extras: float
+    resumen_empleados: List[ResumenEmpleadoMensual]
+
 
 class WhatsAppConfiguracionCreate(BaseModel):
     hora: str
