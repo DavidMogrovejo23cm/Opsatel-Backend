@@ -1088,13 +1088,18 @@ def registrar_pago(
         if pago_data.notas_pago is not None: cliente.notas_pago = pago_data.notas_pago
 
         # 4. GUARDAR INTERNET PAYMENT
-        if pago_data.internet_payment is not None and str(pago_data.internet_payment).strip() not in ["", "NONE"]:
-            cliente.internet_payment = pago_data.internet_payment
+        new_net_str = str(pago_data.internet_payment or "").strip()
+        if new_net_str not in ["", "NONE", "0", "0.0", "0.00"]:
+            val_net = try_float(new_net_str)
+            if val_net > 0:
+                prev_internet = try_float(cliente.internet_payment)
+                if prev_internet > 0 and val_net != prev_internet:
+                    cliente.internet_payment = str(round(prev_internet + val_net, 2))
+                else:
+                    cliente.internet_payment = str(round(val_net, 2))
         elif m_internet_cash > 0:
             prev_internet = try_float(cliente.internet_payment)
             cliente.internet_payment = str(round(prev_internet + m_internet_cash, 2))
-        elif not cliente.internet_payment or str(cliente.internet_payment).strip() in ["0.0", "0"]:
-            cliente.internet_payment = "0.00"
 
         # 5. Reactivación automática si corresponde
         if cliente.estado == "Suspendido" and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
