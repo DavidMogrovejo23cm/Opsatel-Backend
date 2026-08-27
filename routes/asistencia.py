@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Union
 import models, schemas
 from database import get_db
 from datetime import datetime, timedelta, date
@@ -436,15 +436,22 @@ def calcular_reporte_mensual_datos(db: Session, mes: Optional[str] = None, usuar
 @router.get("/reporte-mensual", response_model=schemas.ReporteAsistenciaMensualResponse)
 def reporte_mensual_json(
     mes: Optional[str] = None,
-    usuario_id: Optional[int] = None,
+    usuario_id: Optional[Union[int, str]] = None,
     db: Session = Depends(get_db),
     current_user: models.Usuario = Depends(get_current_user)
 ):
+    uid = None
+    if usuario_id not in (None, "", "null", "undefined"):
+        try:
+            uid = int(usuario_id)
+        except (ValueError, TypeError):
+            uid = None
+
     # Si no es admin, solo puede ver su propio reporte
     if current_user.rol != "administrador":
-        usuario_id = current_user.id
+        uid = current_user.id
         
-    return calcular_reporte_mensual_datos(db, mes, usuario_id)
+    return calcular_reporte_mensual_datos(db, mes, uid)
 
 
 @router.get("/reporte-mensual/excel")
