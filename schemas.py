@@ -10,7 +10,7 @@ class ClienteCreate(BaseModel):
     cedula_frontal: Optional[str] = None
     cedula_posterior: Optional[str] = None
     celular: str
-    correo: Optional[EmailStr] = None
+    correo: Optional[str] = None
     direccion: str
     nodo: str
     parroquia: Optional[str] = None
@@ -20,6 +20,7 @@ class ClienteCreate(BaseModel):
     ubicacion: Optional[str] = None
     tiempo: Optional[str] = "0"
     tercera_edad: Optional[bool] = False
+    plan_corporativo: Optional[bool] = False
     precio_plan_especial: Optional[float] = 0.0
     iptv_max_conn: Optional[int] = 0
     iptv_activar: Optional[bool] = False
