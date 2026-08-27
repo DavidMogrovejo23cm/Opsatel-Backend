@@ -600,6 +600,203 @@ def reporte_anual(anio: int, db: Session = Depends(get_db)):
         ],
     }
 
+@router.get("/reporte-anual-excel")
+def exportar_reporte_anual_excel(anio: int, db: Session = Depends(get_db)):
+    data = reporte_anual(anio, db)
+    totales = data["totales"]
+    meses = data["meses"]
+    proyectos = data["proyectos"]
+
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Reporte Anual"
+    ws.views.sheetView[0].showGridLines = True
+
+    color_primary = "1E3A8A"
+    color_header_fill = PatternFill(start_color=color_primary, end_color=color_primary, fill_type="solid")
+    font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    font_title = Font(name="Calibri", size=16, bold=True, color=color_primary)
+    font_subtitle = Font(name="Calibri", size=11, italic=True, color="4B5563")
+    font_section = Font(name="Calibri", size=13, bold=True, color=color_primary)
+    font_bold = Font(name="Calibri", size=11, bold=True)
+    font_regular = Font(name="Calibri", size=11)
+
+    align_center = Alignment(horizontal="center", vertical="center")
+    align_left = Alignment(horizontal="left", vertical="center")
+    align_right = Alignment(horizontal="right", vertical="center")
+
+    thin = Side(border_style="thin", color="D1D5DB")
+    double_side = Side(border_style="double", color="1E3A8A")
+    thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    total_border = Border(top=thin, bottom=double_side, left=thin, right=thin)
+    fill_zebra = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
+    fill_total = PatternFill(start_color="EEF2FF", end_color="EEF2FF", fill_type="solid")
+
+    # Banner de Encabezado
+    ws["A1"] = "OPSATEL S.A.S."
+    ws["A1"].font = font_title
+    ws["A2"] = f"Reporte Financiero Anual — Período: {anio}"
+    ws["A2"].font = font_subtitle
+    ws["A3"] = "RUC: 0993245678001 | Reporte Oficial Consolidado Anual"
+    ws["A3"].font = Font(name="Calibri", size=9, color="6B7280", italic=True)
+
+    # ── SECCIÓN 1: RESUMEN ANUAL ──
+    ws.cell(row=5, column=1, value="RESUMEN FINANCIERO ANUAL").font = font_section
+    headers_resumen = ["CONCEPTO", "MONTO TOTAL"]
+    for col_idx, text in enumerate(headers_resumen, 1):
+        c = ws.cell(row=6, column=col_idx, value=text)
+        c.fill = color_header_fill
+        c.font = font_header
+        c.alignment = align_center
+        c.border = thin_border
+    ws.row_dimensions[6].height = 24
+
+    resumen_rows = [
+        ("Ingresos Totales", totales["ingresos"]),
+        ("Egresos Totales", totales["egresos"]),
+        ("Balance Neto Anual", totales["balance"])
+    ]
+
+    for idx, (concept, val) in enumerate(resumen_rows, start=7):
+        ws.row_dimensions[idx].height = 20
+        c_concept = ws.cell(row=idx, column=1, value=concept)
+        c_val = ws.cell(row=idx, column=2, value=val)
+        
+        is_last = (idx == 9)
+        c_concept.font = font_bold if is_last else font_regular
+        c_val.font = font_bold if is_last else font_regular
+        
+        c_concept.border = total_border if is_last else thin_border
+        c_val.border = total_border if is_last else thin_border
+        
+        if is_last:
+            c_concept.fill = fill_total
+            c_val.fill = fill_total
+            
+        c_concept.alignment = align_left
+        c_val.alignment = align_right
+        c_val.number_format = '$#,##0.00'
+
+    # ── SECCIÓN 2: EVOLUCIÓN MENSUAL ──
+    start_row_mensual = 12
+    ws.cell(row=start_row_mensual, column=1, value="EVOLUCIÓN MENSUAL (DETALLE POR MES)").font = font_section
+    
+    headers_mensual = ["MES", "INTERNET", "IPTV", "EXTRAS / ADICIONALES", "TOTAL INGRESOS", "EGRESOS", "BALANCE NETO"]
+    for col_idx, text in enumerate(headers_mensual, 1):
+        c = ws.cell(row=start_row_mensual + 1, column=col_idx, value=text)
+        c.fill = color_header_fill
+        c.font = font_header
+        c.alignment = align_center
+        c.border = thin_border
+    ws.row_dimensions[start_row_mensual + 1].height = 26
+
+    current_row = start_row_mensual + 2
+    for r_idx, m in enumerate(meses):
+        ws.row_dimensions[current_row].height = 20
+        is_zebra = (r_idx % 2 == 1)
+        
+        row_vals = [
+            (m["label"], align_left, "@"),
+            (m["internet"], align_right, '$#,##0.00'),
+            (m["iptv"], align_right, '$#,##0.00'),
+            (m["extras"] + m["adicional"], align_right, '$#,##0.00'),
+            (m["ingresos"], align_right, '$#,##0.00'),
+            (m["egresos"], align_right, '$#,##0.00'),
+            (m["balance"], align_right, '$#,##0.00')
+        ]
+        
+        for c_idx, (val, align, num_fmt) in enumerate(row_vals, 1):
+            cell = ws.cell(row=current_row, column=c_idx, value=val)
+            cell.font = font_regular
+            cell.alignment = align
+            cell.border = thin_border
+            cell.number_format = num_fmt
+            if is_zebra:
+                cell.fill = fill_zebra
+                
+        current_row += 1
+
+    # Fila TOTAL ANUAL
+    ws.row_dimensions[current_row].height = 22
+    t_row_vals = [
+        (f"TOTAL ANUAL {anio}", align_left, "@"),
+        (sum(m["internet"] for m in meses), align_right, '$#,##0.00'),
+        (sum(m["iptv"] for m in meses), align_right, '$#,##0.00'),
+        (sum(m["extras"] + m["adicional"] for m in meses), align_right, '$#,##0.00'),
+        (totales["ingresos"], align_right, '$#,##0.00'),
+        (totales["egresos"], align_right, '$#,##0.00'),
+        (totales["balance"], align_right, '$#,##0.00')
+    ]
+    for c_idx, (val, align, num_fmt) in enumerate(t_row_vals, 1):
+        cell = ws.cell(row=current_row, column=c_idx, value=val)
+        cell.font = font_bold
+        cell.alignment = align
+        cell.border = total_border
+        cell.fill = fill_total
+        cell.number_format = num_fmt
+
+    # ── SECCIÓN 3: PROYECTOS Y OBRAS DEL AÑO ──
+    if proyectos:
+        current_row += 3
+        ws.cell(row=current_row, column=1, value="PROYECTOS Y OBRAS DEL AÑO").font = font_section
+        current_row += 1
+        
+        headers_proy = ["NOMBRE PROYECTO", "MONTO TOTAL", "MONTO INVERTIDO", "ESTADO"]
+        for col_idx, text in enumerate(headers_proy, 1):
+            c = ws.cell(row=current_row, column=col_idx, value=text)
+            c.fill = color_header_fill
+            c.font = font_header
+            c.alignment = align_center
+            c.border = thin_border
+        ws.row_dimensions[current_row].height = 24
+        current_row += 1
+        
+        for p_idx, p in enumerate(proyectos):
+            ws.row_dimensions[current_row].height = 20
+            is_zebra = (p_idx % 2 == 1)
+            
+            p_vals = [
+                (p["nombre"], align_left, "@"),
+                (p["monto_total"], align_right, '$#,##0.00'),
+                (p["monto_invertido"], align_right, '$#,##0.00'),
+                (p["estado"], align_center, "@")
+            ]
+            for c_idx, (val, align, num_fmt) in enumerate(p_vals, 1):
+                cell = ws.cell(row=current_row, column=c_idx, value=val)
+                cell.font = font_regular
+                cell.alignment = align
+                cell.border = thin_border
+                cell.number_format = num_fmt
+                if is_zebra:
+                    cell.fill = fill_zebra
+            current_row += 1
+
+    # Auto-ajustar ancho de columnas
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col[3:]:
+            val_str = str(cell.value or "")
+            if cell.number_format == '$#,##0.00' and isinstance(cell.value, (int, float)):
+                val_str = f"${cell.value:,.2f}"
+            if len(val_str) > max_len:
+                max_len = len(val_str)
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 15)
+
+    temp_dir = tempfile.gettempdir()
+    file_path = os.path.join(temp_dir, f"Balance_Anual_Opsatel_{anio}.xlsx")
+    wb.save(file_path)
+
+    return FileResponse(
+        path=file_path,
+        filename=f"Balance_Anual_Opsatel_{anio}.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
 
 # ====================================================================
 # HISTORIAL DE PAGOS / DEUDAS DE CLIENTES
