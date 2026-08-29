@@ -1,9 +1,12 @@
 import os
 import re
-# pyrefly: ignore [missing-import]
-import httpx
+try:
+    # pyrefly: ignore [missing-import]
+    import httpx
+except ImportError:
+    httpx = None
 import logging
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -15,10 +18,12 @@ XUI_USERNAME = os.getenv("XUI_USERNAME", "DAVIDOPSA")
 XUI_PASSWORD = os.getenv("XUI_PASSWORD", "OPSATEL.@#22")
 
 # Global HTTP client session to keep cookies
-_http_session: Optional[httpx.AsyncClient] = None
+_http_session: Any = None
 
-def _get_session() -> httpx.AsyncClient:
+def _get_session() -> Any:
     global _http_session
+    if httpx is None:
+        raise ConnectionError("El paquete 'httpx' no está instalado en el entorno. Reconstruye la imagen de Docker o ejecuta 'pip install httpx'.")
     if _http_session is None:
         _http_session = httpx.AsyncClient(
             timeout=20.0,
