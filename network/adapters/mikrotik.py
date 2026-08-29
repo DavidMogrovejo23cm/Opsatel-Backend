@@ -265,3 +265,39 @@ class MikroTikAdapter:
         except Exception as e:
             raise MikroTikAdapterError(f"Error obteniendo address lists: {e}")
 
+    def add_to_address_list(self, address: str, comment: str, list_name: str) -> bool:
+        """
+        Agrega una IP a /ip/firewall/address-list en MikroTik.
+        Equivalente en CLI: /ip firewall address-list add address={address} comment="{comment}" list={list_name}
+        """
+        try:
+            resource = self._get_resource('/ip/firewall/address-list')
+            resource.add(address=address, comment=comment, list=list_name)
+            logger.info(f"✓ IP {address} ({comment}) agregada a Address List '{list_name}'")
+            return True
+        except Exception as e:
+            err_str = str(e).lower()
+            if "already exists" in err_str or "already in use" in err_str or "failure: already" in err_str:
+                logger.info(f"IP {address} ya se encontraba registrada en Address List '{list_name}'.")
+                return True
+            raise MikroTikAdapterError(f"Error agregando IP {address} a address-list '{list_name}': {e}")
+
+    def remove_from_address_list(self, address: str, list_name: Optional[str] = None) -> bool:
+        """Remueve una IP de /ip/firewall/address-list en MikroTik"""
+        try:
+            resource = self._get_resource('/ip/firewall/address-list')
+            filters = {'address': address}
+            if list_name:
+                filters['list'] = list_name
+            items = resource.get(**filters)
+            for item in items:
+                try:
+                    resource.remove(**{'.id': item['id']})
+                except Exception:
+                    resource.remove(**{'id': item['id']})
+            return True
+        except Exception as e:
+            logger.warning(f"Error removiendo IP {address} de address-list '{list_name}': {e}")
+            return False
+
+
