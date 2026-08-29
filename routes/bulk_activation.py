@@ -19,6 +19,14 @@ import observability as obs
 from routes.auth import require_role, get_current_user
 from services.command_sanitizer import CommandSanitizer, CommandSanitizationError
 
+import unicodedata
+
+def is_nodo_sayausi(nodo_val) -> bool:
+    if not nodo_val:
+        return False
+    s = unicodedata.normalize('NFD', str(nodo_val)).encode('ascii', 'ignore').decode('utf-8').upper()
+    return "SAYAUSI" in s
+
 bulk_router = APIRouter(prefix="/olt-tasks/bulk", tags=["OLT Bulk Tasks"])
 logger = logging.getLogger("opsatel.bulk")
 
@@ -284,7 +292,7 @@ def retry_activation(
     m = _re.search(r'\d+', puerto_raw)
     puerto_num = m.group() if m else "0"
 
-    is_sayausi = str(cliente.nodo or "").upper() == "SAYAUSI"
+    is_sayausi = is_nodo_sayausi(cliente.nodo)
     gpon_port = f"0/1/{puerto_num}" if is_sayausi else f"0/0/{puerto_num}"
 
     # Crear payload para eliminar
@@ -363,7 +371,7 @@ def undo_last_activation(
     m = _re.search(r'\d+', puerto_raw)
     puerto_num = m.group() if m else "0"
 
-    is_sayausi = str(cliente.nodo or "").upper() == "SAYAUSI"
+    is_sayausi = is_nodo_sayausi(cliente.nodo)
     gpon_port = f"0/1/{puerto_num}" if is_sayausi else f"0/0/{puerto_num}"
 
     # Crear payload para eliminar

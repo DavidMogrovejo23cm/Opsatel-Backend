@@ -22,6 +22,14 @@ from datetime import datetime
 from config_manager import get_config, save_config
 import calendar
 
+import unicodedata
+
+def is_nodo_sayausi(nodo_val) -> bool:
+    if not nodo_val:
+        return False
+    s = unicodedata.normalize('NFD', str(nodo_val)).encode('ascii', 'ignore').decode('utf-8').upper()
+    return "SAYAUSI" in s
+
 def try_float(val):
     try:
         # Limpieza robusta: eliminar '$' y corregir separadores decimales
@@ -395,7 +403,7 @@ def obtener_siguiente_valor_tecnico(
     db_nodo = db.query(models.Nodo).filter(models.Nodo.nombre == nodo).first()
     
     # Lógica SAYAUSI vs Normal
-    is_sayausi = str(nodo or "").upper() == "SAYAUSI"
+    is_sayausi = is_nodo_sayausi(nodo)
     
     # El prefijo cambia para SAYAUSI a 172.18 si no se especifica otra cosa en el nodo
     if is_sayausi:
@@ -550,7 +558,7 @@ def borrar_cliente_de_olt(id: int, db: Session = Depends(get_db), current_user=D
 
     # Construir gpon_port a partir del puerto numérico
     # Por defecto la OLT de Baños usa 0/0/X; si el nodo es SAYAUSI usa 0/1/X
-    is_sayausi = str(cliente.nodo or "").upper() == "SAYAUSI"
+    is_sayausi = is_nodo_sayausi(cliente.nodo)
     if is_sayausi:
         gpon_port = f"0/1/{puerto_num}"
     else:
@@ -563,6 +571,7 @@ def borrar_cliente_de_olt(id: int, db: Session = Depends(get_db), current_user=D
     olt_config = db.query(models.OLTConfig).filter(
         _or(
             models.OLTConfig.nodo_asociado == cliente.nodo,
+            models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
             models.OLTConfig.nodo_asociado == None
         ),
         models.OLTConfig.active == True
@@ -2168,13 +2177,14 @@ async def eliminar_cliente_completamente(
             m = _re.search(r'\d+', puerto_raw)
             puerto_num = m.group() if m else "0"
             
-            is_sayausi = str(cliente.nodo or "").upper() == "SAYAUSI"
+            is_sayausi = is_nodo_sayausi(cliente.nodo)
             gpon_port = f"0/1/{puerto_num}" if is_sayausi else f"0/0/{puerto_num}"
             
             # Obtener OLT activa
             olt_config = db.query(models.OLTConfig).filter(
                 _or(
                     models.OLTConfig.nodo_asociado == cliente.nodo,
+                    models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
                     models.OLTConfig.nodo_asociado == None
                 ),
                 models.OLTConfig.active == True

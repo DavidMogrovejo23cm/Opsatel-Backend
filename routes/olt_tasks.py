@@ -35,6 +35,14 @@ from services.command_sanitizer import CommandSanitizer, CommandSanitizationErro
 from routes.auth import require_role, get_current_user
 from services.olt_interface import OLTInterface
 
+import unicodedata
+
+def is_nodo_sayausi(nodo_val) -> bool:
+    if not nodo_val:
+        return False
+    s = unicodedata.normalize('NFD', str(nodo_val)).encode('ascii', 'ignore').decode('utf-8').upper()
+    return "SAYAUSI" in s
+
 router = APIRouter(prefix="/olt-tasks", tags=["OLT Tasks"])
 logger = logging.getLogger(__name__)
 
@@ -852,7 +860,7 @@ def ver_potencia_ont(
         match = re.search(r"\d+", str(gpon_port))
         if not match:
             raise HTTPException(status_code=400, detail=f"Puerto GPON inválido: {gpon_port}")
-        frame = "1" if str(getattr(cliente, "nodo", "")).upper() == "SAYAUSI" else "0"
+        frame = "1" if is_nodo_sayausi(getattr(cliente, "nodo", "")) else "0"
         gpon_port = f"0/{frame}/{match.group()}"
 
     try:
