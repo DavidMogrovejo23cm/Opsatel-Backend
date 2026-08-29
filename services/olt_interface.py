@@ -1559,13 +1559,14 @@ class OLTInterface:
         result: Dict[str, Optional[float]] = {'rx_power': None, 'tx_power': None}
         try:
             rx_patterns = [
-                # Formato más común en MA5608T / MA5683T
+                # 1. Potencia recibida en la ONT del cliente (ej: Rx optical power(dBm) : -20.17)
+                r'^\s*Rx\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                r'^\s*RX\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                r'^\s*Rx\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                r'(?<!OLT\s)Rx\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                # 2. Fallback: OLT Rx ONT optical power (si la ONT no reporta la potencia directa)
                 r'OLT\s+Rx\s+ONT\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                r'Rx\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                r'RX\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                r'Rx\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
                 r'(?:RX|Rx)\s*power.*?:\s*([-\d.]+)',
-                # Fallback genérico
                 r'optical\s+power.*?:\s*([-\d.]+)',
             ]
             tx_patterns = [
@@ -1576,7 +1577,7 @@ class OLTInterface:
             ]
 
             for pattern in rx_patterns:
-                match = re.search(pattern, response, re.IGNORECASE)
+                match = re.search(pattern, response, re.IGNORECASE | re.MULTILINE)
                 if match:
                     result['rx_power'] = float(match.group(1).strip())
                     logger.debug(f"RX potencia parseada: {result['rx_power']} dBm")
