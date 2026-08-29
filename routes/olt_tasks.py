@@ -871,10 +871,12 @@ def ver_potencia_ont(
     # Buscar OLT activa para el nodo del cliente
     nodo = getattr(cliente, "nodo", None)
     if nodo:
+        is_sayausi_nodo = is_nodo_sayausi(nodo)
         olt_config = db.query(models.OLTConfig).filter(
             models.OLTConfig.active == True,
             or_(
                 models.OLTConfig.nodo_asociado == nodo,
+                models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi_nodo else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
                 models.OLTConfig.nodo_asociado == None,
                 models.OLTConfig.nodo_asociado == ""
             )

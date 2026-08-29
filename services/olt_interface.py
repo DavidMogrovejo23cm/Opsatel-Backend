@@ -746,29 +746,45 @@ class OLTInterface:
         except ValueError:
             puerto_val = 0
 
-        # Calcular valores por defecto basados en el puerto GPON
-        derived_profile = str(100 + puerto_val)   # Ej: 108 para puerto 8
-        derived_vlan = str(300 + puerto_val)      # Ej: 308 para puerto 8
+        # Detectar si es Sayausí (slot 1 o puerto 0/1/x o nodo SAYAUSI)
+        is_sayausi = False
+        if len(parts) >= 2 and parts[1] == "1":
+            is_sayausi = True
+        elif payload.get("nodo"):
+            import unicodedata
+            s = unicodedata.normalize('NFD', str(payload.get("nodo"))).encode('ascii', 'ignore').decode('utf-8').upper()
+            if "SAYAUSI" in s:
+                is_sayausi = True
+
+        # Calcular valores por defecto basados en el puerto GPON / Slot
+        if is_sayausi:
+            derived_profile = str(400 + puerto_val)   # Ej: 408 para puerto 8
+            derived_vlan = str(400 + puerto_val)      # Ej: 408 para puerto 8
+            derived_user_vlan = str(400 + puerto_val) # Ej: 408 para puerto 8
+        else:
+            derived_profile = str(100 + puerto_val)   # Ej: 108 para puerto 8
+            derived_vlan = str(300 + puerto_val)      # Ej: 308 para puerto 8
+            derived_user_vlan = str(100 + puerto_val) # Ej: 108 para puerto 8
 
         # Validar y limpiar profile_id
         profile_id = payload.get('profile_id')
-        if not profile_id or not str(profile_id).isdigit():
+        if not profile_id or not str(profile_id).isdigit() or (is_sayausi and str(profile_id).startswith('1')):
             profile_id = derived_profile
 
         # Validar y limpiar srvprofile_id
         srvprofile_id = payload.get('srvprofile_id')
-        if not srvprofile_id or not str(srvprofile_id).isdigit():
-            srvprofile_id = profile_id
+        if not srvprofile_id or not str(srvprofile_id).isdigit() or (is_sayausi and str(srvprofile_id).startswith('1')):
+            srvprofile_id = derived_profile
 
         # Validar y limpiar vlan (VLAN de la OLT para service-port)
         vlan = payload.get('vlan')
-        if not vlan or not str(vlan).isdigit():
+        if not vlan or not str(vlan).isdigit() or (is_sayausi and str(vlan).startswith('3')):
             vlan = derived_vlan
 
         # Validar y limpiar user_vlan (VLAN nativa del cliente / traducción)
         user_vlan = payload.get('user_vlan')
-        if not user_vlan or not str(user_vlan).isdigit():
-            user_vlan = profile_id
+        if not user_vlan or not str(user_vlan).isdigit() or (is_sayausi and str(user_vlan).startswith('1')):
+            user_vlan = derived_user_vlan
 
         # Validar y limpiar service_port
         service_port = payload.get('service_port')
@@ -1333,8 +1349,9 @@ class OLTInterface:
                 except ValueError:
                     port_num_int = 0
 
-                profile_id = str(100 + port_num_int)
-                vlan = str(300 + port_num_int)
+                is_sayausi_bridge = len(parts) >= 2 and parts[1] == "1"
+                profile_id = str(400 + port_num_int) if is_sayausi_bridge else str(100 + port_num_int)
+                vlan = str(400 + port_num_int) if is_sayausi_bridge else str(300 + port_num_int)
 
                 # Asignar ont_id temporal a partir de 10
                 current_ont_id = port_ont_counter.get(port_num, 10)
@@ -1439,10 +1456,10 @@ class OLTInterface:
         except ValueError:
             puerto_val = 0
 
-        # Si vlan o user_vlan no son dígitos, se calcula a partir del puerto
+        is_sayausi_breach = len(parts) >= 2 and parts[1] == "1"
         vlan = payload.get('vlan', payload.get('user_vlan'))
-        if not vlan or not str(vlan).isdigit():
-            vlan = str(100 + puerto_val)
+        if not vlan or not str(vlan).isdigit() or (is_sayausi_breach and str(vlan).startswith('1')):
+            vlan = str(400 + puerto_val) if is_sayausi_breach else str(100 + puerto_val)
 
         # 'interface gpon' y 'quit' se gestionan en execute_set_breach_sequence
         return {
