@@ -221,34 +221,61 @@ def cierre_mensual_automatico():
     finally:
         db.close()
 
-def suspension_automatica_por_mora():
+def is_nodo_sayausi(nodo_val) -> bool:
+    if not nodo_val:
+        return False
+    import unicodedata
+    s = unicodedata.normalize('NFD', str(nodo_val)).encode('ascii', 'ignore').decode('utf-8').upper()
+    return "SAYAUSI" in s
+
+def suspension_automatica_por_mora(force_run: bool = False):
     """
-    Ejecuta el proceso diario de suspensión automática por mora para clientes activos
-    que tengan deudas pendientes y no tengan una prórroga de pago vigente.
+    Ejecuta el proceso de suspensión automática por corte de fecha (ej. día 20 de cada mes).
+    Agrega las IPs de clientes morosos a la lista de MikroTik por nodo:
+      - Baños: CLIENTES_SUSPENDIDOS_POR_PAGO
+      - Sayausí: CLIENTES_SUSPENDIDOS_POR_PAGOS
+    Y cambia el estado del cliente a 'Moroso'.
     """
-    print("[Scheduler] Iniciando proceso diario de suspensión por mora...")
+    from config_manager import get_config
+    from network.adapters.mikrotik import MikroTikAdapter
+    from sqlalchemy import or_ as _or
+
+    config_sys = get_config()
+    enabled = config_sys.get("auto_suspension_enabled", True)
+    dia_corte = int(config_sys.get("dia_corte", 20))
+
+    ahora = datetime.now(ECUADOR_TZ)
+    dia_actual = ahora.day
+
+    if not force_run:
+        if not enabled:
+            print("[Scheduler] Suspensión automática desactivada en configuración. Omitiendo.")
+            return
+        if dia_actual != dia_corte:
+            print(f"[Scheduler] Hoy es día {dia_actual}, la fecha de corte configurada es el día {dia_corte}. Omitiendo corte.")
+            return
+
+    print(f"[Scheduler] Iniciando proceso de suspensión por corte de fecha (Día {dia_corte})...")
     db = SessionLocal()
     try:
         from services.libreqos_manager import LibreQoSManager
-        hoy_str = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d")
-        
+        hoy_str = ahora.strftime("%Y-%m-%d")
+
         clientes = db.query(models.Cliente).filter(
             models.Cliente.estado == "Activo"
         ).all()
-        
+
         count = 0
         for c in clientes:
             saldo_pend = float(c.saldo or 0)
-            
-            # Obtener plus (IPTV)
             try:
                 plus_pend = float(c.plus or 0)
             except:
                 plus_pend = 0.0
-            
+
             if saldo_pend <= 0 and plus_pend <= 0:
                 continue
-                
+
             # Verificar prórroga de pago
             if c.fecha_prorroga:
                 try:
@@ -257,15 +284,50 @@ def suspension_automatica_por_mora():
                         continue
                 except Exception as e:
                     print(f"[Scheduler] Error al comparar fecha de prórroga para cliente {c.id}: {e}")
-            
-            c.estado = "Suspendido"
-            correlation_id = f"auto_susp_{c.id}_{int(datetime.now().timestamp())}"
-            
-            LibreQoSManager.enqueue_job("SUSPEND", c.id, db, correlation_id, "SYSTEM_AUTO_SUSPENSION")
+
+            # Cambiar estado a Moroso
+            c.estado = "Moroso"
             count += 1
-            
+
+            # 1. Agregar a MikroTik Address List por Nodo
+            if c.ip:
+                try:
+                    is_sayausi = is_nodo_sayausi(c.nodo)
+                    list_name = "CLIENTES_SUSPENDIDOS_POR_PAGOS" if is_sayausi else "CLIENTES_SUSPENDIDOS_POR_PAGO"
+
+                    olt_config = db.query(models.OLTConfig).filter(
+                        _or(
+                            models.OLTConfig.nodo_asociado == c.nodo,
+                            models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
+                            models.OLTConfig.nodo_asociado == None
+                        ),
+                        models.OLTConfig.active == True
+                    ).first()
+
+                    if olt_config and olt_config.mikrotik_host:
+                        with MikroTikAdapter(
+                            host=olt_config.mikrotik_host,
+                            username=olt_config.mikrotik_username,
+                            password=olt_config.mikrotik_password,
+                            port=olt_config.mikrotik_port or 8728
+                        ) as mt:
+                            mt.add_to_address_list(
+                                address=c.ip,
+                                comment=c.nombre or f"Cliente #{c.id}",
+                                list_name=list_name
+                            )
+                except Exception as mt_err:
+                    print(f"[Scheduler] Error MikroTik al suspender a {c.nombre} ({c.ip}): {mt_err}")
+
+            # 2. LibreQoS Sync
+            try:
+                correlation_id = f"auto_susp_{c.id}_{int(datetime.now().timestamp())}"
+                LibreQoSManager.enqueue_job("SUSPEND", c.id, db, correlation_id, "SYSTEM_AUTO_SUSPENSION")
+            except Exception as lq_err:
+                print(f"[Scheduler] Error LibreQoS al suspender a {c.nombre}: {lq_err}")
+
         db.commit()
-        print(f"[Scheduler] Suspensión por mora automática completada. Clientes suspendidos: {count}")
+        print(f"[Scheduler] Suspensión automática por fecha completada. Clientes marcados como Moroso: {count}")
     except Exception as e:
         db.rollback()
         print(f"[Scheduler] Error en suspensión automática por mora: {str(e)}")

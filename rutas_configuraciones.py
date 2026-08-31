@@ -366,3 +366,35 @@ def set_dias_permanencia(data: DiasPermanciaRequest):
         raise HTTPException(status_code=400, detail="Los días deben estar entre 1 y 10")
     save_config({"dias_permanencia": data.dias})
     return {"dias": data.dias, "message": "Configuración guardada correctamente"}
+
+
+class SuspensionConfigRequest(BaseModel):
+    dia_corte: int
+    hora_corte: str
+    auto_suspension_enabled: bool
+
+@router.get("/suspension-corte")
+def get_suspension_corte_config():
+    config = get_config()
+    return {
+        "dia_corte": int(config.get("dia_corte", 20)),
+        "hora_corte": str(config.get("hora_corte", "01:00")),
+        "auto_suspension_enabled": bool(config.get("auto_suspension_enabled", True))
+    }
+
+@router.put("/suspension-corte")
+def set_suspension_corte_config(data: SuspensionConfigRequest):
+    if data.dia_corte < 1 or data.dia_corte > 31:
+        raise HTTPException(status_code=400, detail="El día de corte debe estar entre 1 y 31")
+
+    import re
+    if not re.match(r"^\d{2}:\d{2}$", data.hora_corte):
+        raise HTTPException(status_code=400, detail="Formato de hora inválido. Usa HH:MM (ej. 01:00)")
+
+    save_config({
+        "dia_corte": data.dia_corte,
+        "hora_corte": data.hora_corte,
+        "auto_suspension_enabled": data.auto_suspension_enabled
+    })
+    return {"message": "Configuración de suspensión por fecha guardada exitosamente"}
+
