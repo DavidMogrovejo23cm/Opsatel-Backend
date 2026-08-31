@@ -213,7 +213,7 @@ class ClienteResponse(BaseModel):
     cedula_frontal: Optional[str] = None
     cedula_posterior: Optional[str] = None
     ubicacion: Optional[str] = None
-    estado: Optional[str] = "Pendiente"
+    estado: Optional[str] = "Activo"
     tiempo: Optional[str] = None
     arrienda: Optional[str] = None
     cuenta: Optional[str] = None

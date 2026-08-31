@@ -293,7 +293,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         tercera_edad=bool(cliente.tercera_edad or cliente.plan_corporativo),
         precio_plan_especial=cliente.precio_plan_especial,
         comentarios=cliente.comentarios,
-        estado="Pendiente",
+        estado="Activo",
         iptv_activar=iptv_act,
         iptv_user=iptv_u,
         iptv_pass=iptv_p,
@@ -2125,7 +2125,7 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                     while proximo_id_hueco in ids_existentes:
                         proximo_id_hueco += 1
                     
-                    cliente = models.Cliente(id=proximo_id_hueco, nombre=nombre)
+                    cliente = models.Cliente(id=proximo_id_hueco, nombre=nombre, estado="Activo")
                     ids_existentes.add(proximo_id_hueco)
                     db.add(cliente)
                     count_nuevos += 1
@@ -2170,6 +2170,11 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                 # Recalcular balances (Importante para que total_pago sea correcto)
                 sync_cliente_balances(cliente, db)
                 
+                # Garantizar que clientes importados queden en 'Activo' (base de datos / general)
+                # y no pasen por 'Administrar' (Pendiente) ni generen colas en LibreQoS.
+                if not cliente.estado or str(cliente.estado).strip().lower() in ["", "none", "null", "pendiente"]:
+                    cliente.estado = "Activo"
+
                 # Commit individual por cada cliente procesado exitosamente
                 db.commit()
 
