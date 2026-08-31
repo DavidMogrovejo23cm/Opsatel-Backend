@@ -545,6 +545,205 @@ def procesar_chat_general(numero: str, mensaje: str, contexto: str) -> str:
         return "Hola soy Sam de opsatel, espero estes teniendo un buen dia en que puedo ayudarte el dia de hoy?"
 
 # -------------------------------------------------------------
+# LÓGICA EXCLUSIVA PARA ADMINISTRADORES Y ALTA DIRECTA
+# -------------------------------------------------------------
+def es_numero_administrador(numero: str, db: Session):
+    """Verifica si el número remitente pertenece a un administrador activo"""
+    if not numero:
+        return None
+    num_limpio = limpiar_numero_whatsapp(numero)
+    num_ecuador = "0" + num_limpio[3:] if num_limpio.startswith("593") and len(num_limpio) > 3 else num_limpio
+    
+    try:
+        admin = db.query(models.WhatsAppAdministrador).filter(
+            models.WhatsAppAdministrador.activo == True,
+            (models.WhatsAppAdministrador.numero.like(f"%{num_limpio}%")) |
+            (models.WhatsAppAdministrador.numero.like(f"%{num_ecuador}%"))
+        ).first()
+        return admin
+    except Exception as e:
+        print(f"[SAM Chatbot] Error verificando admin en DB: {e}")
+        return None
+
+def procesar_registro_cliente_admin_directo(numero: str, mensaje: str, contexto: str, db: Session, admin_obj) -> str:
+    """
+    Procesa un mensaje de instalación enviado por un Administrador:
+    Extrae los datos en 1 solo paso, crea el Cliente y crea la orden de trabajo en HojaRuta en 1 segundo.
+    """
+    client = get_anthropic_client()
+    
+    valid_nodos = [n[0] for n in db.query(models.Nodo.nombre).filter(models.Nodo.nombre != None).all()]
+    valid_planes = [pl[0] for pl in db.query(models.PlanInternet.nombre).filter(models.PlanInternet.nombre != None).all()]
+
+    prompt_admin = f"""# Skill: Alta Directa de Instalaciones (Modo Administrador)
+Eres SAM, el asistente inteligente de OPSATEL ejecutando comandos del Administrador: {admin_obj.nombre}.
+Un administrador ha enviado los datos de una nueva instalación por WhatsApp.
+Tu objetivo es EXTRAER de inmediato todos los datos posibles del mensaje y formatearlos en un JSON de una sola línea, SIN hacer preguntas, SIN pedir confirmación y SIN rodeos.
+
+Campos a extraer:
+* nombre: Nombre completo del cliente.
+* cedula: Cédula o RUC (10 o 13 dígitos).
+* celular: Teléfono de contacto.
+* direccion: Dirección domiciliaria.
+* plan: Plan de internet (intenta mapear a uno de los PLANES VÁLIDOS).
+* nodo: Sector o Nodo de red (intenta mapear a uno de los NODOS VÁLIDOS).
+* parroquia: Parroquia.
+* latitud: Latitud GPS (opcional, float 0.0 si no hay).
+* longitud: Longitud GPS (opcional, float 0.0 si no hay).
+* comentarios: Notas adicionales (promociones, si es arrendatario, correo, etc.).
+
+PLANES VÁLIDOS: {json.dumps(valid_planes, ensure_ascii=False)}
+NODOS VÁLIDOS: {json.dumps(valid_nodos, ensure_ascii=False)}
+
+Responde ÚNICAMENTE con el JSON final en este formato exacto:
+{{"nombre": "", "cedula": "", "celular": "", "direccion": "", "plan": "", "nodo": "", "parroquia": "", "latitud": 0.0, "longitud": 0.0, "comentarios": ""}}
+"""
+
+    try:
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=600,
+            temperature=0.1,
+            messages=[{"role": "user", "content": f"{prompt_admin}\n\nMensaje enviado por el Administrador:\n{mensaje}"}]
+        )
+        res_text = response.content[0].text.strip()
+        
+        json_match = re.search(r'\{.*"nombre".*\}', res_text)
+        if json_match:
+            data = json.loads(json_match.group(0))
+            
+            ubicacion_gps = f"{data.get('latitud') or 0.0}, {data.get('longitud') or 0.0}"
+            
+            cedula = str(data.get("cedula") or "").strip()
+            if cedula.isdigit() and len(cedula) == 9:
+                cedula = "0" + cedula
+                
+            celular = str(data.get("celular") or "").strip()
+            if celular.isdigit() and len(celular) == 9 and celular.startswith("9"):
+                celular = "0" + celular
+
+            # Reutilizar primer ID disponible
+            ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
+            ids = [i[0] for i in ids_query]
+            nuevo_id = 1
+            for current_id in ids:
+                if current_id == nuevo_id:
+                    nuevo_id += 1
+                elif current_id > nuevo_id:
+                    break
+
+            # 1. Crear Cliente
+            nuevo_cliente = models.Cliente(
+                id=nuevo_id,
+                nombre=data.get("nombre") or "Cliente Desconocido",
+                cedula=cedula,
+                celular=celular,
+                direccion=data.get("direccion"),
+                plan=data.get("plan"),
+                nodo=data.get("nodo"),
+                parroquia=data.get("parroquia"),
+                ubicacion=ubicacion_gps,
+                comentarios=data.get("comentarios"),
+                estado="Pendiente",
+                saldo=0.00
+            )
+            db.add(nuevo_cliente)
+            db.flush()
+
+            # 2. Crear Orden de Trabajo en Hoja de Ruta
+            import pytz
+            from datetime import datetime
+            ECUADOR_TZ = pytz.timezone('America/Guayaquil')
+            fecha_hoy = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d")
+
+            obs_hoja = f"Plan: {data.get('plan') or 'No especificado'}"
+            if data.get("comentarios"):
+                obs_hoja += f" | {data.get('comentarios')}"
+
+            nueva_hoja = models.HojaRuta(
+                fecha=fecha_hoy,
+                tecnico="Por Asignar",
+                hora="09:00",
+                cliente_id=nuevo_cliente.id,
+                nombre_cliente=nuevo_cliente.nombre,
+                ubicacion_cliente=f"{nuevo_cliente.direccion or ''} (Sector: {nuevo_cliente.nodo or 'N/A'})".strip(),
+                celular_cliente=nuevo_cliente.celular,
+                actividad="INSTALACIÓN DE SERVICIO DE INTERNET",
+                observacion=obs_hoja,
+                parroquia=nuevo_cliente.parroquia,
+                estado="Pendiente"
+            )
+            db.add(nueva_hoja)
+            db.commit()
+            
+            # Limpiar skill activo
+            estados_skills[numero] = None
+            if numero in historial_conversaciones:
+                historial_conversaciones[numero] = []
+
+            return (
+                f"👑 *[Modo Administrador — {admin_obj.nombre}]*\n\n"
+                f"✅ ¡Instalación registrada y agendada en la *Hoja de Ruta* exitosamente!\n\n"
+                f"👤 *Cliente #{nuevo_cliente.id}*: {nuevo_cliente.nombre}\n"
+                f"🆔 *Cédula*: {nuevo_cliente.cedula or 'N/A'}\n"
+                f"📱 *Celular*: {nuevo_cliente.celular or 'N/A'}\n"
+                f"📍 *Nodo*: {nuevo_cliente.nodo or 'N/A'}\n"
+                f"📦 *Plan*: {nuevo_cliente.plan or 'N/A'}\n"
+                f"🛠️ *Orden Hoja de Ruta*: Creada (Estado: Pendiente)\n\n"
+                f"_La orden ya está disponible en el panel web para asignación técnica._"
+            )
+        else:
+            return procesar_registro_cliente(numero, mensaje, contexto, db)
+    except Exception as e:
+        print(f"[SAM Chatbot Admin] Error procesando alta directa: {e}")
+        db.rollback()
+        return f"⚠️ Hola {admin_obj.nombre}, ocurrió un inconveniente registrando el cliente en la Hoja de Ruta: {str(e)}"
+
+def procesar_comando_administrador(numero: str, mensaje: str, contexto: str, db: Session, admin_obj) -> str:
+    """Procesa comandos administrativos (Caja del día, Morosos, etc.)"""
+    msg_lower = mensaje.lower()
+    
+    if any(w in msg_lower for w in ["caja", "cobro", "recaudacion", "recaudación", "cuanto se cobro", "cuánto se cobró"]):
+        import pytz
+        from datetime import datetime
+        ECUADOR_TZ = pytz.timezone('America/Guayaquil')
+        hoy_str = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d")
+        
+        pagos_hoy = db.query(models.Pago).filter(
+            models.Pago.fecha_pago >= f"{hoy_str} 00:00:00"
+        ).all()
+        
+        total_monto = sum(float(p.monto or 0) for p in pagos_hoy)
+        total_pagos = len(pagos_hoy)
+        
+        return (
+            f"👑 *[Resumen de Caja del Día — {admin_obj.nombre}]*\n\n"
+            f"📅 *Fecha*: {hoy_str}\n"
+            f"💰 *Total Recaudado*: ${total_monto:.2f}\n"
+            f"📊 *Número de Pagos*: {total_pagos}\n\n"
+            f"_Consulta realizada desde el Centro de WhatsApp Opsatel._"
+        )
+        
+    elif any(w in msg_lower for w in ["moroso", "morosos", "corte", "cortes", "suspendido", "suspendidos"]):
+        morosos = db.query(models.Cliente).filter(models.Cliente.estado == "Moroso").count()
+        return (
+            f"👑 *[Reporte de Morosidad — {admin_obj.nombre}]*\n\n"
+            f"⚠️ *Clientes en estado Moroso actualmente*: {morosos}\n\n"
+            f"_Para más detalles, consulta el panel web de Opsatel._"
+        )
+
+    elif any(w in msg_lower for w in ["instalacion", "instalación", "nuevo cliente", "ingresar cliente", "registrar"]):
+        return procesar_registro_cliente_admin_directo(numero, mensaje, contexto, db, admin_obj)
+        
+    return (
+        f"👑 Hola *{admin_obj.nombre}*, reconozco tu perfil de Administrador en Opsatel.\n\n"
+        f"Puedes enviarme:\n"
+        f"• Datos de una instalación (ej: *INSTALACION BAÑOS ...*) para registrarla y mandarla directo a la Hoja de Ruta.\n"
+        f"• *'Resumen de caja'* para ver la recaudación del día.\n"
+        f"• *'Reporte de morosos'* para ver los clientes suspendidos."
+    )
+
+# -------------------------------------------------------------
 # FUNCIÓN PRINCIPAL DE ENTRADA AL SERVICIO
 # -------------------------------------------------------------
 def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
@@ -559,24 +758,28 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
     # 2. Obtener el contexto actual de la conversación
     contexto = obtener_contexto_conversacion(numero, mensaje)
     
-    # 3. Determinar el skill activo o clasificar la intención actual
+    # 3. Verificar si el remitente es un Administrador registrado
+    admin_obj = es_numero_administrador(numero, db)
+
+    # 4. Determinar el skill activo o clasificar la intención actual
     skill_activo = estados_skills.get(numero)
     ya_solicitado = (skill_activo == "consultar_pagos_y_saldos")
     
     if not skill_activo:
-        # Si no hay un skill en curso, clasificar la intención del mensaje
         skill_activo = clasificar_intencion(contexto)
         
-    print(f"[SAM Chatbot] Procesando mensaje de {numero} - Skill: {skill_activo}")
+    print(f"[SAM Chatbot] Procesando mensaje de {numero} (Admin: {admin_obj.nombre if admin_obj else 'No'}) - Skill: {skill_activo}")
     
-    # 4. Ejecutar la lógica según el skill
+    # 5. Ejecutar la lógica según el skill y rol del usuario
     response_text = ""
-    if skill_activo == "registrar_cliente_potencial":
-        # Marcar que este número está en el flujo de registro
+
+    # Si es Administrador y envía una instalación o consulta administrativa:
+    if admin_obj and (skill_activo == "registrar_cliente_potencial" or any(w in mensaje.lower() for w in ["instalacion", "instalación", "caja", "cobro", "moroso"])):
+        response_text = procesar_comando_administrador(numero, mensaje, contexto, db, admin_obj)
+    elif skill_activo == "registrar_cliente_potencial":
         estados_skills[numero] = "registrar_cliente_potencial"
         response_text = procesar_registro_cliente(numero, mensaje, contexto, db)
     elif skill_activo == "consultar_pagos_y_saldos":
-        # Marcar que este número está en el flujo de consulta de pagos/saldos
         estados_skills[numero] = "consultar_pagos_y_saldos"
         response_text = procesar_consulta_pago(numero, mensaje, contexto, db, ya_solicitado)
     elif skill_activo == "recomendacion_peliculas_opsatv":
@@ -586,10 +789,11 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
         estados_skills[numero] = None
         response_text = procesar_chat_general(numero, mensaje, contexto)
         
-    # 5. Guardar la respuesta generada en el historial
+    # 6. Guardar la respuesta generada en el historial
     guardar_mensaje_historial(numero, "assistant", response_text)
     
-    # 6. Despachar el mensaje por WhatsApp usando el bridge local
+    # 7. Despachar el mensaje por WhatsApp usando el bridge local
     whatsapp_service.send_whatsapp_message(numero, response_text)
     
     return response_text
+

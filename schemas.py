@@ -725,6 +725,30 @@ class WhatsAppManualSend(BaseModel):
 class WhatsAppGlobalSend(BaseModel):
     mensaje: str
 
+class WhatsAppAdministradorCreate(BaseModel):
+    numero: str
+    nombre: str
+    permisos: Optional[str] = "admin_total"
+    activo: Optional[bool] = True
+
+class WhatsAppAdministradorUpdate(BaseModel):
+    numero: Optional[str] = None
+    nombre: Optional[str] = None
+    permisos: Optional[str] = None
+    activo: Optional[bool] = None
+
+class WhatsAppAdministradorResponse(BaseModel):
+    id: int
+    numero: str
+    nombre: str
+    permisos: Optional[str] = "admin_total"
+    activo: bool
+    fecha_creacion: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class CajaNapBase(BaseModel):
     nombre: str
     nodo_id: Optional[int] = None

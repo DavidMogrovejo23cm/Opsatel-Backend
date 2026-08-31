@@ -422,3 +422,133 @@ def webhook_mensaje_whatsapp(
             detail=f"Error interno procesando mensaje en SAM: {str(e)}"
         )
 
+# ========================================================================
+# CRUD DE ADMINISTRADORES DE WHATSAPP
+# ========================================================================
+
+@router.get("/administradores", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def listar_administradores_whatsapp(db: Session = Depends(get_db)):
+    """Obtiene la lista de números telefónicos autorizados como Administradores en WhatsApp"""
+    try:
+        admins = db.query(models.WhatsAppAdministrador).order_by(models.WhatsAppAdministrador.fecha_creacion.desc()).all()
+        return [
+            {
+                "id": a.id,
+                "numero": a.numero,
+                "nombre": a.nombre,
+                "permisos": a.permisos or "admin_total",
+                "activo": a.activo,
+                "fecha_creacion": a.fecha_creacion.strftime("%Y-%m-%d %H:%M:%S") if a.fecha_creacion else None
+            }
+            for a in admins
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al listar administradores: {str(e)}")
+
+@router.post("/administradores", dependencies=[Depends(require_role(["administrador"]))])
+def crear_administrador_whatsapp(
+    payload: schemas.WhatsAppAdministradorCreate,
+    db: Session = Depends(get_db)
+):
+    """Registra un nuevo número telefónico autorizado como Administrador"""
+    try:
+        if not payload.numero or not payload.nombre:
+            raise HTTPException(status_code=400, detail="El número y el nombre son obligatorios")
+            
+        num_limpio = whatsapp_service.format_whatsapp_number(payload.numero)
+        if not num_limpio:
+            raise HTTPException(status_code=400, detail="Número de teléfono inválido")
+
+        # Verificar si ya existe
+        existente = db.query(models.WhatsAppAdministrador).filter(
+            models.WhatsAppAdministrador.numero == num_limpio
+        ).first()
+        
+        if existente:
+            raise HTTPException(status_code=400, detail=f"El número {num_limpio} ya se encuentra registrado como Administrador.")
+
+        nuevo_admin = models.WhatsAppAdministrador(
+            numero=num_limpio,
+            nombre=payload.nombre.strip(),
+            permisos=payload.permisos or "admin_total",
+            activo=payload.activo if payload.activo is not None else True,
+            fecha_creacion=datetime.now(ECUADOR_TZ)
+        )
+        db.add(nuevo_admin)
+        db.commit()
+        db.refresh(nuevo_admin)
+
+        return {
+            "success": True,
+            "message": f"Administrador {nuevo_admin.nombre} registrado exitosamente",
+            "id": nuevo_admin.id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al registrar administrador: {str(e)}")
+
+@router.patch("/administradores/{admin_id}", dependencies=[Depends(require_role(["administrador"]))])
+def actualizar_administrador_whatsapp(
+    admin_id: int,
+    payload: schemas.WhatsAppAdministradorUpdate,
+    db: Session = Depends(get_db)
+):
+    """Actualiza la información de un número administrador"""
+    try:
+        admin = db.query(models.WhatsAppAdministrador).filter(
+            models.WhatsAppAdministrador.id == admin_id
+        ).first()
+
+        if not admin:
+            raise HTTPException(status_code=404, detail="Administrador no encontrado")
+
+        if payload.nombre is not None:
+            admin.nombre = payload.nombre.strip()
+
+        if payload.numero is not None:
+            num_limpio = whatsapp_service.format_whatsapp_number(payload.numero)
+            if num_limpio:
+                admin.numero = num_limpio
+
+        if payload.permisos is not None:
+            admin.permisos = payload.permisos
+
+        if payload.activo is not None:
+            admin.activo = payload.activo
+
+        db.commit()
+        return {"success": True, "message": "Administrador actualizado correctamente"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al actualizar administrador: {str(e)}")
+
+@router.delete("/administradores/{admin_id}", dependencies=[Depends(require_role(["administrador"]))])
+def eliminar_administrador_whatsapp(
+    admin_id: int,
+    db: Session = Depends(get_db)
+):
+    """Elimina un número administrador"""
+    try:
+        admin = db.query(models.WhatsAppAdministrador).filter(
+            models.WhatsAppAdministrador.id == admin_id
+        ).first()
+
+        if not admin:
+            raise HTTPException(status_code=404, detail="Administrador no encontrado")
+
+        db.delete(admin)
+        db.commit()
+        return {"success": True, "message": "Administrador eliminado correctamente"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar administrador: {str(e)}")
+
+

@@ -685,6 +685,17 @@ class WhatsAppConfiguracion(Base):
     job_id = Column(String(200), nullable=True)  # Scheduler job id si es envío puntual
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
 
+class WhatsAppAdministrador(Base):
+    """Números de teléfono autorizados como Administradores en WhatsApp"""
+    __tablename__ = "whatsapp_administradores"
+    id = Column(Integer, primary_key=True, index=True)
+    numero = Column(String(50), unique=True, index=True, nullable=False)  # Número de teléfono limpio (ej. 593982520824 o 0982520824)
+    nombre = Column(String(100), nullable=False)
+    permisos = Column(String(100), default="admin_total")
+    activo = Column(Boolean, default=True)
+    fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class CajaNap(Base):
     __tablename__ = "cajas_nap"
     id = Column(Integer, primary_key=True, index=True)
