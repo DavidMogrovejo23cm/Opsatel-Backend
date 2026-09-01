@@ -498,6 +498,17 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
 
     balance_neto = total_ingresos - total_egresos - total_proyectos
 
+    # Consolidado de Bancos
+    bancos_resumen = {
+        "efectivo": round(internet_ef + plus_ef + extras_ef, 2),
+        "pichincha": round(internet_pich + plus_pich + extras_pich, 2),
+        "jep": round(internet_jep + extras_jep, 2),
+        "otros": round(adicional_total, 2)
+    }
+
+    # Consolidado PLATAFORMA (Adicionales de Clientes + Extras General)
+    total_plataforma = round(adicional_total + total_extras, 2)
+
     return {
         "mes": mes,
         "ingresos": {
@@ -505,6 +516,8 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
             "iptv":     {"total": total_plus,     "efectivo": plus_ef,    "pichincha": plus_pich},
             "adicional": adicional_total,
             "extras":   {"total": total_extras,   "efectivo": extras_ef,  "pichincha": extras_pich, "jep": extras_jep},
+            "plataforma": {"total": total_plataforma, "adicional": adicional_total, "extras": total_extras},
+            "bancos": bancos_resumen,
             "total": total_ingresos,
         },
         "egresos": {

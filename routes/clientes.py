@@ -1439,10 +1439,14 @@ def anular_pago(
 
 def procesar_facturacion_global(db: Session):
     clientes = db.query(models.Cliente).all()
-    clientes_activos = [c for c in clientes if c.estado and c.estado.upper() == "ACTIVO"]
+    # Congelar cuentas en PROCESO y JURIDICO (omitir de la facturación mensual masiva)
+    clientes_facturables = [
+        c for c in clientes 
+        if c.estado and c.estado.strip().upper() not in ["PROCESO", "EN PROCESO", "JURIDICO", "INACTIVO"]
+    ]
     
     count = 0
-    for cliente in clientes_activos:
+    for cliente in clientes_facturables:
         # 1. Recargo mensual de IPTV PLUS ($2 por pantalla adicional contratada)
         plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
         base_screens = (plan_info.pantallas if plan_info.pantallas is not None else 0) if plan_info else 0
@@ -1456,11 +1460,11 @@ def procesar_facturacion_global(db: Session):
         else:
             cliente.plus = str(cargo_plus) if cargo_plus > 0 else ""
             
-        # 2. La tarifa de internet se agrega al saldo directamente
+        # 2. La tarifa de internet (o tarifa especial/promocional/mantenimiento) se agrega al saldo directamente
         tarifa = 0.00
         if getattr(cliente, 'mantenimiento', False):
             tarifa = 10.00
-        elif cliente.tercera_edad and cliente.precio_plan_especial is not None:
+        elif getattr(cliente, 'precio_plan_especial', None) is not None and float(cliente.precio_plan_especial or 0) > 0:
             tarifa = float(cliente.precio_plan_especial)
         elif plan_info:
             tarifa = float(plan_info.precio or 0)
