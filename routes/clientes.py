@@ -123,17 +123,12 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
         cliente.adicional = ""
         return
 
-    if getattr(cliente, 'mantenimiento', False):
-        cliente.saldo = 10.00
-    elif getattr(cliente, 'precio_plan_especial', None) is not None and float(cliente.precio_plan_especial or 0) > 0:
-        cliente.saldo = float(cliente.precio_plan_especial)
-
     plus = try_float(cliente.plus)
     saldo = float(cliente.saldo or 0)
     adicional = try_float(cliente.adicional)
     
     # PENDIENTE (total_pago) es la suma de TODAS las deudas pendientes (Internet + IPTV Plus + Adicional)
-    cliente.total_pago = saldo + plus + adicional
+    cliente.total_pago = max(0.0, saldo + plus + adicional)
 
 @router.get("/pendientes-count")
 def get_pendientes_count(db: Session = Depends(get_db)):
@@ -1134,11 +1129,16 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
                 base_screens = (plan_info.pantallas if plan_info.pantallas is not None else 0) if plan_info else 0
                 cliente.plus = str(max(0, (value - base_screens) * 2))
 
-    if (was_mantenimiento and not cliente.mantenimiento) or (was_custom_price and float(cliente.precio_plan_especial or 0) == 0):
-        if not cliente.mantenimiento and float(cliente.precio_plan_especial or 0) == 0 and data.saldo is None:
-            plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
-            if plan_info:
-                cliente.saldo = float(plan_info.precio or 0)
+    if data.saldo is not None:
+        cliente.saldo = float(data.saldo)
+    elif cliente.mantenimiento and not was_mantenimiento:
+        cliente.saldo = 10.00
+    elif float(cliente.precio_plan_especial or 0) > 0 and not was_custom_price:
+        cliente.saldo = float(cliente.precio_plan_especial)
+    elif (was_mantenimiento and not cliente.mantenimiento) or (was_custom_price and float(cliente.precio_plan_especial or 0) == 0):
+        plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+        if plan_info:
+            cliente.saldo = float(plan_info.precio or 0)
 
     sync_cliente_balances(cliente, db)
     db.commit()
