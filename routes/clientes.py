@@ -123,6 +123,9 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
         cliente.adicional = ""
         return
 
+    if getattr(cliente, 'mantenimiento', False):
+        cliente.saldo = 10.00
+
     plus = try_float(cliente.plus)
     saldo = float(cliente.saldo or 0)
     
