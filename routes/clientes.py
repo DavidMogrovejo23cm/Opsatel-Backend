@@ -1467,13 +1467,12 @@ def procesar_facturacion_global(db: Session):
             
         cliente.saldo = float(cliente.saldo or 0) + tarifa
         
-        # 3. Reiniciar campos mensuales para la vista General
+        # 3. Reiniciar campos mensuales para la vista General (preservar 'adicional' pendiente si no ha sido cancelado)
         cliente.facturas = ""
         cliente.payment_date = ""
         cliente.bank = ""
         cliente.cod = ""
         cliente.bank_plus = ""
-        cliente.adicional = ""
         cliente.internet_payment = ""
         cliente.pago_mensual = 0.00
         cliente.plus_pagado = 0.00
