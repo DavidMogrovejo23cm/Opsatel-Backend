@@ -55,9 +55,13 @@ def registrar_usuario(usuario: schemas.UsuarioCreate, db: Session = Depends(get_
     db.refresh(nuevo_usuario)
     return nuevo_usuario
 
-@router.get("/usuarios", response_model=list[schemas.UsuarioResponse], dependencies=[Depends(require_role(["administrador"]))])
+@router.get("/usuarios", response_model=list[schemas.UsuarioResponse], dependencies=[Depends(require_role(["administrador", "secretario", "tecnico", "instalador"]))])
 def listar_usuarios(db: Session = Depends(get_db)):
     return db.query(models.Usuario).all()
+
+@router.get("/tecnicos", response_model=list[schemas.UsuarioResponse], dependencies=[Depends(require_role(["administrador", "secretario", "tecnico", "instalador"]))])
+def listar_tecnicos(db: Session = Depends(get_db)):
+    return db.query(models.Usuario).filter(models.Usuario.rol == "tecnico").all()
 
 @router.patch("/usuarios/{usuario_id}", response_model=schemas.UsuarioResponse, dependencies=[Depends(require_role(["administrador"]))])
 def actualizar_usuario(usuario_id: int, usuario_data: schemas.UsuarioCreate, db: Session = Depends(get_db)):
