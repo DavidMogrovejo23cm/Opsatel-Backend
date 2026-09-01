@@ -130,10 +130,10 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
 
     plus = try_float(cliente.plus)
     saldo = float(cliente.saldo or 0)
+    adicional = try_float(cliente.adicional)
     
-    # El Pendiente Principal (total_pago) SEPARA el cargo adicional según requerimiento v1.2.
-    # El adicional es un servicio aparte que NO afecta la deuda de internet/iptv en Pagos y Cobros.
-    cliente.total_pago = saldo + plus
+    # PENDIENTE (total_pago) es la suma de TODAS las deudas pendientes (Internet + IPTV Plus + Adicional)
+    cliente.total_pago = saldo + plus + adicional
 
 @router.get("/pendientes-count")
 def get_pendientes_count(db: Session = Depends(get_db)):
