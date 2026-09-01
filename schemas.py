@@ -97,6 +97,8 @@ class ClienteUpdateAdmin(BaseModel):
     tercera_edad: Optional[bool] = None
     precio_plan_especial: Optional[float] = None
     cortesia_total: Optional[bool] = None
+    fecha_firma: Optional[str] = None
+    instalation_date: Optional[str] = None
 
 class ClienteUpdateGeneral(BaseModel):
     nombre: Optional[str] = None
@@ -122,6 +124,7 @@ class ClienteUpdateGeneral(BaseModel):
     clave: Optional[str] = None
     mac: Optional[str] = None
     instalation_date: Optional[str] = None
+    fecha_firma: Optional[str] = None
     ubicacion: Optional[str] = None
     cedula_tipo: Optional[str] = None
     cedula_frontal: Optional[str] = None
