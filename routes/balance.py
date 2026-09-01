@@ -819,7 +819,9 @@ def historial_clientes(db: Session = Depends(get_db)):
         # sin importar si están suspendidos o activos.
             
         tarifa_base = 0.0
-        if c.tercera_edad and c.precio_plan_especial is not None:
+        if getattr(c, 'mantenimiento', False):
+            tarifa_base = 10.00
+        elif c.tercera_edad and c.precio_plan_especial is not None:
             tarifa_base = try_float(c.precio_plan_especial)
         elif c.plan in planes:
             tarifa_base = planes[c.plan]

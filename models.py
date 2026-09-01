@@ -128,6 +128,7 @@ class Cliente(Base):
     iptv_member_id = Column("IPTV_MEMBER_ID", Integer, default=1)
     tv_tipo = Column("TV_TIPO", String(50), default="Ninguno")
     cortesia_total = Column("CORTESIA_TOTAL", Boolean, default=False)
+    mantenimiento = Column("MANTENIMIENTO", Boolean, default=False)
     fecha_prorroga = Column("FECHA_PRORROGA", String(50), nullable=True)
 
     pagos = relationship("Pago", back_populates="cliente")

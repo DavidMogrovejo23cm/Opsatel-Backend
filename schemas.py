@@ -22,6 +22,7 @@ class ClienteCreate(BaseModel):
     tercera_edad: Optional[bool] = False
     plan_corporativo: Optional[bool] = False
     precio_plan_especial: Optional[float] = 0.0
+    mantenimiento: Optional[bool] = False
     iptv_max_conn: Optional[int] = 0
     iptv_activar: Optional[bool] = False
     iptv_user: Optional[str] = None
@@ -97,6 +98,7 @@ class ClienteUpdateAdmin(BaseModel):
     tercera_edad: Optional[bool] = None
     precio_plan_especial: Optional[float] = None
     cortesia_total: Optional[bool] = None
+    mantenimiento: Optional[bool] = None
     fecha_firma: Optional[str] = None
     instalation_date: Optional[str] = None
 
@@ -150,6 +152,7 @@ class ClienteUpdateGeneral(BaseModel):
     saldo: Optional[float] = None
     tercera_edad: Optional[bool] = None
     precio_plan_especial: Optional[float] = None
+    mantenimiento: Optional[bool] = None
     # IPTV (Nuevo req v1.3)
     iptv_activar: Optional[bool] = None
     iptv_user: Optional[str] = None

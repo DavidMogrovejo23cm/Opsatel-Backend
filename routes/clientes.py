@@ -292,6 +292,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         tiempo=cliente.tiempo,
         tercera_edad=bool(cliente.tercera_edad or cliente.plan_corporativo),
         precio_plan_especial=cliente.precio_plan_especial,
+        mantenimiento=bool(cliente.mantenimiento),
         comentarios=cliente.comentarios,
         estado="Activo",
         iptv_activar=iptv_act,
@@ -1071,7 +1072,9 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
             current_day = now.day
             active_days = (total_days_in_month - current_day) + 1
             
-            if cliente.tercera_edad and cliente.precio_plan_especial:
+            if getattr(cliente, 'mantenimiento', False):
+                tarifa_base = 10.00
+            elif cliente.tercera_edad and cliente.precio_plan_especial:
                 tarifa_base = float(cliente.precio_plan_especial)
             else:
                 plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
@@ -1443,7 +1446,9 @@ def procesar_facturacion_global(db: Session):
             
         # 2. La tarifa de internet se agrega al saldo directamente
         tarifa = 0.00
-        if cliente.tercera_edad and cliente.precio_plan_especial is not None:
+        if getattr(cliente, 'mantenimiento', False):
+            tarifa = 10.00
+        elif cliente.tercera_edad and cliente.precio_plan_especial is not None:
             tarifa = float(cliente.precio_plan_especial)
         elif plan_info:
             tarifa = float(plan_info.precio or 0)
@@ -2132,6 +2137,7 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
             "notas_pago": ["NOTAS_PAGO", "OBSERVACION_PAGO"],
             "tercera_edad": ["TERCERA_EDAD", "DISCAPACIDAD", "MAYOR_EDAD"],
             "precio_plan_especial": ["PRECIO_PLAN_ESPECIAL", "VALOR_ESPECIAL", "TARIFA_REDUCIDA"],
+            "mantenimiento": ["MANTENIMIENTO", "PLAN_MANTENIMIENTO"],
             "saldo": ["SALDO", "DEUDA", "PENDIENTE", "SALDO_ANTERIOR", "TOTAL"],
             "pago_mensual": ["PAGO_MENSUAL", "COBRO_MES", "RECAUDACION"],
             "iptv_activar": ["IPTV_ACTIVAR", "ACTIVAR_IPTV"],
@@ -2148,7 +2154,7 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
         # Tipos de campos para conversión correcta
         NUMERIC_FIELDS = {"saldo", "precio_plan_especial", "pago_mensual", "total_pago", "plus_pagado", "adicional_pagado"}
         INT_FIELDS = {"id", "iptv_max_conn", "iptv_member_id"}
-        BOOL_FIELDS = {"tercera_edad", "iptv_activar"}
+        BOOL_FIELDS = {"tercera_edad", "iptv_activar", "mantenimiento"}
 
         def get_raw_val(row, aliases):
             for alias in aliases:
