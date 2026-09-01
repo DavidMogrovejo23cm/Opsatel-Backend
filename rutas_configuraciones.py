@@ -352,18 +352,21 @@ def update_caja_nap(caja_id: int, caja_data: schemas.CajaNapUpdate, db: Session 
 # --- Configuración General del Sistema ---
 
 class DiasPermanciaRequest(BaseModel):
-    dias: int
+    dias: float
 
 @router.get("/dias-permanencia")
 def get_dias_permanencia():
     config = get_config()
     dias = config.get("dias_permanencia", 7)
-    return {"dias": int(dias)}
+    try:
+        return {"dias": float(dias)}
+    except Exception:
+        return {"dias": 7.0}
 
 @router.put("/dias-permanencia")
 def set_dias_permanencia(data: DiasPermanciaRequest):
-    if data.dias < 1 or data.dias > 10:
-        raise HTTPException(status_code=400, detail="Los días deben estar entre 1 y 10")
+    if data.dias <= 0 or data.dias > 365:
+        raise HTTPException(status_code=400, detail="El tiempo de permanencia debe ser mayor a 0 y menor a 365 días")
     save_config({"dias_permanencia": data.dias})
     return {"dias": data.dias, "message": "Configuración guardada correctamente"}
 

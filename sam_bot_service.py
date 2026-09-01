@@ -1,9 +1,11 @@
 import os
 import re
 import json
+# pyrefly: ignore [missing-import]
 import anthropic
 from sqlalchemy.orm import Session
 import models
+# pyrefly: ignore [missing-import]
 from rapidfuzz import fuzz, process
 import whatsapp_service
 
@@ -66,12 +68,13 @@ Intenciones disponibles:
 - registrar_cliente_potencial: Si el usuario desea registrar, ingresar o guardar un prospecto, nuevo cliente, o prospecto de ventas.
 - consultar_pagos_y_saldos: Si el usuario pregunta por su deuda, saldo pendiente, facturas, último pago, comprobante de pago o estado de cuenta.
 - recomendacion_peliculas_opsatv: Si el usuario menciona alguna de estas palabras clave o conceptos: recomendar, recomendación, sugerir, sugerencia, qué ver, qué me recomiendas, ver, película, serie, buscar películas, encontrar series, estrenos, tendencia, top, popular, famoso, cartelera, OPSATV, acción (en contexto de cine), comedia, drama, terror, ciencia ficción, suspenso, thriller, aventura, animación, romance, documental, misterio, o cualquier solicitud relacionada con entretenimiento audiovisual.
+- soporte_tecnico_foco_rojo: Si el usuario reporta problemas de internet, internet lento, sin servicio, sin señal, se fue el internet, no tengo internet, foco rojo, luz roja, luz LOS, cable desconectado, router parpadeando, equipo apagado o fallas técnicas.
 - general: Si es un saludo, despedida, pregunta genérica, agradecimiento o no encaja en las anteriores.
 
 Conversación actual:
 "{contexto}"
 
-Tu tarea: Responde únicamente con el nombre de la intención ("registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv" o "general"). No agregues explicaciones, puntuación ni texto adicional."""
+Tu tarea: Responde únicamente con el nombre de la intención ("registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv", "soporte_tecnico_foco_rojo" o "general"). No agregues explicaciones, puntuación ni texto adicional."""
 
     try:
         response = client.messages.create(
@@ -82,7 +85,7 @@ Tu tarea: Responde únicamente con el nombre de la intención ("registrar_client
         )
         intencion = response.content[0].text.strip().lower()
         
-        valid_intents = ["registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv", "general"]
+        valid_intents = ["registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv", "soporte_tecnico_foco_rojo", "general"]
         for intent in valid_intents:
             if intent in intencion:
                 return intent
@@ -97,6 +100,12 @@ Tu tarea: Responde únicamente con el nombre de la intención ("registrar_client
         elif any(w in ultimo_mensaje for w in ["registrar", "nuevo cliente", "prospecto", "ingresar cliente"]):
             return "registrar_cliente_potencial"
         elif any(w in ultimo_mensaje for w in [
+            "foco rojo", "luz roja", "sin internet", "sin servicio", "no tengo internet",
+            "no hay internet", "se fue el internet", "sin señal", "sin senal", "luz los",
+            "los rojo", "parpadea", "modem", "módem", "router", "falla", "fallando", "desconectado"
+        ]):
+            return "soporte_tecnico_foco_rojo"
+        elif any(w in ultimo_mensaje for w in [
             "pelicula", "película", "serie", "recomendar", "recomendacion", "recomendación",
             "sugerir", "sugerencia", "qué ver", "que ver", "opsatv", "ver", "estrenos",
             "tendencia", "top", "popular", "famoso", "cartelera", "accion", "comedia",
@@ -105,6 +114,7 @@ Tu tarea: Responde únicamente con el nombre de la intención ("registrar_client
         ]):
             return "recomendacion_peliculas_opsatv"
         return "general"
+
 
 # -------------------------------------------------------------
 # SKILL: REGISTRAR CLIENTE POTENCIAL
@@ -518,17 +528,75 @@ def procesar_recomendacion_peliculas(numero: str, mensaje: str, contexto: str) -
         )
 
 # -------------------------------------------------------------
-# CHAT GENERAL (PERSONALIDAD BÁSICA DE SAM)
+# SKILL: SOPORTE TÉCNICO E INSPECCIÓN DE FOCO ROJO / SIN SERVICIO
 # -------------------------------------------------------------
-PROMPT_GENERAL = """Eres SAM (Sistema Autónomo Multitarea de OPSATEL), un asistente virtual inteligente para la empresa proveedora de Internet y Telecomunicaciones OPSATEL.
-Tu personalidad es amable, atenta, rápida y muy profesional.
-Tus respuestas deben ser cortas, directas y optimizadas para leerse en WhatsApp.
+PROMPT_SOPORTE_TECNICO = """# Skill: Soporte Técnico Inteligente — Diagnóstico de Servicio y Foco Rojo
 
-Si el usuario te hace preguntas generales o te saluda, dale la bienvenida usando siempre el saludo: "Hola soy Sam de opsatel, espero estes teniendo un buen dia en que puedo ayudarte el dia de hoy?" y ofréceles tu ayuda en lo que necesiten.
+Eres SAM, el especialista de soporte técnico virtual de OPSATEL.
+Tu personalidad es extremadamente amable, empática, paciente, clara y 100% humana.
+Comprendes perfectamente lo molesto que es quedarse sin internet y tu objetivo es guiar al usuario paso a paso con calidez y tranquilidad para diagnosticar y solucionar el problema.
 
-REGLA IMPORTANTE: Si el usuario te hace una pregunta sobre la que no tienes información suficiente, no la puedes responder con certeza, o está fuera de tus funciones, responde SIEMPRE con el siguiente mensaje exacto:
-"Lamento informarle que no cuento con la información necesaria para responder a su consulta con precisión. Le sugiero verificar esta cuestión con el personal corporativo"
-No inventes datos, no especules. Solo usa la respuesta anterior cuando no puedas responder con certeza."""
+## GUÍA DE DIAGNÓSTICO ESTRUCTURADA:
+
+1. **Empatía y Calidez Inicial**:
+   - Muestra comprensión sincera por la molestia (ej: "Entiendo perfectamente lo frustrante que es quedarse sin internet, no te preocupes, vamos a revisarlo juntos paso a paso para ayudarte 😊").
+
+2. **Diferenciación de Equipos (1 o 2 equipos)**:
+   - Pregunta o identifica si en el domicilio tienen **1 solo equipo** (la caja/ONT donde entra el cable delgado de fibra óptica directamente) o **2 equipos** (la ONT principal conectada por cable de red a un Router Wi-Fi secundario como TP-Link, Mercusys o Tenda).
+
+3. **Diagnóstico de Luces / Foco Rojo (`LOS` vs Router)**:
+   - Explica de forma clara y humana qué significa la luz roja:
+     * Si la luz roja dice **`LOS`** (o tiene el ícono de una antena/mundo) en la ONT principal de fibra: Significa que hay una interrupción o pérdida de señal en el cable de fibra óptica.
+     * Si la luz roja o sin internet ocurre en el Router secundario: Puede ser un falso contacto en el cable ethernet (UTP) entre ambos equipos.
+
+4. **Comprobación Física de Cables**:
+   - Pide revisar suavemente que el cable delgado de fibra (generalmente con conector amarillo o verde) esté firme y sin doblarse o estar aplastado en la ONT.
+   - Si tienen 2 equipos, pedir verificar que el cable de red (ethernet) que conecta la ONT con el Router secundario esté bien conectado en ambas entradas.
+
+5. **Reinicio Eléctrico de 30 Segundos (Power Cycle)**:
+   - Explica cómo desconectar la fuente de poder/tomacorriente de los equipos durante 30 segundos exactos y volver a conectar.
+   - Pide esperar entre 2 y 3 minutos a que las luces se estabilicen (las luces `PON` o `Power` deben quedar en verde fijo).
+
+6. **Cierre Empático y Derivación Humana (SIN creación automática de tickets)**:
+   - Si el usuario indica que probó los pasos y el foco rojo o la falla persiste, dile de forma muy cálida y atenta que se comunique con nuestro equipo de soporte técnico o que un asesor técnico humano lo asistirá para coordinar la revisión del enlace.
+
+## REGLAS DE ORO:
+- Responde de forma muy fluida y natural adaptándote a lo que el usuario te vaya respondiendo en el chat.
+- Usa lenguaje sencillo sin tecnicismos complejos.
+- Usa emoticonos amigables apropiados para WhatsApp (🌐, 🔌, 💡, 🔴, 🟢, ✨, 😊).
+- Evita párrafos gigantescos; da instrucciones claras, amables y por pasos.
+"""
+
+def procesar_soporte_tecnico(numero: str, mensaje: str, contexto: str) -> str:
+    client = get_anthropic_client()
+    try:
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=450,
+            temperature=0.4,
+            messages=[{"role": "user", "content": f"{PROMPT_SOPORTE_TECNICO}\n\nConversación actual:\n{contexto}"}]
+        )
+        return response.content[0].text.strip()
+    except Exception as e:
+        print(f"[SAM Chatbot] Error en soporte técnico: {e}")
+        return (
+            "🌐 Entiendo perfectamente lo frustrante que es quedarse sin internet. Vamos a solucionarlo juntos paso a paso 😊\n\n"
+            "1️⃣ Primero, cuéntame si en tu domicilio tienes **1 solo equipo** (la cajita principal donde entra la fibra) o **2 equipos** (la cajita principal + un router Wi-Fi secundario como TP-Link o Mercusys).\n\n"
+            "2️⃣ Revisa si en la cajita principal ves una luz roja encendida que diga **LOS**.\n\n"
+            "🔌 **Prueba rápida**: Desconecta los equipos del tomacorriente durante 30 segundos, vuelve a conectarlos y espera 3 minutos a que se estabilicen las luces."
+        )
+
+# -------------------------------------------------------------
+# CHAT GENERAL (PERSONALIDAD HUMANA E INTELIGENTE DE SAM)
+# -------------------------------------------------------------
+PROMPT_GENERAL = """Eres SAM (Sistema Autónomo Multitarea de OPSATEL), el asistente virtual oficial de la empresa proveedora de Internet y Telecomunicaciones OPSATEL.
+
+PERSONALIDAD Y TONO:
+- Tu trato es sumamente cálido, empático, inteligente, fluido y 100% humano, como el mejor asesor de atención al cliente de la empresa.
+- Exprésate con cordialidad y claridad sin sonar como un robot ni usar plantillas frías o acartonadas.
+- Si el usuario te saluda o hace una pregunta abierta, dale una bienvenida muy amable y ofrece tu ayuda dispuesta.
+- Si te realizan una consulta sobre la que no tengas datos exactos en el sistema, responde siempre con amabilidad humana (por ejemplo: "Con gusto te puedo ayudar a canalizar tu consulta con uno de nuestros asesores comerciales o técnicos para brindarte la información exacta al instante 😊").
+- NUNCA respondas con mensajes fríos de error o disculpas robóticas. Sé conversacional, resolutivo, positivo y cercano en todo momento."""
 
 def procesar_chat_general(numero: str, mensaje: str, contexto: str) -> str:
     client = get_anthropic_client()
@@ -542,7 +610,8 @@ def procesar_chat_general(numero: str, mensaje: str, contexto: str) -> str:
         return response.content[0].text.strip()
     except Exception as e:
         print(f"[SAM Chatbot] Error en chat general: {e}")
-        return "Hola soy Sam de opsatel, espero estes teniendo un buen dia en que puedo ayudarte el dia de hoy?"
+        return "Hola soy Sam de Opsatel, espero estés teniendo un excelente día 😊 ¿En qué te puedo ayudar hoy?"
+
 
 # -------------------------------------------------------------
 # LÓGICA EXCLUSIVA PARA ADMINISTRADORES Y ALTA DIRECTA
@@ -785,9 +854,13 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
     elif skill_activo == "recomendacion_peliculas_opsatv":
         estados_skills[numero] = None
         response_text = procesar_recomendacion_peliculas(numero, mensaje, contexto)
+    elif skill_activo == "soporte_tecnico_foco_rojo":
+        estados_skills[numero] = "soporte_tecnico_foco_rojo"
+        response_text = procesar_soporte_tecnico(numero, mensaje, contexto)
     else:
         estados_skills[numero] = None
         response_text = procesar_chat_general(numero, mensaje, contexto)
+
         
     # 6. Guardar la respuesta generada en el historial
     guardar_mensaje_historial(numero, "assistant", response_text)

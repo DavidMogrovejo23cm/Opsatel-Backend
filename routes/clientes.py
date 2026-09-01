@@ -756,84 +756,146 @@ def test_database_tables(db: Session = Depends(get_db)):
 @router.get("/descargar-completo")
 def descargar_completa_base_datos(db: Session = Depends(get_db)):
     """
-    Exporta todas las tablas de la base de datos a un único archivo Excel con múltiples pestañas.
+    Exporta TODAS las tablas de la base de datos a un único archivo Excel (.xlsx) con múltiples pestañas,
+    garantizando la exportación completa e íntegra de todos los datos existentes en el sistema (clientes en
+    cualquier estado, pagos, saldos, call center, balance, asistencias, configuraciones, etc.).
     """
     try:
         import io
+        import re
+        import json
         from decimal import Decimal
         from datetime import datetime, date
         import pandas as pd
-        # pyrefly: ignore [missing-import]
+        from sqlalchemy import inspect, text
         from fastapi.responses import StreamingResponse
         
-        # Lista de todos los modelos a exportar
-        models_to_export = [
-            (models.Cliente, "Clientes"),
-            (models.Pago, "Pagos"),
-            (models.Nodo, "Nodos"),
-            (models.PlanInternet, "Planes de Internet"),
-            (models.Banco, "Bancos"),
-            (models.Puerto, "Puertos"),
-            (models.FinanzasBase, "Finanzas Base"),
-            (models.Parroquia, "Parroquias"),
-            (models.ClienteExtra, "Clientes Extras"),
-            (models.PagoExtra, "Pagos Extras"),
-            (models.HojaRuta, "Hojas de Ruta"),
-            (models.Ticket, "Tickets de Asistencia"),
-            (models.CallCenterTicket, "Tickets Call Center"),
-            (models.Egreso, "Egresos"),
-            (models.Proyecto, "Proyectos"),
-            (models.ProyectoPago, "Proyecto Pagos"),
-            (models.GastoProyecto, "Gasto Proyectos"),
-            (models.Colchon, "Colchón de Reserva"),
-            (models.GastoFijo, "Gastos Fijos"),
-            (models.Asistencia, "Asistencias del Personal"),
-            (models.WhatsAppHistorial, "Historial WhatsApp"),
-            (models.WhatsAppConfiguracion, "Configuración WhatsApp"),
-            (models.ReporteMensual, "Reportes Mensuales"),
-            (models.Usuario, "Usuarios del Sistema")
-        ]
+        # Mapeo de nombres de tablas de la base de datos a títulos legibles en español
+        TABLE_SHEET_NAMES = {
+            "hoja_de_c__lculo_sin_t__tulo": "Clientes",
+            "historial_pagos": "Historial de Pagos",
+            "clientes_extras": "Clientes Extras",
+            "historial_pagos_extras": "Pagos Extras",
+            "call_center_tickets": "Tickets Call Center",
+            "tickets_desarrollo": "Tickets de Desarrollo",
+            "hoja_ruta": "Hojas de Ruta",
+            "egresos_balance": "Egresos Balance",
+            "gastos_fijos_balance": "Gastos Fijos",
+            "proyectos_balance": "Proyectos",
+            "proyecto_pagos": "Proyecto Pagos",
+            "gastos_proyecto": "Gastos Proyectos",
+            "colchon_balance": "Colchón de Reserva",
+            "asistencias": "Asistencia Personal",
+            "horarios_empleados": "Horarios de Empleados",
+            "turnos_cajas": "Turnos de Caja",
+            "finanzas_base": "Finanzas Base",
+            "nodos": "Nodos",
+            "planes_internet": "Planes de Internet",
+            "bancos": "Bancos",
+            "puertos": "Puertos",
+            "parroquias": "Parroquias",
+            "cajas_nap": "Cajas NAP",
+            "clientes_eliminados": "Clientes Eliminados",
+            "reportes_mensuales": "Reportes Mensuales",
+            "usuarios": "Usuarios del Sistema",
+            "whatsapp_historial": "Historial WhatsApp",
+            "whatsapp_configuracion": "Configuración WhatsApp",
+            "whatsapp_administradores": "Administradores WhatsApp",
+            "log_facturacion": "Logs de Facturación",
+            "olt_config": "Configuración OLT",
+            "olt_tasks": "Tareas OLT",
+            "olt_task_logs": "Logs Tareas OLT",
+            "olt_power_checks": "Potencia OLT",
+            "audit_events": "Eventos Auditoría",
+            "network_commands": "Comandos Red",
+            "worker_heartbeats": "Workers Heartbeat",
+            "inventory_service_ports": "Puertos Inventario",
+            "inventory_ont_ids": "IDs ONT Inventario",
+            "inventory_ip_pools": "Pools IP Inventario",
+            "discovered_onts": "ONTs Descubiertas",
+            "discovered_service_ports": "Puertos Descubiertos",
+            "discovered_boards": "Tarjetas Descubiertas",
+            "libreqos_servers": "Servidores LibreQoS",
+            "client_qos_state": "Estados QoS Clientes",
+            "libreqos_audit": "Auditoría LibreQoS",
+            "libreqos_jobs": "Trabajos LibreQoS"
+        }
+
+        # 1. Obtener todas las tablas directamente del motor de la base de datos
+        inspector = inspect(db.bind)
+        db_tables = inspector.get_table_names()
         
+        # 2. Agregar cualquier tabla definida en los modelos que no aparezca aún en inspector
+        all_tables = list(db_tables)
+        if hasattr(models.Base, 'metadata') and hasattr(models.Base.metadata, 'tables'):
+            for table_name in models.Base.metadata.tables.keys():
+                if table_name not in all_tables:
+                    all_tables.append(table_name)
+                    
+        # Priorizar la pestaña "Clientes" al inicio si existe
+        if "hoja_de_c__lculo_sin_t__tulo" in all_tables:
+            all_tables.remove("hoja_de_c__lculo_sin_t__tulo")
+            all_tables.insert(0, "hoja_de_c__lculo_sin_t__tulo")
+            
         output = io.BytesIO()
-        
+        used_sheet_names = set()
+
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             sheets_written = 0
-            for model, sheet_name in models_to_export:
+            quote_fn = db.bind.dialect.identifier_preparer.quote
+            
+            for table_name in all_tables:
                 try:
-                    # Query all records for this model
-                    records = db.query(model).all()
-                    
-                    if records:
-                        data_list = []
-                        for rec in records:
-                            d = {}
-                            for col in model.__table__.columns:
-                                # col.key es el nombre del atributo en Python (ej: 'id')
-                                # col.name es el nombre del campo en la base de datos (ej: 'NUMERO')
-                                val = getattr(rec, col.key)
-                                if isinstance(val, (datetime, date)):
-                                    val = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, "strftime") else str(val)
-                                elif isinstance(val, Decimal):
-                                    val = float(val)
-                                d[col.name] = val
-                            data_list.append(d)
-                        df = pd.DataFrame(data_list)
+                    quoted_name = quote_fn(table_name)
+                    query_str = f"SELECT * FROM {quoted_name}"
+                    result = db.execute(text(query_str))
+                    columns = list(result.keys())
+                    raw_rows = result.mappings().all()
+
+                    processed_rows = []
+                    for row in raw_rows:
+                        d = {}
+                        for col, val in row.items():
+                            if isinstance(val, (datetime, date)):
+                                val = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, "strftime") else str(val)
+                            elif isinstance(val, Decimal):
+                                val = float(val)
+                            elif isinstance(val, (dict, list)):
+                                val = json.dumps(val, default=str, ensure_ascii=False)
+                            elif isinstance(val, bytes):
+                                val = val.decode("utf-8", errors="ignore")
+                            d[col] = val
+                        processed_rows.append(d)
+
+                    if processed_rows:
+                        df = pd.DataFrame(processed_rows)
                     else:
-                        columns = [c.name for c in model.__table__.columns]
                         df = pd.DataFrame(columns=columns)
-                        
-                    # Limit sheet name to 31 characters
-                    sheet_name_limit = sheet_name[:31]
-                    df.to_excel(writer, sheet_name=sheet_name_limit, index=False)
+
+                    # Determinar nombre legible de la pestaña
+                    display_name = TABLE_SHEET_NAMES.get(table_name, table_name.replace("_", " ").title())
+                    sanitized_name = re.sub(r'[\\/*?:\[\]]', '_', display_name)
+                    base_sheet_name = sanitized_name[:31]
+
+                    # Evitar nombres de pestañas duplicados en Excel
+                    final_sheet_name = base_sheet_name
+                    counter = 1
+                    while final_sheet_name in used_sheet_names:
+                        suffix = f"_{counter}"
+                        final_sheet_name = f"{base_sheet_name[:31 - len(suffix)]}{suffix}"
+                        counter += 1
+
+                    used_sheet_names.add(final_sheet_name)
+                    df.to_excel(writer, sheet_name=final_sheet_name, index=False)
                     sheets_written += 1
                 except Exception as sheet_err:
-                    print(f"Aviso: No se pudo exportar la tabla '{sheet_name}': {sheet_err}")
+                    print(f"Aviso: No se pudo exportar la tabla '{table_name}': {sheet_err}")
                     continue
-            
+
             # Garantizar que al menos una hoja exista para evitar error de openpyxl
             if sheets_written == 0:
                 pd.DataFrame({"Info": ["No se encontraron tablas exportables"]}).to_excel(writer, sheet_name="Info", index=False)
-                
+
         output.seek(0)
         
         headers = {

@@ -1,1 +1,8 @@
-{"ultimo_cierre": "2026-03", "ultima_facturacion": "2026-03"}
+{
+  "ultimo_cierre": "2026-03",
+  "ultima_facturacion": "2026-03",
+  "dia_corte": 20,
+  "hora_corte": "01:00",
+  "auto_suspension_enabled": true,
+  "dias_permanencia": 1.0
+}
