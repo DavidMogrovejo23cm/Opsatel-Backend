@@ -125,6 +125,8 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
 
     if getattr(cliente, 'mantenimiento', False):
         cliente.saldo = 10.00
+    elif getattr(cliente, 'precio_plan_especial', None) is not None and float(cliente.precio_plan_especial or 0) > 0:
+        cliente.saldo = float(cliente.precio_plan_especial)
 
     plus = try_float(cliente.plus)
     saldo = float(cliente.saldo or 0)
@@ -1121,6 +1123,7 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
     was_mantenimiento = getattr(cliente, 'mantenimiento', False)
+    was_custom_price = getattr(cliente, 'precio_plan_especial', None) is not None and float(cliente.precio_plan_especial or 0) > 0
 
     for var, value in vars(data).items():
         if value is not None:
@@ -1131,10 +1134,8 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
                 base_screens = (plan_info.pantallas if plan_info.pantallas is not None else 0) if plan_info else 0
                 cliente.plus = str(max(0, (value - base_screens) * 2))
 
-    if was_mantenimiento and not cliente.mantenimiento and data.saldo is None:
-        if cliente.tercera_edad and cliente.precio_plan_especial is not None:
-            cliente.saldo = float(cliente.precio_plan_especial)
-        else:
+    if (was_mantenimiento and not cliente.mantenimiento) or (was_custom_price and float(cliente.precio_plan_especial or 0) == 0):
+        if not cliente.mantenimiento and float(cliente.precio_plan_especial or 0) == 0 and data.saldo is None:
             plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
             if plan_info:
                 cliente.saldo = float(plan_info.precio or 0)
