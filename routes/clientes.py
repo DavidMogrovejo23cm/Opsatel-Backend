@@ -1120,7 +1120,7 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
-    old_internet_payment = cliente.internet_payment
+    was_mantenimiento = getattr(cliente, 'mantenimiento', False)
 
     for var, value in vars(data).items():
         if value is not None:
@@ -1130,6 +1130,14 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
                 plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
                 base_screens = (plan_info.pantallas if plan_info.pantallas is not None else 0) if plan_info else 0
                 cliente.plus = str(max(0, (value - base_screens) * 2))
+
+    if was_mantenimiento and not cliente.mantenimiento and data.saldo is None:
+        if cliente.tercera_edad and cliente.precio_plan_especial is not None:
+            cliente.saldo = float(cliente.precio_plan_especial)
+        else:
+            plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+            if plan_info:
+                cliente.saldo = float(plan_info.precio or 0)
 
     sync_cliente_balances(cliente, db)
     db.commit()
