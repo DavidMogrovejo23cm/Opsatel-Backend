@@ -1054,7 +1054,7 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
                 pass # Si no es un número válido (ej: "S/N"), saltamos la validación numérica
 
         cliente.estado = "Activo"
-        cliente.instalation_date = datetime.now().strftime("%Y-%m-%d")
+        cliente.instalation_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # --- SINCRONIZACIÓN CON HOJA DE RUTA ---
         # Al activar técnicamente, marcamos como 'En proceso' cualquier registro pendiente en Hoja de Ruta

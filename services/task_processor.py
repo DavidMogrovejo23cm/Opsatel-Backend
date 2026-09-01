@@ -724,7 +724,7 @@ class TaskProcessor:
                         except Exception:
                             pass
                         cliente.estado = 'Activo'
-                        cliente.instalation_date = datetime.now().strftime("%Y-%m-%d")
+                        cliente.instalation_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
                         # puerto: número del puerto GPON (ej: "Puerto 8")
                         port_num = result.get('port_num')
