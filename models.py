@@ -183,6 +183,8 @@ class Usuario(Base):
     username = Column(String(50), unique=True, index=True)
     password_hash = Column(String(255))
     rol = Column(String(20)) # administrador, secretario, tecnico
+    acceso_general_sin_clave = Column(Boolean, default=False, nullable=False)
+
 
 class Nodo(Base):
     __tablename__ = "nodos"

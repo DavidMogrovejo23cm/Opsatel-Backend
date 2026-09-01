@@ -47,8 +47,9 @@ def registrar_usuario(usuario: schemas.UsuarioCreate, db: Session = Depends(get_
     
     nuevo_usuario = models.Usuario(
         username=usuario.username,
-        password_hash=auth_utils.get_password_hash(usuario.password),
-        rol=usuario.rol
+        password_hash=auth_utils.get_password_hash(usuario.password or "123456"),
+        rol=usuario.rol,
+        acceso_general_sin_clave=bool(usuario.acceso_general_sin_clave)
     )
     db.add(nuevo_usuario)
     db.commit()
@@ -69,10 +70,14 @@ def actualizar_usuario(usuario_id: int, usuario_data: schemas.UsuarioCreate, db:
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     
-    db_user.username = usuario_data.username
+    if usuario_data.username:
+        db_user.username = usuario_data.username
     if usuario_data.password:
         db_user.password_hash = auth_utils.get_password_hash(usuario_data.password)
-    db_user.rol = usuario_data.rol
+    if usuario_data.rol:
+        db_user.rol = usuario_data.rol
+    if usuario_data.acceso_general_sin_clave is not None:
+        db_user.acceso_general_sin_clave = usuario_data.acceso_general_sin_clave
     
     db.commit()
     db.refresh(db_user)
@@ -102,11 +107,12 @@ def login(usuario: schemas.UsuarioAuth, db: Session = Depends(get_db)):
         )
     
     access_token = auth_utils.create_access_token(
-        data={"sub": db_user.username, "rol": db_user.rol}
+        data={"sub": db_user.username, "rol": db_user.rol, "acceso_general_sin_clave": db_user.acceso_general_sin_clave}
     )
     return {
         "access_token": access_token, 
         "token_type": "bearer",
         "username": db_user.username,
-        "rol": db_user.rol
+        "rol": db_user.rol,
+        "acceso_general_sin_clave": db_user.acceso_general_sin_clave
     }

@@ -287,13 +287,17 @@ class UsuarioAuth(BaseModel):
     username: str
     password: str
 
-class UsuarioCreate(UsuarioAuth):
+class UsuarioCreate(BaseModel):
+    username: str
+    password: Optional[str] = None
     rol: str # administrador, secretario, tecnico
+    acceso_general_sin_clave: Optional[bool] = False
 
 class UsuarioResponse(BaseModel):
     id: int
     username: str
     rol: str
+    acceso_general_sin_clave: Optional[bool] = False
 
     class Config:
         from_attributes = True
@@ -303,6 +307,8 @@ class Token(BaseModel):
     token_type: str
     username: str
     rol: str
+    acceso_general_sin_clave: Optional[bool] = False
+
 
 class NodoBase(BaseModel):
     nombre: str

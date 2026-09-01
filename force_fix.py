@@ -69,11 +69,18 @@ def force_fix_columns():
         ("estado_mikrotik", "VARCHAR(50)")
     ]
 
+    # 6. Tabla usuarios
+    table_usuarios = "usuarios"
+    columns_usuarios = [
+        ("acceso_general_sin_clave", "BOOLEAN DEFAULT FALSE")
+    ]
+
     process_table(table_clientes, columns_clientes)
     process_table(table_pagos, columns_pagos)
     process_table(table_asistencias, columns_asistencias)
     process_table(table_olt_tasks, columns_olt_tasks)
     process_table(table_eliminados, columns_eliminados)
+    process_table(table_usuarios, columns_usuarios)
     
     print("Reparación terminada.")
 
