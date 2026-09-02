@@ -761,4 +761,16 @@ class LogFacturacion(Base):
     periodo_mes = Column(String(20), unique=True, index=True) # YYYY-MM
     fecha_ejecucion = Column(DateTime, default=datetime.datetime.utcnow)
     estado = Column(String(50), default="Completado")
-    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+
+class MovimientoInterno(Base):
+    """Registro de movimientos/transferencias internas entre efectivo y bancos"""
+    __tablename__ = "movimientos_internos"
+    id = Column(Integer, primary_key=True, index=True)
+    origen = Column(String(50), nullable=False)       # "Efectivo", "Pichincha", "JEP", "Otro"
+    destino = Column(String(50), nullable=False)      # "Pichincha", "JEP", "Efectivo", "Otro"
+    monto = Column(Numeric(precision=10, scale=2), default=0.00)
+    fecha = Column(String(50), nullable=False)         # YYYY-MM-DD
+    mes = Column(String(20), nullable=False, index=True)# YYYY-MM
+    observacion = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)

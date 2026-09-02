@@ -814,5 +814,32 @@ class TurnoCajaResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class MovimientoInternoCreate(BaseModel):
+    origen: str
+    destino: str
+    monto: float
+    fecha: str
+    observacion: Optional[str] = None
+
+class MovimientoInternoUpdate(BaseModel):
+    origen: Optional[str] = None
+    destino: Optional[str] = None
+    monto: Optional[float] = None
+    fecha: Optional[str] = None
+    observacion: Optional[str] = None
+
+class MovimientoInternoOut(BaseModel):
+    id: int
+    origen: str
+    destino: str
+    monto: float
+    fecha: str
+    mes: str
+    observacion: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 
 
