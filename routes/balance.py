@@ -550,6 +550,121 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
 
 
 # ====================================================================
+# REPORTE EXCLUSIVO DE PLATAFORMA (IPTV / EXTRAS)
+# ====================================================================
+
+@router.get("/reporte-plataforma")
+def reporte_plataforma(mes: str, db: Session = Depends(get_db)):
+    try:
+        year, month = map(int, mes.split("-"))
+        import calendar
+        _, last_day = calendar.monthrange(year, month)
+        start_date = datetime.datetime(year, month, 1, 0, 0, 0)
+        end_date = datetime.datetime(year, month, last_day, 23, 59, 59)
+        pagos_mes = db.query(models.Pago).filter(
+            models.Pago.fecha_pago >= start_date,
+            models.Pago.fecha_pago <= end_date,
+            models.Pago.anulado == False,
+            models.Pago.estado == "Completado"
+        ).all()
+    except Exception:
+        pagos = db.query(models.Pago).filter(
+            models.Pago.anulado == False,
+            models.Pago.estado == "Completado"
+        ).all()
+        pagos_mes = [p for p in pagos if str(p.fecha_pago)[:7] == mes]
+
+    detalle_transacciones = []
+    iptv_plus_ef = iptv_plus_pich = iptv_plus_jep = iptv_plus_otros = 0.0
+
+    for p in pagos_mes:
+        m_plus = float(p.monto_plus or 0)
+        if m_plus > 0:
+            banco = (p.banco_plus or p.metodo_pago or "EFECTIVO").upper()
+            if "PICHINCHA" in banco:
+                iptv_plus_pich += m_plus
+            elif "JEP" in banco or "GUAYAQUIL" in banco:
+                iptv_plus_jep += m_plus
+            elif "EFECTIVO" in banco:
+                iptv_plus_ef += m_plus
+            else:
+                iptv_plus_otros += m_plus
+
+            cliente_nombre = f"Cliente #{p.cliente_id}"
+            if p.cliente and p.cliente.nombre:
+                cliente_nombre = p.cliente.nombre
+
+            detalle_transacciones.append({
+                "id": f"pago_{p.id}",
+                "cliente": cliente_nombre,
+                "tipo": "IPTV Plus (Pantallas Extras Cliente)",
+                "banco": banco,
+                "fecha": p.fecha_pago.strftime("%Y-%m-%d") if p.fecha_pago else mes + "-01",
+                "monto": round(m_plus, 2)
+            })
+
+    total_iptv_plus = round(iptv_plus_ef + iptv_plus_pich + iptv_plus_jep + iptv_plus_otros, 2)
+
+    extras = db.query(models.ClienteExtra).all()
+    parts = mes.split("-")
+    month_str = parts[1] if len(parts) > 1 else "01"
+    month_key = {
+        "01":"enero","02":"febrero","03":"marzo","04":"abril",
+        "05":"mayo","06":"junio","07":"julio","08":"agosto",
+        "09":"septiembre","10":"octubre","11":"noviembre","12":"diciembre"
+    }.get(month_str, "enero")
+
+    extras_ef = extras_pich = extras_jep = extras_otros = 0.0
+    if month_key:
+        for e in extras:
+            pago = float(getattr(e, f"{month_key}_pago", 0) or 0)
+            banco = (getattr(e, f"{month_key}_banco", "") or "EFECTIVO").upper()
+            if pago > 0:
+                if "PICHINCHA" in banco:
+                    extras_pich += pago
+                elif "JEP" in banco or "GUAYAQUIL" in banco:
+                    extras_jep += pago
+                elif "EFECTIVO" in banco:
+                    extras_ef += pago
+                else:
+                    extras_otros += pago
+
+                detalle_transacciones.append({
+                    "id": f"extra_{e.id}",
+                    "cliente": e.nombre or f"Cliente Extra #{e.id}",
+                    "tipo": "Cliente Extra (Solo Plataforma)",
+                    "banco": banco,
+                    "fecha": mes + "-01",
+                    "monto": round(pago, 2)
+                })
+
+    total_extras = round(extras_ef + extras_pich + extras_jep + extras_otros, 2)
+    sumatoria_total = round(total_iptv_plus + total_extras, 2)
+
+    bancos_plataforma = {
+        "efectivo": round(iptv_plus_ef + extras_ef, 2),
+        "pichincha": round(iptv_plus_pich + extras_pich, 2),
+        "jep": round(iptv_plus_jep + extras_jep, 2),
+        "otros": round(iptv_plus_otros + extras_otros, 2),
+        "total": sumatoria_total
+    }
+
+    origen_plataforma = {
+        "iptv_plus": total_iptv_plus,
+        "clientes_extras": total_extras,
+        "total": sumatoria_total
+    }
+
+    return {
+        "mes": mes,
+        "sumatoria_total": sumatoria_total,
+        "desglose_origen": origen_plataforma,
+        "desglose_bancos": bancos_plataforma,
+        "transacciones": detalle_transacciones
+    }
+
+
+# ====================================================================
 # REPORTE ANUAL
 # ====================================================================
 
