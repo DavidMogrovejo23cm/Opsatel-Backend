@@ -580,7 +580,7 @@ def reporte_plataforma(mes: str, db: Session = Depends(get_db)):
     for p in pagos_mes:
         m_plus = float(p.monto_plus or 0)
         if m_plus > 0:
-            banco = (p.banco_plus or p.metodo_pago or "EFECTIVO").upper()
+            banco = (getattr(p, 'banco_plus', None) or getattr(p, 'metodo_pago', None) or "EFECTIVO").upper()
             if "PICHINCHA" in banco:
                 iptv_plus_pich += m_plus
             elif "JEP" in banco or "GUAYAQUIL" in banco:
