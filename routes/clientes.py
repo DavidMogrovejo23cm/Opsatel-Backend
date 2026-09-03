@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 import os
 import shutil
 # pyrefly: ignore [missing-import]
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List
 import models, schemas
@@ -1123,10 +1124,12 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
     for var, value in vars(data).items():
         if value is not None:
             setattr(cliente, var, value)
-            # Sincronizar 'plus' si se cambia 'iptv_max_conn'
-            if var == 'iptv_max_conn':
-                plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
-                base_screens = (plan_info.pantallas if plan_info.pantallas is not None else 0) if plan_info else 0
+            # Sincronizar 'plus' si se cambia 'iptv_max_conn' y no se especificó un 'plus' explícito
+            if var == 'iptv_max_conn' and data.plus is None:
+                plan_info = db.query(models.PlanInternet).filter(
+                    func.lower(func.trim(models.PlanInternet.nombre)) == func.lower(func.trim(cliente.plan))
+                ).first() if cliente.plan else None
+                base_screens = (plan_info.pantallas if (plan_info and plan_info.pantallas is not None) else 0)
                 cliente.plus = str(max(0, (value - base_screens) * 2))
 
     if data.saldo is not None:
