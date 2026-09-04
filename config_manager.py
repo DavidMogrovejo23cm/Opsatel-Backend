@@ -8,7 +8,8 @@ DEFAULT_CONFIG = {
     "ultima_facturacion": "",
     "dia_corte": 20,
     "hora_corte": "01:00",
-    "auto_suspension_enabled": True
+    "auto_suspension_enabled": True,
+    "clientes_exentos_corte": []
 }
 
 def get_config():

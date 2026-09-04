@@ -401,3 +401,52 @@ def set_suspension_corte_config(data: SuspensionConfigRequest):
     })
     return {"message": "Configuración de suspensión por fecha guardada exitosamente"}
 
+
+# --- Clientes Exentos de Corte (Excepciones) ---
+
+@router.get("/clientes-exentos-corte")
+def get_clientes_exentos_corte(db: Session = Depends(get_db)):
+    config = get_config()
+    raw_exentos = config.get("clientes_exentos_corte", [])
+    exentos_ids = [int(x) for x in raw_exentos if str(x).isdigit()]
+    
+    if not exentos_ids:
+        return {"exentos": []}
+    
+    clientes = db.query(models.Cliente).filter(models.Cliente.id.in_(exentos_ids)).all()
+    resultado = []
+    for c in clientes:
+        resultado.append({
+            "id": c.id,
+            "nombre": c.nombre,
+            "cedula": c.cedula,
+            "ip": c.ip,
+            "nodo": c.nodo,
+            "plan": c.plan,
+            "estado": c.estado
+        })
+    return {"exentos": resultado}
+
+@router.post("/clientes-exentos-corte/{cliente_id}")
+def add_cliente_exento_corte(cliente_id: int, db: Session = Depends(get_db)):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    
+    config = get_config()
+    exentos = config.get("clientes_exentos_corte", [])
+    if cliente_id not in exentos and str(cliente_id) not in [str(x) for x in exentos]:
+        exentos.append(cliente_id)
+        save_config({"clientes_exentos_corte": exentos})
+    
+    return {"message": f"Cliente '{cliente.nombre}' agregado a la lista de excepciones de corte."}
+
+@router.delete("/clientes-exentos-corte/{cliente_id}")
+def remove_cliente_exento_corte(cliente_id: int):
+    config = get_config()
+    exentos = config.get("clientes_exentos_corte", [])
+    new_exentos = [x for x in exentos if str(x) != str(cliente_id)]
+    save_config({"clientes_exentos_corte": new_exentos})
+    return {"message": "Cliente removido de la lista de excepciones."}
+
+
