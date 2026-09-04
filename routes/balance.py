@@ -592,15 +592,25 @@ def reporte_plataforma(mes: str, db: Session = Depends(get_db)):
                 iptv_plus_otros += m_plus
 
             cliente_nombre = f"Cliente #{p.cliente_id}"
-            if p.cliente and p.cliente.nombre:
-                cliente_nombre = p.cliente.nombre
+            try:
+                if p.cliente and getattr(p.cliente, 'nombre', None):
+                    cliente_nombre = p.cliente.nombre
+            except Exception:
+                pass
+
+            fecha_str = mes + "-01"
+            if p.fecha_pago:
+                if hasattr(p.fecha_pago, 'strftime'):
+                    fecha_str = p.fecha_pago.strftime("%Y-%m-%d")
+                else:
+                    fecha_str = str(p.fecha_pago)[:10]
 
             detalle_transacciones.append({
                 "id": f"pago_{p.id}",
                 "cliente": cliente_nombre,
                 "tipo": "IPTV Plus (Pantallas Extras Cliente)",
                 "banco": banco,
-                "fecha": p.fecha_pago.strftime("%Y-%m-%d") if p.fecha_pago else mes + "-01",
+                "fecha": fecha_str,
                 "monto": round(m_plus, 2)
             })
 
@@ -630,9 +640,10 @@ def reporte_plataforma(mes: str, db: Session = Depends(get_db)):
                 else:
                     extras_otros += pago
 
+                nombre_extra = getattr(e, 'nombre_cliente', None) or getattr(e, 'nombre', None) or f"Cliente Extra #{e.id}"
                 detalle_transacciones.append({
                     "id": f"extra_{e.id}",
-                    "cliente": e.nombre or f"Cliente Extra #{e.id}",
+                    "cliente": nombre_extra,
                     "tipo": "Cliente Extra (Solo Plataforma)",
                     "banco": banco,
                     "fecha": mes + "-01",
