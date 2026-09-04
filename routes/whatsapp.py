@@ -13,17 +13,24 @@ router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 # Zona horaria Ecuador
 ECUADOR_TZ = pytz.timezone('America/Guayaquil')
 
-def send_global_broadcast_task(mensaje: str, db_session_factory):
+def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
     db = db_session_factory()
     try:
         # Obtener clientes activos con celular registrado
-        clientes = db.query(models.Cliente).filter(
+        query = db.query(models.Cliente).filter(
             models.Cliente.estado == "Activo",
             models.Cliente.celular != None,
             models.Cliente.celular != ""
-        ).all()
+        )
+
+        if nodo and str(nodo).strip() and str(nodo).lower() not in ["todos", "all", "todos los nodos"]:
+            clean_nodo = str(nodo).strip()
+            query = query.filter(models.Cliente.nodo.ilike(f"%{clean_nodo}%"))
         
-        print(f"[Broadcast Task] Iniciando envío masivo a {len(clientes)} clientes activos.")
+        clientes = query.all()
+        
+        nodo_label = f"nodo '{nodo}'" if (nodo and str(nodo).lower() not in ["todos", "all", "todos los nodos"]) else "TODOS los nodos"
+        print(f"[Broadcast Task] Iniciando envío masivo a {len(clientes)} clientes activos ({nodo_label}).")
         
         for cliente in clientes:
             numero = cliente.celular.strip()
@@ -33,7 +40,7 @@ def send_global_broadcast_task(mensaje: str, db_session_factory):
             historial = models.WhatsAppHistorial(
                 numero_destino=numero,
                 mensaje=mensaje,
-                tipo_envio="difusion_global",
+                tipo_envio=f"difusion_{nodo if (nodo and str(nodo).lower() not in ['todos', 'all']) else 'global'}",
                 estado="enviado" if success else "fallido",
                 fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S") if success else None,
                 fecha_creacion=datetime.now(ECUADOR_TZ)
@@ -380,7 +387,7 @@ def enviar_whatsapp_global(
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío.")
     
     # Encolar la tarea en background
-    background_tasks.add_task(send_global_broadcast_task, payload.mensaje, SessionLocal)
+    background_tasks.add_task(send_global_broadcast_task, payload.mensaje, payload.nodo, SessionLocal)
     
     return {
         "success": True,

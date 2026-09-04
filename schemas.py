@@ -736,6 +736,7 @@ class WhatsAppManualSend(BaseModel):
 
 class WhatsAppGlobalSend(BaseModel):
     mensaje: str
+    nodo: Optional[str] = None
 
 class WhatsAppAdministradorCreate(BaseModel):
     numero: str
