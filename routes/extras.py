@@ -14,7 +14,11 @@ router = APIRouter(prefix="/extras", tags=["extras"])
 
 @router.get("/", response_model=List[schemas.ClienteExtraResponse])
 def listar_extras(db: Session = Depends(get_db)):
-    return db.query(models.ClienteExtra).all()
+    extras = db.query(models.ClienteExtra).all()
+    for e in extras:
+        recalcular_cuadricula_extra(e, db)
+    db.commit()
+    return extras
 
 @router.post("/", response_model=schemas.ClienteExtraResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def crear_extra(extra: schemas.ClienteExtraCreate, db: Session = Depends(get_db)):
@@ -22,6 +26,11 @@ def crear_extra(extra: schemas.ClienteExtraCreate, db: Session = Depends(get_db)
         extra.fecha_ingreso = datetime.now().strftime("%Y-%m-%d")
     db_extra = models.ClienteExtra(**extra.dict())
     db.add(db_extra)
+    db.commit()
+    db.refresh(db_extra)
+
+    # Recalcular cuadrícula inicial para este nuevo cliente extra
+    recalcular_cuadricula_extra(db_extra, db)
     db.commit()
     db.refresh(db_extra)
 
