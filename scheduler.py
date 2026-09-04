@@ -277,7 +277,7 @@ def suspension_automatica_por_mora(force_run: bool = False):
                 continue
 
             # Verificar si el cliente está en la lista de Excepciones / Exentos de corte
-            exentos_corte = config.get("clientes_exentos_corte", [])
+            exentos_corte = config_sys.get("clientes_exentos_corte", [])
             if c.id in exentos_corte or str(c.id) in [str(x) for x in exentos_corte]:
                 print(f"[Scheduler] Omitiendo suspensión del cliente {c.id} ({c.nombre}) por estar en la Lista de Excepciones de corte.")
                 continue
