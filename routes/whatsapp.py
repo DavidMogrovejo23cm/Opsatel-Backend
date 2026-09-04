@@ -13,23 +13,36 @@ router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 # Zona horaria Ecuador
 ECUADOR_TZ = pytz.timezone('America/Guayaquil')
 
+from sqlalchemy import or_, func
+import unicodedata
+
+def remove_accents(input_str):
+    if not input_str:
+        return ""
+    return ''.join(c for c in unicodedata.normalize('NFD', str(input_str)) if unicodedata.category(c) != 'Mn')
+
 def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
     db = db_session_factory()
     try:
-        # Obtener clientes activos con celular registrado
+        # Obtener clientes activos con celular registrado (soporta ACTIVO / ACTIVA / Activo)
         query = db.query(models.Cliente).filter(
-            models.Cliente.estado == "Activo",
+            func.upper(models.Cliente.estado).in_(["ACTIVO", "ACTIVA"]),
             models.Cliente.celular != None,
             models.Cliente.celular != ""
         )
 
         if nodo and str(nodo).strip() and str(nodo).lower() not in ["todos", "all", "todos los nodos"]:
-            clean_nodo = str(nodo).strip()
-            query = query.filter(models.Cliente.nodo.ilike(f"%{clean_nodo}%"))
+            clean_nodo = remove_accents(str(nodo).strip())
+            query = query.filter(
+                or_(
+                    models.Cliente.nodo.ilike(f"%{clean_nodo}%"),
+                    models.Cliente.parroquia.ilike(f"%{clean_nodo}%")
+                )
+            )
         
         clientes = query.all()
         
-        nodo_label = f"nodo '{nodo}'" if (nodo and str(nodo).lower() not in ["todos", "all", "todos los nodos"]) else "TODOS los nodos"
+        nodo_label = f"nodo/parroquia '{nodo}'" if (nodo and str(nodo).lower() not in ["todos", "all", "todos los nodos"]) else "TODOS los nodos"
         print(f"[Broadcast Task] Iniciando envío masivo a {len(clientes)} clientes activos ({nodo_label}).")
         
         for cliente in clientes:
