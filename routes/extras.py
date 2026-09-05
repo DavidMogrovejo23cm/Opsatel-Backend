@@ -21,7 +21,7 @@ def listar_extras(db: Session = Depends(get_db)):
     return extras
 
 @router.post("/", response_model=schemas.ClienteExtraResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
-def crear_extra(extra: schemas.ClienteExtraCreate, db: Session = Depends(get_db)):
+async def crear_extra(extra: schemas.ClienteExtraCreate, db: Session = Depends(get_db)):
     if not extra.fecha_ingreso:
         extra.fecha_ingreso = datetime.now().strftime("%Y-%m-%d")
     db_extra = models.ClienteExtra(**extra.dict())
@@ -35,7 +35,7 @@ def crear_extra(extra: schemas.ClienteExtraCreate, db: Session = Depends(get_db)
     db.refresh(db_extra)
 
     # Si posee credenciales para IPTV, aprovisionar en el panel XUI de forma asíncrona
-    if db_extra.usuario and db_extra.contrasena:
+    if db_extra.usuario and str(db_extra.usuario).strip() and db_extra.contrasena:
         iptv_u = str(db_extra.usuario).strip()
         iptv_p = str(db_extra.contrasena).strip()
         try:
@@ -43,24 +43,17 @@ def crear_extra(extra: schemas.ClienteExtraCreate, db: Session = Depends(get_db)
         except (ValueError, TypeError):
             cuentas = 1
 
-        async def run_xui_creation():
-            try:
-                res = await create_xui_user(
-                    username=iptv_u,
-                    password=iptv_p,
-                    max_connections=cuentas,
-                    bouquets=["1", "2", "5"],
-                    allowed_outputs=["1", "2"]
-                )
-                print(f"IPTV EXTRA: Cuenta de XUI creada exitosamente para {iptv_u}. Detalle: {res}")
-            except Exception as xui_err:
-                print(f"ERROR IPTV EXTRA: Falló la creación en panel XUI para {iptv_u}: {xui_err}")
-
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(run_xui_creation())
-        except RuntimeError:
-            asyncio.run(run_xui_creation())
+            res = await create_xui_user(
+                username=iptv_u,
+                password=iptv_p,
+                max_connections=cuentas,
+                bouquets=["1", "2", "5"],
+                allowed_outputs=["1", "2"]
+            )
+            print(f"IPTV EXTRA: Cuenta de XUI creada exitosamente para {iptv_u}. Detalle: {res}")
+        except Exception as xui_err:
+            print(f"ERROR IPTV EXTRA: Falló la creación en panel XUI para {iptv_u}: {xui_err}")
 
     return db_extra
 
@@ -79,7 +72,7 @@ def actualizar_extra(id: int, data: schemas.ClienteExtraUpdate, db: Session = De
     return db_extra
 
 @router.delete("/{id}", dependencies=[Depends(require_role(["administrador"]))])
-def eliminar_extra(id: int, db: Session = Depends(get_db)):
+async def eliminar_extra(id: int, db: Session = Depends(get_db)):
     db_extra = db.query(models.ClienteExtra).filter(models.ClienteExtra.id == id).first()
     if not db_extra:
         raise HTTPException(status_code=404, detail="Cliente extra no encontrado")
@@ -89,18 +82,11 @@ def eliminar_extra(id: int, db: Session = Depends(get_db)):
     db.commit()
 
     if usuario_xui and str(usuario_xui).strip():
-        async def run_xui_deletion():
-            try:
-                res = await delete_xui_user(str(usuario_xui).strip())
-                print(f"IPTV EXTRA: Eliminación en XUI para {usuario_xui}: {res}")
-            except Exception as xui_err:
-                print(f"ERROR IPTV EXTRA: Falló eliminación en XUI para {usuario_xui}: {xui_err}")
-
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(run_xui_deletion())
-        except RuntimeError:
-            asyncio.run(run_xui_deletion())
+            res = await delete_xui_user(str(usuario_xui).strip())
+            print(f"IPTV EXTRA: Eliminación en XUI para {usuario_xui}: {res}")
+        except Exception as xui_err:
+            print(f"ERROR IPTV EXTRA: Falló eliminación en XUI para {usuario_xui}: {xui_err}")
 
     return {"message": "Cliente extra eliminado"}
 
