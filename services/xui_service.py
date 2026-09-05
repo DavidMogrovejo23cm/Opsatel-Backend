@@ -173,65 +173,98 @@ async def create_xui_user(
 
 async def delete_xui_user(username: str) -> Dict:
     """
-    Busca el ID de línea para el usuario especificado en XUI.one y lo elimina del panel.
+    Busca el ID de línea (user_id) para el usuario especificado en XUI.one y lo elimina del panel.
+    Endpoint real del panel XUI: GET /api?action=line&sub=delete&user_id={user_id}
     """
     session = _get_session()
+    clean_username = str(username).strip()
     
+    if not clean_username:
+        return {"success": False, "detail": "Nombre de usuario nulo o vacío"}
+        
     # Asegurar sesión activa de login
     cookies = dict(session.cookies)
     if "PHPSESSID" not in cookies:
         await do_login()
         
-    # Buscar el usuario en la lista de líneas para obtener su ID
-    search_url = f"{XUI_URL}/lines?search={username}"
-    headers = {
-        "Referer": f"{XUI_URL}/lines",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-    }
+    line_id = None
     
-    try:
-        r = await session.get(search_url, headers=headers)
-        if "XUI | Login" in r.text or 'data-id="login"' in r.text:
-            await do_login()
-            r = await session.get(search_url, headers=headers)
-            
-        html = r.text
-        # Buscar el ID de línea en los checkbox o enlaces correspondientes
-        # Ej: line?id=123 o checkbox name="list[]" value="123"
-        match = re.search(r'line\?id=(\d+)', html)
-        if not match:
-            match = re.search(r'name="list\[\]"\s+value="(\d+)"', html)
-        if not match:
-            # Búsqueda genérica alrededor del nombre de usuario
-            pattern = rf'value="(\d+)"[^>]*>[^<]*{re.escape(username)}'
-            match = re.search(pattern, html, re.IGNORECASE)
-            if not match:
-                pattern = rf'{re.escape(username)}[^<]*value="(\d+)"'
-                match = re.search(pattern, html, re.IGNORECASE)
-                
-        if not match:
-            logger.warning(f"XUI: No se encontró ID de línea para el usuario {username} en la búsqueda.")
-            return {"success": False, "detail": "User ID not found in search results"}
-            
-        line_id = match.group(1)
-        logger.info(f"XUI: Encontrado ID de línea {line_id} para {username}. Eliminando...")
-        
-        # Enviar petición POST para borrar
-        delete_url = f"{XUI_URL}/post.php?action=delete&referrer=lines"
-        post_data = {
-            "list[]": line_id
-        }
-        headers_post = {
+    # Si la entrada ya es numérica (user_id directo)
+    if clean_username.isdigit():
+        line_id = clean_username
+    else:
+        # Búsqueda del usuario en la lista de líneas para obtener su user_id
+        search_url = f"{XUI_URL}/lines?search={clean_username}"
+        headers = {
             "Referer": f"{XUI_URL}/lines",
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "X-Requested-With": "XMLHttpRequest"
         }
         
-        resp = await session.post(delete_url, data=post_data, headers=headers_post)
-        logger.info(f"XUI: Respuesta de eliminación para {username} (ID {line_id}): {resp.text[:200]}")
-        return {"success": True, "detail": "Línea eliminada exitosamente en XUI"}
-        
+        try:
+            r = await session.get(search_url, headers=headers)
+            if "XUI | Login" in r.text or 'data-id="login"' in r.text:
+                await do_login()
+                r = await session.get(search_url, headers=headers)
+                
+            html = r.text
+            
+            # Patrones para capturar el user_id numérico de la línea
+            patterns = [
+                r'user_id=(\d+)',
+                r'line\?id=(\d+)',
+                r'data-id=["\']?(\d+)["\']?',
+                r'name="list\[\]"\s+value="(\d+)"',
+                rf'value="(\d+)"[^>]*>[^<]*{re.escape(clean_username)}',
+                rf'{re.escape(clean_username)}[^<]*value="(\d+)"',
+                rf'id=["\']?(\d+)["\']?[^>]*>[^<]*{re.escape(clean_username)}'
+            ]
+            
+            for pat in patterns:
+                match = re.search(pat, html, re.IGNORECASE)
+                if match:
+                    line_id = match.group(1)
+                    break
+                    
+        except Exception as search_err:
+            logger.error(f"XUI: Error buscando usuario {clean_username}: {search_err}")
+
+    if not line_id:
+        logger.warning(f"XUI: No se encontró ID de línea para el usuario '{clean_username}'.")
+        return {"success": False, "detail": f"User ID not found in search results for {clean_username}"}
+
+    logger.info(f"🗑️ XUI: Encontrado user_id {line_id} para '{clean_username}'. Eliminando vía GET API...")
+    
+    # URL real de eliminación capturada del panel XUI.one:
+    # GET http://172.30.0.3/bwfdVuGs/api?action=line&sub=delete&user_id={line_id}
+    delete_url = f"{XUI_URL}/api?action=line&sub=delete&user_id={line_id}"
+    delete_headers = {
+        "Referer": f"{XUI_URL}/lines?order=0&dir=desc",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+    
+    async def _send_delete():
+        resp = await session.get(delete_url, headers=delete_headers)
+        if resp.status_code != 200:
+            raise ConnectionError(f"HTTP {resp.status_code} al eliminar usuario en XUI")
+            
+        if "XUI | Login" in resp.text or 'data-id="login"' in resp.text:
+            raise ConnectionError("Sesión de XUI expirada.")
+            
+        logger.info(f"✅ XUI: Línea {line_id} ({clean_username}) eliminada exitosamente del panel XUI. Respuesta: {resp.text[:200]}")
+        return {"success": True, "detail": f"Línea {line_id} ({clean_username}) eliminada exitosamente en XUI", "status_code": resp.status_code}
+
+    try:
+        return await _send_delete()
+    except ConnectionError as ce:
+        if "expirada" in str(ce):
+            logger.warning("XUI: Sesión expirada durante eliminación. Re-autenticando...")
+            await do_login()
+            return await _send_delete()
+        raise
     except Exception as e:
-        logger.error(f"XUI: Error al intentar eliminar el usuario {username}: {e}")
+        logger.error(f"XUI: Error al eliminar el usuario {clean_username} (ID {line_id}): {e}")
         return {"success": False, "error": str(e)}
 
