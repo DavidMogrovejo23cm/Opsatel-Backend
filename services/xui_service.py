@@ -193,41 +193,90 @@ async def delete_xui_user(username: str) -> Dict:
     if clean_username.isdigit():
         line_id = clean_username
     else:
-        # Búsqueda del usuario en la lista de líneas para obtener su user_id
-        search_url = f"{XUI_URL}/lines?search={clean_username}"
+        # 1. Búsqueda del usuario mediante el endpoint DataTables de XUI: /table?id=lines
+        table_url = f"{XUI_URL}/table"
+        params = {
+            "id": "lines",
+            "draw": "1",
+            "start": "0",
+            "length": "50",
+            "search[value]": clean_username,
+            "search[regex]": "false",
+            "filter": "reseller"
+        }
         headers = {
-            "Referer": f"{XUI_URL}/lines",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Referer": f"{XUI_URL}/lines?order=0&dir=desc",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
             "X-Requested-With": "XMLHttpRequest"
         }
         
         try:
-            r = await session.get(search_url, headers=headers)
+            r = await session.get(table_url, params=params, headers=headers)
             if "XUI | Login" in r.text or 'data-id="login"' in r.text:
                 await do_login()
-                r = await session.get(search_url, headers=headers)
+                r = await session.get(table_url, params=params, headers=headers)
                 
-            html = r.text
+            resp_text = r.text
             
-            # Patrones para capturar el user_id numérico de la línea
+            # Patrones para capturar el user_id numérico de la línea devuelto por DataTables
             patterns = [
+                rf'user_id=(\d+)[^>]*>[^<]*{re.escape(clean_username)}',
+                rf'{re.escape(clean_username)}[^<]*user_id=(\d+)',
                 r'user_id=(\d+)',
                 r'line\?id=(\d+)',
                 r'data-id=["\']?(\d+)["\']?',
                 r'name="list\[\]"\s+value="(\d+)"',
-                rf'value="(\d+)"[^>]*>[^<]*{re.escape(clean_username)}',
-                rf'{re.escape(clean_username)}[^<]*value="(\d+)"',
-                rf'id=["\']?(\d+)["\']?[^>]*>[^<]*{re.escape(clean_username)}'
+                rf'["\'](\d+)["\'][^\]]*{re.escape(clean_username)}',
+                rf'{re.escape(clean_username)}[^\]]*["\'](\d+)["\']'
             ]
             
             for pat in patterns:
-                match = re.search(pat, html, re.IGNORECASE)
+                match = re.search(pat, resp_text, re.IGNORECASE)
                 if match:
                     line_id = match.group(1)
                     break
+
+            # Si el JSON contiene una estructura 'data', buscar en las filas
+            if not line_id:
+                try:
+                    data_json = r.json()
+                    if isinstance(data_json, dict) and "data" in data_json:
+                        for row in data_json.get("data", []):
+                            row_str = str(row)
+                            if clean_username.lower() in row_str.lower():
+                                m = re.search(r'(\d+)', row_str)
+                                if m:
+                                    line_id = m.group(1)
+                                    break
+                except Exception:
+                    pass
                     
-        except Exception as search_err:
-            logger.error(f"XUI: Error buscando usuario {clean_username}: {search_err}")
+        except Exception as table_err:
+            logger.warning(f"XUI: Falló búsqueda en /table para {clean_username}: {table_err}")
+
+        # 2. Fallback a la página estática /lines?search= si /table no devolvió resultado
+        if not line_id:
+            search_url = f"{XUI_URL}/lines?search={clean_username}"
+            headers_html = {
+                "Referer": f"{XUI_URL}/lines",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            }
+            try:
+                r_html = await session.get(search_url, headers=headers_html)
+                html_text = r_html.text
+                patterns_fallback = [
+                    r'user_id=(\d+)',
+                    r'line\?id=(\d+)',
+                    r'data-id=["\']?(\d+)["\']?',
+                    r'name="list\[\]"\s+value="(\d+)"'
+                ]
+                for pat in patterns_fallback:
+                    match = re.search(pat, html_text, re.IGNORECASE)
+                    if match:
+                        line_id = match.group(1)
+                        break
+            except Exception as lines_err:
+                logger.error(f"XUI: Error en fallback /lines para {clean_username}: {lines_err}")
 
     if not line_id:
         logger.warning(f"XUI: No se encontró ID de línea para el usuario '{clean_username}'.")
