@@ -614,8 +614,11 @@ def procesar_soporte_tecnico(numero: str, mensaje: str, contexto: str, db: Sessi
             db.commit()
             print(f"[SAM Chatbot] 🛠️ Creada orden de trabajo HojaRuta #{ticket.id} para {nombre_c}")
 
-            # 2. Notificar a Administradores/Técnicos activos por WhatsApp
-            admins = db.query(models.WhatsAppAdministrador).filter(models.WhatsAppAdministrador.activo == True).all()
+            # 2. Notificar ÚNICAMENTE a Administradores con rol 'admin_total' por WhatsApp
+            admins = db.query(models.WhatsAppAdministrador).filter(
+                models.WhatsAppAdministrador.activo == True,
+                (models.WhatsAppAdministrador.permisos == "admin_total") | (models.WhatsAppAdministrador.permisos == None)
+            ).all()
             alerta_msg = (
                 f"🚨 *[ALERTA TÉCNICA — FOCO ROJO / SIN SERVICIO]*\n\n"
                 f"👤 *Cliente*: {nombre_c}\n"
