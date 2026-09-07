@@ -567,14 +567,90 @@ Comprendes perfectamente lo molesto que es quedarse sin internet y tu objetivo e
 - Evita párrafos gigantescos; da instrucciones claras, amables y por pasos.
 """
 
-def procesar_soporte_tecnico(numero: str, mensaje: str, contexto: str) -> str:
+def procesar_soporte_tecnico(numero: str, mensaje: str, contexto: str, db: Session) -> str:
     client = get_anthropic_client()
+    
+    # Detectar si el cliente indica que la falla persiste o requiere visita técnica
+    msg_lower = mensaje.lower()
+    palabras_persistencia = [
+        "sigue", "persiste", "no vale", "no funciona", "no sirvió", "no sirvio",
+        "continúa", "continua", "sigue el foco rojo", "sigue la luz roja", "sigue igual",
+        "no tengo internet", "no hay internet", "ayuda", "técnico", "tecnico", "visita"
+    ]
+    falla_persistente = any(p in msg_lower for p in palabras_persistencia) and len(contexto.split("\n")) > 2
+
+    # Intentar obtener datos del cliente si existe en BD
+    cliente = buscar_cliente_por_celular(numero, db)
+    
+    if falla_persistente:
+        # 1. Crear Orden de Trabajo en Hoja de Ruta automáticamente
+        try:
+            import pytz
+            from datetime import datetime
+            ECUADOR_TZ = pytz.timezone('America/Guayaquil')
+            fecha_hoy = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d")
+            hora_actual = datetime.now(ECUADOR_TZ).strftime("%H:%M")
+
+            cliente_id = cliente.id if cliente else None
+            nombre_c = cliente.nombre if cliente else f"Cliente WhatsApp ({numero})"
+            ubicacion_c = f"{cliente.direccion or ''} (Sector: {cliente.nodo or 'N/A'})".strip() if cliente else "Por definir"
+            parroquia_c = cliente.parroquia if cliente else "N/A"
+            celular_c = cliente.celular if cliente else numero
+
+            ticket = models.HojaRuta(
+                fecha=fecha_hoy,
+                tecnico="Por Asignar",
+                hora=hora_actual,
+                cliente_id=cliente_id,
+                nombre_cliente=nombre_c,
+                ubicacion_cliente=ubicacion_c,
+                celular_cliente=celular_c,
+                actividad="SOPORTE TÉCNICO - FOCO ROJO / SIN SERVICIO",
+                observacion=f"Reporte de Falla de Red vía WhatsApp. Mensaje cliente: {mensaje}",
+                parroquia=parroquia_c,
+                estado="Pendiente"
+            )
+            db.add(ticket)
+            db.commit()
+            print(f"[SAM Chatbot] 🛠️ Creada orden de trabajo HojaRuta #{ticket.id} para {nombre_c}")
+
+            # 2. Notificar a Administradores/Técnicos activos por WhatsApp
+            admins = db.query(models.WhatsAppAdministrador).filter(models.WhatsAppAdministrador.activo == True).all()
+            alerta_msg = (
+                f"🚨 *[ALERTA TÉCNICA — FOCO ROJO / SIN SERVICIO]*\n\n"
+                f"👤 *Cliente*: {nombre_c}\n"
+                f"📱 *Teléfono*: {celular_c}\n"
+                f"📍 *Nodo/Parroquia*: {cliente.nodo if cliente else 'N/A'} / {parroquia_c}\n"
+                f"🔴 *Falla Reportada*: El cliente indica que la luz roja/falla persiste tras reinicio.\n"
+                f"🛠️ *Acción*: Se ha registrado automáticamente la orden en la *Hoja de Ruta*."
+            )
+            for admin in admins:
+                if admin.numero:
+                    try:
+                        whatsapp_service.send_whatsapp_message(admin.numero, alerta_msg)
+                    except Exception as err_send:
+                        print(f"[SAM Chatbot] Error notificando admin {admin.numero}: {err_send}")
+
+        except Exception as ticket_err:
+            print(f"[SAM Chatbot] Error registrando ticket de soporte: {ticket_err}")
+            db.rollback()
+
+    prompt_con_datos = f"""{PROMPT_SOPORTE_TECNICO}
+
+Información del Cliente en Sistema:
+- Cliente identificado: {"Sí (" + cliente.nombre + ")" if cliente else "No"}
+- Falla persistente detectada: {"Sí (Orden agendada en Hoja de Ruta y notificada a técnicos)" if falla_persistente else "En etapa de diagnóstico"}
+
+Conversación actual:
+{contexto}
+"""
+
     try:
         response = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=450,
             temperature=0.4,
-            messages=[{"role": "user", "content": f"{PROMPT_SOPORTE_TECNICO}\n\nConversación actual:\n{contexto}"}]
+            messages=[{"role": "user", "content": prompt_con_datos}]
         )
         return response.content[0].text.strip()
     except Exception as e:
@@ -595,7 +671,8 @@ PERSONALIDAD Y TONO:
 - Tu trato es sumamente cálido, empático, inteligente, fluido y 100% humano, como el mejor asesor de atención al cliente de la empresa.
 - Exprésate con cordialidad y claridad sin sonar como un robot ni usar plantillas frías o acartonadas.
 - Si el usuario te saluda o hace una pregunta abierta, dale una bienvenida muy amable y ofrece tu ayuda dispuesta.
-- Si te realizan una consulta sobre la que no tengas datos exactos en el sistema, responde siempre con amabilidad humana (por ejemplo: "Con gusto te puedo ayudar a canalizar tu consulta con uno de nuestros asesores comerciales o técnicos para brindarte la información exacta al instante 😊").
+- Si el usuario realiza preguntas de cultura general, ciencia o curiosidades (por ejemplo: "¿cuál es la distancia de la Tierra al Sol?", "¿quién inventó internet?", etc.), respóndelas con total amabilidad, precisión y soltura científica de forma concisa. Al final de tu respuesta, recuérdale con simpatía que eres el asistente de OPSATEL y que estás listo para ayudarle con sus pagos, planes de internet o soporte técnico. 😊
+- Si te realizan una consulta sobre la que no tengas datos exactos en el sistema, responde siempre con amabilidad humana.
 - NUNCA respondas con mensajes fríos de error o disculpas robóticas. Sé conversacional, resolutivo, positivo y cercano en todo momento."""
 
 def procesar_chat_general(numero: str, mensaje: str, contexto: str) -> str:
@@ -856,7 +933,7 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
         response_text = procesar_recomendacion_peliculas(numero, mensaje, contexto)
     elif skill_activo == "soporte_tecnico_foco_rojo":
         estados_skills[numero] = "soporte_tecnico_foco_rojo"
-        response_text = procesar_soporte_tecnico(numero, mensaje, contexto)
+        response_text = procesar_soporte_tecnico(numero, mensaje, contexto, db)
     else:
         estados_skills[numero] = None
         response_text = procesar_chat_general(numero, mensaje, contexto)
