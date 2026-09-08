@@ -18,8 +18,12 @@ print(f"DATABASE_URL en uso: {SQLALCHEMY_DATABASE_URL}")
 if SQLALCHEMY_DATABASE_URL and SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
     SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# engine es el "motor" literal que mantiene la conexión viva.
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+# engine es el "motor" literal que mantiene la conexión viva con reconexión automática
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=3600
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
