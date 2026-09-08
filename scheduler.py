@@ -272,8 +272,17 @@ def suspension_automatica_por_mora(force_run: bool = False):
                 plus_pend = float(c.plus or 0)
             except:
                 plus_pend = 0.0
+            try:
+                # Limpiar posibles símbolos de moneda o espacios en adicional
+                clean_adic = str(c.adicional or 0).replace('$', '').replace(',', '.').strip()
+                adicional_pend = float(clean_adic) if clean_adic else 0.0
+            except:
+                adicional_pend = 0.0
 
-            if saldo_pend <= 0 and plus_pend <= 0:
+            total_deuda = float(c.total_pago) if c.total_pago is not None else (saldo_pend + plus_pend + adicional_pend)
+
+            # Si no adeuda internet, ni IPTV Plus, ni servicios adicionales (mudanzas/extras), omitir corte
+            if total_deuda <= 0 and saldo_pend <= 0 and plus_pend <= 0 and adicional_pend <= 0:
                 continue
 
             # Verificar si el cliente está en la lista de Excepciones / Exentos de corte

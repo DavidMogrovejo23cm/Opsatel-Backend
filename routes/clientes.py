@@ -1263,7 +1263,7 @@ def registrar_pago(
             cliente.internet_payment = str(round(prev_internet + m_internet_cash, 2))
 
         # 5. Reactivación automática si corresponde (remueve de MikroTik y pasa a Activo)
-        if cliente.estado in ["Moroso", "Suspendido"] and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
+        if cliente.estado in ["Moroso", "Suspendido"] and cliente.saldo <= 0 and try_float(cliente.plus) <= 0 and try_float(cliente.adicional) <= 0:
             cliente.estado = "Activo"
             # Remover de MikroTik Address List por Nodo
             if cliente.ip:
@@ -1367,8 +1367,35 @@ def confirmar_pago(
     
     pago.estado = "Completado"
     
-    if cliente.estado == "Suspendido" and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
+    if cliente.estado in ["Moroso", "Suspendido"] and cliente.saldo <= 0 and try_float(cliente.plus) <= 0 and try_float(cliente.adicional) <= 0:
         cliente.estado = "Activo"
+        if cliente.ip:
+            try:
+                from network.adapters.mikrotik import MikroTikAdapter
+                from sqlalchemy import or_ as _or
+                is_sayausi = is_nodo_sayausi(cliente.nodo)
+                list_name = "CLIENTES_SUSPENDIDOS_POR_PAGOS" if is_sayausi else "CLIENTES_SUSPENDIDOS_POR_PAGO"
+
+                olt_config = db.query(models.OLTConfig).filter(
+                    _or(
+                        models.OLTConfig.nodo_asociado == cliente.nodo,
+                        models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
+                        models.OLTConfig.nodo_asociado == None
+                    ),
+                    models.OLTConfig.active == True
+                ).first()
+
+                if olt_config and olt_config.mikrotik_host:
+                    with MikroTikAdapter(
+                        host=olt_config.mikrotik_host,
+                        username=olt_config.mikrotik_username,
+                        password=olt_config.mikrotik_password,
+                        port=olt_config.mikrotik_port or 8728
+                    ) as mt:
+                        mt.remove_from_address_list(cliente.ip, list_name)
+            except Exception as mt_err:
+                logger.error(f"Error MikroTik al reactivar cliente tras confirmación {cliente.id} ({cliente.ip}): {mt_err}")
+
         try:
             from services.libreqos_manager import LibreQoSManager
             correlation_id = f"auto_res_{id}_{int(datetime.now().timestamp())}"

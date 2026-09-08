@@ -44,7 +44,20 @@ def actualizar_hoja_ruta(id: int, data: schemas.HojaRutaUpdate, db: Session = De
             if not is_admin:
                 raise HTTPException(status_code=403, detail="Solo el administrador puede cambiar el estado de la hoja de ruta")
         
-        # 2. Permisos generales para editar cualquier campo: Staff autorizado
+        # 2. Control de Calidad: No cerrar instalaciones como Realizado sin potencia óptica
+        target_estado = new_estado if new_estado is not None else db_hoja.estado
+        if target_estado == "Realizado" and "INSTAL" in (db_hoja.actividad or "").upper():
+            nueva_obs = getattr(data, 'observacion_tecnico', None)
+            obs_a_verificar = nueva_obs if nueva_obs is not None else (db_hoja.observacion_tecnico or "")
+            import re
+            tiene_potencia = bool(re.search(r'(?:-\s*\d{1,2}(?:[\.,]\d+)?\s*(?:dbm|db)?)|potencia', obs_a_verificar, re.IGNORECASE))
+            if not tiene_potencia:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Control de Calidad: No se puede cerrar una instalación sin registrar la potencia óptica medida en dBm (-12.0 a -27.0 dBm)."
+                )
+
+        # 3. Permisos generales para editar cualquier campo: Staff autorizado
         if not is_staff:
             raise HTTPException(status_code=403, detail="No tienes permisos para editar hojas de ruta")
 
