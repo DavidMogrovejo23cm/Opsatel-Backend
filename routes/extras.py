@@ -71,6 +71,37 @@ def actualizar_extra(id: int, data: schemas.ClienteExtraUpdate, db: Session = De
     db.refresh(db_extra)
     return db_extra
 
+@router.delete("/all", dependencies=[Depends(require_role(["administrador"]))])
+def eliminar_todos_extras(db: Session = Depends(get_db)):
+    """
+    Elimina TODOS los clientes extras de la base de datos y sus historiales de pagos.
+    Solo accesible para administradores.
+    """
+    try:
+        db.query(models.PagoExtra).delete()
+        count = db.query(models.ClienteExtra).delete()
+        db.commit()
+
+        try:
+            from sqlalchemy import text
+            from database import engine
+            is_postgresql = "postgresql" in str(engine.url).lower() or "psycopg" in str(engine.url).lower()
+            is_mysql = "mysql" in str(engine.url).lower()
+            if is_postgresql:
+                db.execute(text("ALTER SEQUENCE clientes_extras_id_seq RESTART WITH 1"))
+                db.execute(text("ALTER SEQUENCE historial_pagos_extras_id_seq RESTART WITH 1"))
+            elif is_mysql:
+                db.execute(text("ALTER TABLE clientes_extras AUTO_INCREMENT = 1"))
+                db.execute(text("ALTER TABLE historial_pagos_extras AUTO_INCREMENT = 1"))
+            db.commit()
+        except Exception:
+            pass
+
+        return {"message": f"Todos los clientes extras ({count}) han sido eliminados correctamente."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar clientes extras: {str(e)}")
+
 @router.delete("/{id}", dependencies=[Depends(require_role(["administrador"]))])
 async def eliminar_extra(id: int, db: Session = Depends(get_db)):
     db_extra = db.query(models.ClienteExtra).filter(models.ClienteExtra.id == id).first()

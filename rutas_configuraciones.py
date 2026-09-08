@@ -10,6 +10,7 @@ from database import get_db
 import models
 import schemas
 from config_manager import get_config, save_config
+from routes.auth import require_role
 
 router = APIRouter(
     prefix="/configuraciones",
@@ -448,5 +449,97 @@ def remove_cliente_exento_corte(cliente_id: int):
     new_exentos = [x for x in exentos if str(x) != str(cliente_id)]
     save_config({"clientes_exentos_corte": new_exentos})
     return {"message": "Cliente removido de la lista de excepciones."}
+
+
+# ========================================================================
+# RESTABLECER VALORES DE DINERO (RESET GENERAL A CEROS)
+# ========================================================================
+@router.post("/reset-dinero", dependencies=[Depends(require_role(["administrador"]))])
+def reset_todos_valores_dinero(db: Session = Depends(get_db)):
+    """
+    Restablece a CERO todos los valores monetarios, pagos, saldos y registros contables
+    del sistema completo (clientes principales, extras, balance, caja y finanzas).
+    """
+    try:
+        # 1. Restablecer saldos y valores de pago en Clientes Principales
+        db.query(models.Cliente).update({
+            models.Cliente.saldo: 0.00,
+            models.Cliente.total_pago: 0.00,
+            models.Cliente.plus_pagado: 0.00,
+            models.Cliente.adicional_pagado: 0.00,
+            models.Cliente.plus: "0",
+            models.Cliente.adicional: "0",
+            models.Cliente.notas_pago: None
+        })
+
+        # 2. Vaciar historial de pagos de clientes principales
+        db.query(models.Pago).delete()
+
+        # 3. Restablecer clientes extras a 0 en saldos y cuadrícula mensual
+        meses = [
+            "enero", "febrero", "marzo", "abril", "mayo", "junio",
+            "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+        ]
+        extras_update = {
+            models.ClienteExtra.saldo_pendiente: 0.00,
+            models.ClienteExtra.total_pagado: 0.00,
+        }
+        for m in meses:
+            extras_update[getattr(models.ClienteExtra, f"{m}_pago")] = 0.00
+            extras_update[getattr(models.ClienteExtra, f"{m}_saldo")] = 0.00
+            extras_update[getattr(models.ClienteExtra, f"{m}_factura")] = None
+            extras_update[getattr(models.ClienteExtra, f"{m}_fecha_pago")] = None
+            extras_update[getattr(models.ClienteExtra, f"{m}_banco")] = None
+            extras_update[getattr(models.ClienteExtra, f"{m}_cod")] = None
+
+        db.query(models.ClienteExtra).update(extras_update)
+
+        # 4. Vaciar historial de pagos de extras
+        db.query(models.PagoExtra).delete()
+
+        # 5. Vaciar registros contables de Balance (Egresos, Proyectos, Colchón, Movimientos Internos, Turnos de Caja)
+        try:
+            db.query(models.Egreso).delete()
+        except Exception:
+            pass
+
+        try:
+            db.query(models.GastoProyecto).delete()
+            db.query(models.ProyectoPago).delete()
+            db.query(models.Proyecto).delete()
+        except Exception:
+            pass
+
+        try:
+            db.query(models.Colchon).delete()
+        except Exception:
+            pass
+
+        try:
+            db.query(models.MovimientoInterno).delete()
+        except Exception:
+            pass
+
+        try:
+            db.query(models.TurnoCaja).delete()
+        except Exception:
+            pass
+
+        # 6. Restablecer Finanzas Base a 0 en la configuración
+        try:
+            cfg = get_config()
+            if "finanzas_base" in cfg:
+                for k in cfg["finanzas_base"]:
+                    cfg["finanzas_base"][k] = 0.0
+                save_config({"finanzas_base": cfg["finanzas_base"]})
+        except Exception as e:
+            print(f"Aviso reseteando finanzas_base config: {e}")
+
+        db.commit()
+        return {"message": "Todos los valores de dinero, pagos y saldos del sistema han sido restablecidos a 0 exitosamente."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al restablecer valores de dinero: {str(e)}")
+
 
 
