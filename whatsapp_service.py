@@ -16,6 +16,8 @@ def format_whatsapp_number(number: str) -> str:
     """
     Cleans a phone number and formats it for WhatsApp.
     - Standardizes Ecuador mobile numbers to start with 593.
+    - Extracts the first mobile number if multiple are separated by / , ; or spaces.
+    - Rejects Ecuadorian landlines (02, 03, 04, 05, 06, 07) to avoid sending to numbers without WhatsApp.
     - Preserves domain suffixes like @lid or @c.us if present.
     """
     if not number:
@@ -30,14 +32,39 @@ def format_whatsapp_number(number: str) -> str:
     else:
         number_part = number_str
 
+    # Si vienen múltiples números (ej: "0991234567 / 0987654321"), tomar el primero
+    for sep in ['/', ',', ';', '|', '\n']:
+        if sep in number_part:
+            number_part = number_part.split(sep)[0].strip()
+
     cleaned = re.sub(r'\D', '', number_part)
-    
-    # Ecuador mobile numbers starts with 09 (e.g. 0998765432)
-    if cleaned.startswith('0') and len(cleaned) == 10:
+    if not cleaned:
+        return ""
+
+    # Detección y filtrado de teléfonos fijos de Ecuador (02, 03, 04, 05, 06, 07)
+    # Tienen 9 dígitos y no inician con 9 (los celulares inician con 09 o 9)
+    if len(cleaned) == 9 and cleaned.startswith(('02', '03', '04', '05', '06', '07')):
+        print(f"[WhatsApp Service] Teléfono fijo detectado ({number_part}). Omitiendo para WhatsApp.")
+        return ""
+
+    # Celulares Ecuador:
+    # 09xxxxxxxx (10 dígitos) -> 5939xxxxxxxx
+    if cleaned.startswith('09') and len(cleaned) == 10:
         cleaned = '593' + cleaned[1:]
-    # If 9 digits and does not start with 593, prepend it (Ecuador default)
-    elif len(cleaned) == 9 and not cleaned.startswith('593'):
+    # 9xxxxxxxx (9 dígitos) -> 5939xxxxxxxx
+    elif cleaned.startswith('9') and len(cleaned) == 9:
         cleaned = '593' + cleaned
+    # 5939xxxxxxxx (12 dígitos) -> ya formateado
+    elif cleaned.startswith('5939') and len(cleaned) == 12:
+        pass
+    # 0xxxxxxxx (10 dígitos genérico) -> 593xxxxxxxx
+    elif cleaned.startswith('0') and len(cleaned) == 10:
+        cleaned = '593' + cleaned[1:]
+    # Internacional general (entre 10 y 15 dígitos)
+    elif len(cleaned) >= 10 and len(cleaned) <= 15:
+        pass
+    else:
+        return ""
         
     return f"{cleaned}{server}"
 

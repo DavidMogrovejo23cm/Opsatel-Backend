@@ -348,6 +348,7 @@ def iniciar_puente_whatsapp():
 
     env = os.environ.copy()
     env["PORT"] = port
+    env["FASTAPI_PORT"] = os.getenv("BACKEND_PORT", "8000")
 
     print(f"Iniciando puente de WhatsApp (Node.js) en puerto {port}...")
     try:

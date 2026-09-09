@@ -938,6 +938,9 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
     Recibe el número telefónico del remitente y el contenido del mensaje.
     Procesa según la intención detectada y devuelve la respuesta generada sin atascarse.
     """
+    # Limpiar formato del número eliminando @c.us y caracteres no numéricos
+    numero = limpiar_numero_whatsapp(numero)
+
     # 0. Limpiar sesión si expiró el tiempo de inactividad (TTL)
     limpiar_sesion_si_expirada(numero)
 

@@ -101,16 +101,20 @@ def enviar_whatsapp_programado():
             
             for cliente in clientes:
                 try:
-                    numero = cliente.celular.strip()
+                    num_valido = whatsapp_service.format_whatsapp_number(cliente.celular)
+                    if not num_valido:
+                        print(f"[WhatsApp Scheduler] Saltando cliente {cliente.nombre}: '{cliente.celular}' no es un número móvil válido para WhatsApp.")
+                        continue
+
                     # Personalizar mensaje con los datos reales del cliente en la BD
                     mensaje_personalizado = personalizar_mensaje_cliente(config.mensaje_programado, cliente)
                     
                     # Enviar mensaje usando el servicio unificado
-                    success = whatsapp_service.send_whatsapp_message(numero, mensaje_personalizado)
+                    success = whatsapp_service.send_whatsapp_message(num_valido, mensaje_personalizado)
                     
                     # Guardar en historial con el mensaje final personalizado
                     historial = models.WhatsAppHistorial(
-                        numero_destino=numero,
+                        numero_destino=num_valido,
                         mensaje=mensaje_personalizado,
                         tipo_envio="automatico",
                         estado="enviado" if success else "fallido",
@@ -121,34 +125,45 @@ def enviar_whatsapp_programado():
                     
                     if success:
                         enviados += 1
-                        print(f"[WhatsApp Scheduler] Mensaje personalizado enviado a {numero}")
+                        print(f"[WhatsApp Scheduler] Mensaje personalizado enviado a {num_valido}")
+                        try:
+                            from routes.whatsapp import registrar_mensaje_chat
+                            registrar_mensaje_chat(db, num_valido, "operador", mensaje_personalizado, cliente_id=cliente.id)
+                        except Exception as e_chat:
+                            print(f"[WhatsApp Scheduler] Aviso registrando chat: {e_chat}")
                     else:
                         fallidos += 1
-                        print(f"[WhatsApp Scheduler] Falló el envío a {numero}")
+                        print(f"[WhatsApp Scheduler] Falló el envío a {num_valido}")
                     
+                    # Confirmar cambios en la base de datos tras cada mensaje
+                    db.commit()
+
                     # Pequeña pausa prudencial para simular comportamiento orgánico
                     time.sleep(random.uniform(2.0, 4.0))
 
                 except Exception as e:
                     fallidos += 1
-                    # Guardar como fallido en historial
-                    historial = models.WhatsAppHistorial(
-                        numero_destino=cliente.celular,
-                        mensaje=config.mensaje_programado,
-                        tipo_envio="automatico",
-                        estado="fallido",
-                        fecha_envio=ahora.strftime("%Y-%m-%d %H:%M:%S"),
-                        fecha_creacion=ahora
-                    )
-                    db.add(historial)
+                    try:
+                        historial = models.WhatsAppHistorial(
+                            numero_destino=cliente.celular,
+                            mensaje=config.mensaje_programado,
+                            tipo_envio="automatico",
+                            estado="fallido",
+                            fecha_envio=ahora.strftime("%Y-%m-%d %H:%M:%S"),
+                            fecha_creacion=ahora
+                        )
+                        db.add(historial)
+                        db.commit()
+                    except Exception:
+                        db.rollback()
                     print(f"[WhatsApp Scheduler] Error enviando a {cliente.celular}: {str(e)}")
             
             # Si era envío único, desactivarlo para que no se vuelva a mandar
             if es_envio_unico:
                 config.activo = False
                 print(f"[WhatsApp] Desactivando configuración única ID {config.id} tras envío.")
+                db.commit()
                 
-            db.commit()
             print(f"[WhatsApp] Envío completado para config ID {config.id}. Enviados: {enviados}, Fallidos: {fallidos}")
     
     except Exception as e:

@@ -44,6 +44,8 @@ const client = new Client({
     authStrategy: new LocalAuth({
         dataPath: './.wwebjs_auth'
     }),
+    takeoverOnConflict: true,
+    takeoverTimeoutMs: 0,
     puppeteer: {
         headless: true,
         executablePath: chromiumExecutablePath,
@@ -53,7 +55,11 @@ const client = new Client({
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-ipc-flooding-protection'
         ]
     }
 });
@@ -89,20 +95,54 @@ client.on('auth_failure', (msg) => {
 client.on('ready', () => {
     clientStatus = 'CONNECTED';
     activeQrCode = null;
-    console.log('[WhatsApp] Conexión establecida y lista para enviar mensajes.');
+    console.log('[WhatsApp] Conexión establecida y lista para enviar y recibir mensajes.');
 });
 
 // Disconnected Event
-client.on('disconnected', (reason) => {
+client.on('disconnected', async (reason) => {
     clientStatus = 'DISCONNECTED';
     activeQrCode = null;
     console.log('[WhatsApp] Cliente desconectado:', reason);
-    // Attempt reinitialization after a delay
+    try {
+        await client.destroy();
+    } catch (errDest) {
+        console.warn('[WhatsApp] Aviso al destruir cliente tras desconexión:', errDest.message);
+    }
+    cleanChromiumLocks('./.wwebjs_auth');
+    // Attempt reinitialization after a delay (LocalAuth preserves session)
     setTimeout(() => {
-        console.log('[WhatsApp] Intentando reconectar...');
+        console.log('[WhatsApp] Intentando reconectar automáticamente...');
         client.initialize().catch(err => console.error('Error al reinicializar:', err));
-    }, 10000);
+    }, 5000);
 });
+
+// --- Keep-Alive Heartbeat ---
+// Previene que Chromium congele la pestaña en segundo plano y mantiene activo el WebSocket
+let keepAliveFails = 0;
+setInterval(async () => {
+    if (clientStatus === 'CONNECTED' && client) {
+        try {
+            const state = await client.getState();
+            if (state === 'CONNECTED') {
+                keepAliveFails = 0;
+            } else {
+                keepAliveFails++;
+                console.warn(`[WhatsApp KeepAlive] Estado no conectado: ${state} (${keepAliveFails}/3)`);
+                if (keepAliveFails >= 3) {
+                    console.warn('[WhatsApp KeepAlive] Reiniciando cliente tras 3 fallos de estado...');
+                    clientStatus = 'DISCONNECTED';
+                    try { await client.destroy(); } catch (_) {}
+                    cleanChromiumLocks('./.wwebjs_auth');
+                    setTimeout(() => {
+                        client.initialize().catch(err => console.error('[WhatsApp KeepAlive] Error reiniciando:', err));
+                    }, 3000);
+                }
+            }
+        } catch (err) {
+            console.warn(`[WhatsApp KeepAlive] Ping de estado: ${err.message}`);
+        }
+    }
+}, 45000);
 
 // Puerto de destino hacia FastAPI para el webhook
 const fastapiPort = parseInt(process.env.FASTAPI_PORT || process.env.BACKEND_PORT || '8000', 10);
@@ -112,7 +152,7 @@ function sendWebhook(from, body) {
     const http = require('http');
     const payload = JSON.stringify({ numero: from, mensaje: body });
     const options = {
-        hostname: 'localhost',
+        hostname: '127.0.0.1', // Usar 127.0.0.1 explícito para evitar fallos de IPv6 ::1
         port: fastapiPort,
         path: '/whatsapp/webhook-mensaje',
         method: 'POST',
@@ -122,7 +162,7 @@ function sendWebhook(from, body) {
         }
     };
 
-    console.log(`[Webhook] Enviando mensaje a FastAPI (puerto ${fastapiPort}) de ${from}: ${body.substring(0, 30)}...`);
+    console.log(`[Webhook] Enviando mensaje a FastAPI (puerto ${fastapiPort}) de ${from}: ${body.substring(0, 40)}...`);
     const req = http.request(options, (res) => {
         let data = '';
         res.on('data', (chunk) => data += chunk);
@@ -131,8 +171,13 @@ function sendWebhook(from, body) {
         });
     });
 
+    req.setTimeout(25000, () => {
+        console.error(`[Webhook] Timeout (25s) conectando a FastAPI en puerto ${fastapiPort}`);
+        req.destroy();
+    });
+
     req.on('error', (e) => {
-        console.error(`[Webhook] Error conectando a FastAPI en puerto ${fastapiPort}: ${e.message}`);
+        console.error(`[Webhook] Error conectando a FastAPI en 127.0.0.1:${fastapiPort}: ${e.message}`);
     });
 
     req.write(payload);
@@ -145,6 +190,8 @@ client.on('message', async (msg) => {
     if (msg.fromMe) return;
     if (client.info && client.info.wid && msg.from === client.info.wid._serialized) return;
     if (msg.from.endsWith('@g.us')) return; // Ignore group chats
+
+    console.log(`[WhatsApp Bridge] Mensaje entrante de ${msg.from} (tipo: ${msg.type}): "${msg.body ? msg.body.substring(0, 40) : '[Sin texto]'}"`);
 
     // Manejar mensajes de texto
     if (msg.type === 'chat' && msg.body) {
@@ -237,21 +284,49 @@ app.post('/send', async (req, res) => {
             cleanNumber = '593' + cleanNumber;
         }
 
-        // Add server suffix
         const chatId = `${cleanNumber}@${server}`;
+        console.log(`[WhatsApp Bridge] Preparando envío a: ${chatId}`);
 
-        console.log(`[WhatsApp Bridge] Enviando mensaje a: ${chatId}`);
-        const response = await client.sendMessage(chatId, message);
+        // 1. Verificación previa: Comprobar si el número está registrado en WhatsApp
+        // Esto evita que Puppeteer quede colgado con modales de error en números inexistentes
+        let targetChatId = chatId;
+        try {
+            const numberCheck = await Promise.race([
+                client.getNumberId(chatId),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout_check')), 6000))
+            ]);
+
+            if (numberCheck && numberCheck._serialized) {
+                targetChatId = numberCheck._serialized;
+            } else if (numberCheck === null) {
+                console.warn(`[WhatsApp Bridge] El número ${chatId} no está registrado en WhatsApp. Omitiendo envío.`);
+                return res.status(400).json({
+                    success: false,
+                    error: 'El número no está registrado en WhatsApp.'
+                });
+            }
+        } catch (errCheck) {
+            console.warn(`[WhatsApp Bridge] Aviso en verificación de número (${chatId}): ${errCheck.message}`);
+        }
+
+        // 2. Enviar mensaje con timeout de seguridad (15 segundos) para no colgar el loop de Puppeteer
+        const sendPromise = client.sendMessage(targetChatId, message);
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout de 15 segundos al enviar mensaje por WhatsApp.')), 15000)
+        );
+
+        const response = await Promise.race([sendPromise, timeoutPromise]);
+        console.log(`[WhatsApp Bridge] Mensaje enviado exitosamente a: ${targetChatId}`);
 
         res.json({
             success: true,
-            messageId: response.id._serialized
+            messageId: response.id ? response.id._serialized : 'sent'
         });
     } catch (err) {
-        console.error('[WhatsApp Bridge] Error al enviar mensaje:', err);
+        console.error('[WhatsApp Bridge] Error al enviar mensaje:', err.message || err);
         res.status(500).json({
             success: false,
-            error: err.message
+            error: err.message || 'Error desconocido al enviar mensaje'
         });
     }
 });
