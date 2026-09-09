@@ -134,14 +134,13 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
 
                 # Intentar por número real si se obtuvo
                 if real_number:
-                    real_digits = re.sub(r'\D', '', real_number)
-                    num_ec = "0" + real_digits[3:] if real_digits.startswith("593") and len(real_digits) > 3 else real_digits
-                    c = db.query(models.Cliente.id).filter(
-                        (models.Cliente.celular.like(f"%{real_digits}%")) |
-                        (models.Cliente.celular.like(f"%{num_ec}%"))
-                    ).first()
-                    if c:
-                        cliente_id = c[0]
+                    try:
+                        import sam_bot_service
+                        c = sam_bot_service.buscar_cliente_por_celular(real_number, db)
+                        if c:
+                            cliente_id = c.id
+                    except Exception:
+                        pass
 
                 # Si aún no coincide por número, intentar por nombre pushname
                 if not cliente_id and pushname:
@@ -155,14 +154,13 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
 
         # 3. Si es un número estándar (@c.us o dígitos)
         if not cliente_id and not is_lid:
-            num_solo_digitos = re.sub(r'\D', '', num_limpio)
-            num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
-            c = db.query(models.Cliente.id).filter(
-                (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
-                (models.Cliente.celular.like(f"%{num_ecuador}%"))
-            ).first()
-            if c:
-                cliente_id = c[0]
+            try:
+                import sam_bot_service
+                c = sam_bot_service.buscar_cliente_por_celular(num_limpio, db)
+                if c:
+                    cliente_id = c.id
+            except Exception:
+                pass
 
     # 1. Crear el nuevo mensaje
     nuevo_msg = models.WhatsAppMensajeChat(
@@ -729,10 +727,11 @@ def listar_conversaciones_chat(db: Session = Depends(get_db)):
                 cliente = db.query(models.Cliente).filter(models.Cliente.id == msg.cliente_id).first()
 
             if not cliente and not is_lid:
-                cliente = db.query(models.Cliente).filter(
-                    (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
-                    (models.Cliente.celular.like(f"%{num_ecuador}%"))
-                ).first()
+                try:
+                    import sam_bot_service
+                    cliente = sam_bot_service.buscar_cliente_por_celular(num_limpio, db)
+                except Exception:
+                    pass
 
             # Si es LID y no tenemos cliente vinculado, intentar resolver contacto por puente
             if not cliente and is_lid:
@@ -741,12 +740,11 @@ def listar_conversaciones_chat(db: Session = Depends(get_db)):
                     real_number = info_contacto.get("number")
                     pushname = info_contacto.get("pushname") or info_contacto.get("name")
                     if real_number:
-                        real_digits = re.sub(r'\D', '', real_number)
-                        num_ec = "0" + real_digits[3:] if real_digits.startswith("593") and len(real_digits) > 3 else real_digits
-                        cliente = db.query(models.Cliente).filter(
-                            (models.Cliente.celular.like(f"%{real_digits}%")) |
-                            (models.Cliente.celular.like(f"%{num_ec}%"))
-                        ).first()
+                        try:
+                            import sam_bot_service
+                            cliente = sam_bot_service.buscar_cliente_por_celular(real_number, db)
+                        except Exception:
+                            pass
 
                     if not cliente and pushname:
                         try:
@@ -774,11 +772,14 @@ def listar_conversaciones_chat(db: Session = Depends(get_db)):
                 "numero": msg.numero,
                 "cliente_id": cliente.id if cliente else None,
                 "nombre": nombre_mostrar,
-                "plan": cliente.plan if cliente else "No especificado",
-                "saldo": float(cliente.saldo or 0.0) if cliente else 0.0,
-                "estado": cliente.estado if cliente else "Desconocido",
-                "nodo": cliente.nodo if cliente else "N/A",
-                "parroquia": cliente.parroquia if cliente else "N/A",
+                "plan": getattr(cliente, "plan", "No especificado") if cliente else "No especificado",
+                "saldo": float(cliente.saldo or 0.0) if hasattr(cliente, 'saldo') and cliente and cliente.saldo else 0.0,
+                "estado": getattr(cliente, "estado", "Desconocido") if cliente else "Desconocido",
+                "nodo": getattr(cliente, "nodo", "N/A") if cliente else "N/A",
+                "ip": getattr(cliente, "ip", "N/A") if cliente else "N/A",
+                "celular": getattr(cliente, "celular", msg.numero) if cliente else msg.numero,
+                "cedula": getattr(cliente, "cedula", "N/A") if cliente else "N/A",
+                "parroquia": getattr(cliente, "parroquia", "N/A") if cliente else "N/A",
                 "ultimo_mensaje": msg.mensaje,
                 "ultimo_rol": msg.rol,
                 "ultima_fecha": msg.fecha_hora.strftime("%Y-%m-%d %H:%M:%S") if msg.fecha_hora else "",
@@ -793,7 +794,7 @@ def listar_conversaciones_chat(db: Session = Depends(get_db)):
 @router.get("/conversaciones/{numero:path}", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
     """
-    Obtiene el historial de chat con un cliente específico (hasta 30 mensajes cronológicos).
+    Obtiene el historial de chat con un cliente específico (hasta 100 mensajes cronológicos).
     """
     try:
         numero_decodificado = urllib.parse.unquote(numero).strip()
@@ -826,24 +827,24 @@ def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
 
         # 2. Si no es LID, buscar por teléfono estándar en la base de datos
         if not cliente and not is_lid:
-            cliente = db.query(models.Cliente).filter(
-                (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
-                (models.Cliente.celular.like(f"%{num_ecuador}%"))
-            ).first()
+            try:
+                import sam_bot_service
+                cliente = sam_bot_service.buscar_cliente_por_celular(num_limpio, db)
+            except Exception:
+                pass
 
-        # 3. Si es LID y no se ha vinculado, resolver mediante el bridge de WhatsApp
-        if not cliente and is_lid:
+        # 3. Si no se ha vinculado, resolver mediante el bridge de WhatsApp (teléfono o nombre en BD)
+        if not cliente:
             info_contacto = obtener_info_contacto_bridge(num_limpio)
             if info_contacto:
                 real_number = info_contacto.get("number")
                 pushname = info_contacto.get("pushname") or info_contacto.get("name")
                 if real_number:
-                    real_digits = re.sub(r'\D', '', real_number)
-                    num_ec = "0" + real_digits[3:] if real_digits.startswith("593") and len(real_digits) > 3 else real_digits
-                    cliente = db.query(models.Cliente).filter(
-                        (models.Cliente.celular.like(f"%{real_digits}%")) |
-                        (models.Cliente.celular.like(f"%{num_ec}%"))
-                    ).first()
+                    try:
+                        import sam_bot_service
+                        cliente = sam_bot_service.buscar_cliente_por_celular(real_number, db)
+                    except Exception:
+                        pass
 
                 if not cliente and pushname:
                     try:
@@ -871,14 +872,15 @@ def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
             cliente_data = {
                 "id": cliente.id,
                 "nombre": cliente.nombre,
-                "cedula": cliente.cedula,
-                "celular": cliente.celular,
-                "plan": cliente.plan,
-                "saldo": float(cliente.saldo or 0.0),
-                "estado": cliente.estado,
-                "nodo": cliente.nodo,
-                "parroquia": cliente.parroquia,
-                "direccion": cliente.direccion
+                "cedula": getattr(cliente, "cedula", "N/A") or "N/A",
+                "celular": getattr(cliente, "celular", "N/A") or "N/A",
+                "plan": getattr(cliente, "plan", "No especificado") or "No especificado",
+                "saldo": float(cliente.saldo or 0.0) if hasattr(cliente, 'saldo') and cliente.saldo else 0.0,
+                "estado": getattr(cliente, "estado", "Activo") or "Activo",
+                "nodo": getattr(cliente, "nodo", "N/A") or "N/A",
+                "ip": getattr(cliente, "ip", "N/A") or "N/A",
+                "parroquia": getattr(cliente, "parroquia", "N/A") or "N/A",
+                "direccion": getattr(cliente, "direccion", "N/A") or "N/A"
             }
         elif pushname_fallback:
             cliente_data = {
@@ -890,6 +892,7 @@ def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
                 "saldo": 0.0,
                 "estado": "WhatsApp",
                 "nodo": "N/A",
+                "ip": "N/A",
                 "parroquia": "N/A",
                 "direccion": "N/A"
             }
@@ -963,6 +966,80 @@ def enviar_mensaje_desde_chat(
     except Exception as e:
         print(f"[Error Enviar Mensaje Chat] {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+class VincularClienteChatPayload(BaseModel):
+    cliente_id: int
+
+@router.post("/conversaciones/{numero:path}/vincular-cliente", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def vincular_cliente_a_chat(
+    numero: str,
+    payload: VincularClienteChatPayload,
+    db: Session = Depends(get_db)
+):
+    """
+    Permite vincular manualmente una conversación telefónica o @lid a un cliente específico de la base de datos.
+    """
+    numero_decodificado = urllib.parse.unquote(numero).strip()
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == payload.cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado en la base de datos")
+
+    db.query(models.WhatsAppMensajeChat).filter(
+        (models.WhatsAppMensajeChat.numero == numero_decodificado) |
+        (models.WhatsAppMensajeChat.numero == numero)
+    ).update({"cliente_id": cliente.id}, synchronize_session=False)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Conversación vinculada al cliente {cliente.nombre} (ID #{cliente.id})",
+        "cliente": {
+            "id": cliente.id,
+            "nombre": cliente.nombre,
+            "cedula": getattr(cliente, "cedula", "N/A") or "N/A",
+            "celular": getattr(cliente, "celular", "N/A") or "N/A",
+            "plan": getattr(cliente, "plan", "No especificado") or "No especificado",
+            "saldo": float(cliente.saldo or 0.0) if hasattr(cliente, 'saldo') and cliente.saldo else 0.0,
+            "estado": getattr(cliente, "estado", "Activo") or "Activo",
+            "nodo": getattr(cliente, "nodo", "N/A") or "N/A",
+            "ip": getattr(cliente, "ip", "N/A") or "N/A",
+            "parroquia": getattr(cliente, "parroquia", "N/A") or "N/A",
+            "direccion": getattr(cliente, "direccion", "N/A") or "N/A"
+        }
+    }
+
+@router.get("/buscar-clientes-chat", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def buscar_clientes_para_chat(q: str = "", db: Session = Depends(get_db)):
+    """Busca clientes por ID, nombre, cédula, celular o IP para vincular a un chat"""
+    if not q or len(q.strip()) < 1:
+        return []
+    texto = q.strip()
+    filtros = [
+        models.Cliente.nombre.ilike(f"%{texto}%"),
+        models.Cliente.celular.ilike(f"%{texto}%"),
+        models.Cliente.cedula.ilike(f"%{texto}%"),
+        models.Cliente.ip.ilike(f"%{texto}%")
+    ]
+    if texto.isdigit():
+        try:
+            filtros.append(models.Cliente.id == int(texto))
+        except Exception:
+            pass
+
+    clientes = db.query(models.Cliente).filter(or_(*filtros)).limit(15).all()
+    return [
+        {
+            "id": c.id,
+            "nombre": c.nombre,
+            "celular": c.celular,
+            "cedula": c.cedula,
+            "plan": c.plan,
+            "nodo": c.nodo,
+            "ip": getattr(c, "ip", "N/A") or "N/A"
+        }
+        for c in clientes
+    ]
+
 
 # ========================================================================
 # CRUD DE ADMINISTRADORES DE WHATSAPP

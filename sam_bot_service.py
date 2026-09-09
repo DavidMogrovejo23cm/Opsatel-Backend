@@ -342,43 +342,103 @@ Formato exacto del JSON final:
 # SKILL: CONSULTAR PAGOS Y SALDOS
 # -------------------------------------------------------------
 def buscar_cliente_por_celular(numero_limpio: str, db: Session):
-    """Busca un cliente cuyo celular contenga el número limpio del remitente"""
-    # Intentar buscar reemplazando 593 por 0 y también con el número completo
-    num_ecuador = "0" + numero_limpio[3:] if numero_limpio.startswith("593") and len(numero_limpio) > 3 else numero_limpio
-    
-    cliente = db.query(models.Cliente).filter(
-        (models.Cliente.celular.like(f"%{numero_limpio}%")) |
-        (models.Cliente.celular.like(f"%{num_ecuador}%"))
-    ).first()
+    """Busca un cliente cuyo celular contenga el número limpio del remitente considerando múltiples variantes ecuatorianas"""
+    if not numero_limpio:
+        return None
+    num_str = str(numero_limpio).strip()
+    digits = re.sub(r'\D', '', num_str)
+    if not digits or len(digits) < 6:
+        return None
+
+    # Variantes numéricas posibles en Ecuador
+    variantes = [digits]
+    if digits.startswith("593") and len(digits) > 3:
+        variantes.append("0" + digits[3:])
+        variantes.append(digits[3:])
+    elif digits.startswith("0") and len(digits) > 1:
+        variantes.append(digits[1:])
+        variantes.append("593" + digits[1:])
+    else:
+        variantes.append("0" + digits)
+        variantes.append("593" + digits)
+
+    if len(digits) >= 8:
+        variantes.append(digits[-8:])  # últimos 8 dígitos (único en celular de EC)
+    if len(digits) >= 9:
+        variantes.append(digits[-9:])  # últimos 9 dígitos
+
+    variantes = list(dict.fromkeys(variantes))
+
+    from sqlalchemy import or_
+    conditions = [models.Cliente.celular.like(f"%{v}%") for v in variantes]
+    cliente = db.query(models.Cliente).filter(or_(*conditions)).first()
     return cliente
 
+
 def buscar_cliente_por_nombre(nombre_buscar: str, db: Session):
-    """Realiza una búsqueda difusa en la base de datos de clientes por nombre"""
-    clientes = db.query(models.Cliente.id, models.Cliente.nombre).all()
-    if not clientes:
+    """
+    Busca un cliente en la base de datos por nombre utilizando:
+    1. Coincidencia directa/substring insensible a mayúsculas en SQL.
+    2. Búsqueda por palabras múltiples (ej: 'David' y 'Mogrovejo' en cualquier orden).
+    3. Búsqueda difusa con rapidfuzz si está disponible.
+    """
+    if not nombre_buscar or len(str(nombre_buscar).strip()) < 2:
         return None, []
-        
-    nombres_dict = {c.id: c.nombre for c in clientes if c.nombre}
-    nombres_lista = list(nombres_dict.values())
-    
-    # Extraer coincidencias usando rapidfuzz
-    matches = process.extract(nombre_buscar, nombres_lista, scorer=fuzz.token_set_ratio, limit=5)
-    
-    coincidencias_validas = []
-    for match in matches:
-        nombre_coincidente, score, index = match
-        if score >= 50:
-            # Buscar el ID del cliente
-            cliente_id = [cid for cid, cnom in nombres_dict.items() if cnom == nombre_coincidente][0]
-            coincidencias_validas.append({"id": cliente_id, "nombre": nombre_coincidente, "score": score})
-            
-    # Si hay una coincidencia muy fuerte (>85), la tomamos directamente
-    coincidencias_validas.sort(key=lambda x: x["score"], reverse=True)
-    if coincidencias_validas and coincidencias_validas[0]["score"] >= 85:
-        cliente_real = db.query(models.Cliente).filter(models.Cliente.id == coincidencias_validas[0]["id"]).first()
-        return cliente_real, []
-        
-    return None, coincidencias_validas[:3]
+
+    nombre_limpio = str(nombre_buscar).strip()
+
+    # 1. Búsqueda directa exacta o substring en SQL
+    c_exact = db.query(models.Cliente).filter(models.Cliente.nombre.ilike(f"%{nombre_limpio}%")).first()
+    if c_exact:
+        return c_exact, []
+
+    # 2. Búsqueda por palabras individuales (todas deben estar presentes en el nombre, sin importar el orden)
+    palabras = [w.strip() for w in re.split(r'[\s,._-]+', nombre_limpio) if len(w.strip()) >= 3]
+    if palabras:
+        query = db.query(models.Cliente)
+        for p in palabras:
+            query = query.filter(models.Cliente.nombre.ilike(f"%{p}%"))
+        c_words = query.first()
+        if c_words:
+            return c_words, []
+
+        # Si son palabras distintivas (ej: apellido 'Mogrovejo' >= 5 letras), buscar por ese término
+        for p in palabras:
+            if len(p) >= 5:
+                c_single = db.query(models.Cliente).filter(models.Cliente.nombre.ilike(f"%{p}%")).first()
+                if c_single:
+                    return c_single, []
+
+    # 3. Búsqueda difusa (fuzzy match)
+    try:
+        # pyrefly: ignore [missing-import]
+        from rapidfuzz import process, fuzz
+        clientes = db.query(models.Cliente.id, models.Cliente.nombre).all()
+        if not clientes:
+            return None, []
+
+        nombres_dict = {c.id: c.nombre for c in clientes if c.nombre}
+        nombres_lista = list(nombres_dict.values())
+
+        matches = process.extract(nombre_limpio, nombres_lista, scorer=fuzz.token_set_ratio, limit=5)
+        coincidencias_validas = []
+        for match in matches:
+            nombre_coincidente, score, index = match
+            if score >= 50:
+                cid_candidates = [cid for cid, cnom in nombres_dict.items() if cnom == nombre_coincidente]
+                if cid_candidates:
+                    coincidencias_validas.append({"id": cid_candidates[0], "nombre": nombre_coincidente, "score": score})
+
+        coincidencias_validas.sort(key=lambda x: x["score"], reverse=True)
+        if coincidencias_validas and coincidencias_validas[0]["score"] >= 60:
+            cliente_real = db.query(models.Cliente).filter(models.Cliente.id == coincidencias_validas[0]["id"]).first()
+            return cliente_real, []
+
+        return None, coincidencias_validas[:3]
+    except Exception as e:
+        print(f"[SAM Chatbot] Error en búsqueda difusa: {e}")
+
+    return None, []
 
 def extraer_cedula(texto: str) -> str:
     """
