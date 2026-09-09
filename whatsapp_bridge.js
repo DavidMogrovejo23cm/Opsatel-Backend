@@ -238,12 +238,33 @@ app.get('/contact/:chatId', async (req, res) => {
         if (clientStatus !== 'CONNECTED') {
             return res.status(503).json({ success: false, error: 'WhatsApp desconectado' });
         }
-        const contact = await client.getContactById(chatId);
+        let number = null;
+        let name = null;
+        let pushname = null;
+
+        try {
+            const contact = await client.getContactById(chatId);
+            if (contact) {
+                number = contact.number || null;
+                name = contact.name || null;
+                pushname = contact.pushname || null;
+            }
+        } catch (e1) {}
+
+        if (!name && !pushname) {
+            try {
+                const chat = await client.getChatById(chatId);
+                if (chat && chat.name) {
+                    name = chat.name;
+                }
+            } catch (e2) {}
+        }
+
         res.json({
             success: true,
-            number: contact.number || null,
-            name: contact.name || null,
-            pushname: contact.pushname || null
+            number: number,
+            name: name,
+            pushname: pushname
         });
     } catch (err) {
         res.json({ success: false, error: err.message });

@@ -341,8 +341,19 @@ Formato exacto del JSON final:
 # -------------------------------------------------------------
 # SKILL: CONSULTAR PAGOS Y SALDOS
 # -------------------------------------------------------------
+def normalizar_texto_busqueda(texto: str) -> str:
+    if not texto:
+        return ""
+    import unicodedata
+    s = unicodedata.normalize('NFD', str(texto))
+    s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+    s = re.sub(r'\(.*?\)', '', s)
+    s = re.sub(r'\[.*?\]', '', s)
+    s = re.sub(r'[^A-Z0-9\s]', ' ', s.upper())
+    return re.sub(r'\s+', ' ', s).strip()
+
 def buscar_cliente_por_celular(numero_limpio: str, db: Session):
-    """Busca un cliente cuyo celular contenga el número limpio del remitente considerando múltiples variantes ecuatorianas"""
+    """Busca un cliente cuyo celular contenga el número limpio considerando espacios en la BD y múltiples variantes"""
     if not numero_limpio:
         return None
     num_str = str(numero_limpio).strip()
@@ -350,98 +361,89 @@ def buscar_cliente_por_celular(numero_limpio: str, db: Session):
     if not digits or len(digits) < 6:
         return None
 
-    # Variantes numéricas posibles en Ecuador
-    variantes = [digits]
-    if digits.startswith("593") and len(digits) > 3:
-        variantes.append("0" + digits[3:])
-        variantes.append(digits[3:])
-    elif digits.startswith("0") and len(digits) > 1:
-        variantes.append(digits[1:])
-        variantes.append("593" + digits[1:])
-    else:
-        variantes.append("0" + digits)
-        variantes.append("593" + digits)
+    ultimos_8 = digits[-8:] if len(digits) >= 8 else digits
+    ultimos_9 = digits[-9:] if len(digits) >= 9 else digits
 
-    if len(digits) >= 8:
-        variantes.append(digits[-8:])  # últimos 8 dígitos (único en celular de EC)
-    if len(digits) >= 9:
-        variantes.append(digits[-9:])  # últimos 9 dígitos
+    # 1. Búsqueda directa en SQL con func.replace para eliminar espacios y guiones
+    try:
+        from sqlalchemy import func, or_
+        col_clean = func.replace(func.replace(func.replace(models.Cliente.celular, ' ', ''), '-', ''), '.', '')
+        cliente = db.query(models.Cliente).filter(
+            or_(
+                col_clean.like(f"%{ultimos_8}%"),
+                col_clean.like(f"%{ultimos_9}%"),
+                col_clean == digits
+            )
+        ).first()
+        if cliente:
+            return cliente
+    except Exception:
+        pass
 
-    variantes = list(dict.fromkeys(variantes))
-
-    from sqlalchemy import or_
-    conditions = [models.Cliente.celular.like(f"%{v}%") for v in variantes]
-    cliente = db.query(models.Cliente).filter(or_(*conditions)).first()
-    return cliente
+    # 2. Búsqueda en memoria escaneando clientes de la base de datos
+    clientes = db.query(models.Cliente).all()
+    for c in clientes:
+        if c.celular:
+            c_digits = re.sub(r'\D', '', str(c.celular))
+            if c_digits and (c_digits == digits or (len(c_digits) >= 8 and c_digits[-8:] == ultimos_8)):
+                return c
+    return None
 
 
 def buscar_cliente_por_nombre(nombre_buscar: str, db: Session):
     """
-    Busca un cliente en la base de datos por nombre utilizando:
-    1. Coincidencia directa/substring insensible a mayúsculas en SQL.
-    2. Búsqueda por palabras múltiples (ej: 'David' y 'Mogrovejo' en cualquier orden).
-    3. Búsqueda difusa con rapidfuzz si está disponible.
+    Busca de forma exhaustiva en la tabla General de Clientes (models.Cliente):
+    1. Normaliza acentos, mayúsculas y quita etiquetas como (WhatsApp).
+    2. Comprueba si todas las palabras del nombre buscado están en el cliente de la BD (sin importar orden).
+    3. Comprueba con rapidfuzz token_set_ratio.
+    4. Comprueba palabras distintivas individuales (>= 5 letras).
     """
-    if not nombre_buscar or len(str(nombre_buscar).strip()) < 2:
+    if not nombre_buscar:
         return None, []
 
-    # Limpiar sufijos o prefijos como (WhatsApp), (LID), corchetes, etc.
-    nombre_limpio = str(nombre_buscar).strip()
-    nombre_limpio = re.sub(r'\(.*?\)', '', nombre_limpio).strip()
-    nombre_limpio = re.sub(r'\[.*?\]', '', nombre_limpio).strip()
-    if not nombre_limpio or len(nombre_limpio) < 2:
+    nombre_norm = normalizar_texto_busqueda(nombre_buscar)
+    if not nombre_norm or len(nombre_norm) < 2:
         return None, []
 
-    # 1. Búsqueda directa exacta o substring en SQL
-    c_exact = db.query(models.Cliente).filter(models.Cliente.nombre.ilike(f"%{nombre_limpio}%")).first()
-    if c_exact:
-        return c_exact, []
+    clientes = db.query(models.Cliente).all()
+    if not clientes:
+        return None, []
 
-    # 2. Búsqueda por palabras individuales (todas deben estar presentes en el nombre, sin importar el orden)
-    palabras = [w.strip() for w in re.split(r'[\s,._-]+', nombre_limpio) if len(w.strip()) >= 3]
+    palabras = [w for w in nombre_norm.split() if len(w) >= 3]
+
+    # 1. Búsqueda cruzada de palabras (ej: 'ANDRES' y 'SOLANO' en 'SOLANO CHALCO ANDRES')
     if palabras:
-        query = db.query(models.Cliente)
-        for p in palabras:
-            query = query.filter(models.Cliente.nombre.ilike(f"%{p}%"))
-        c_words = query.first()
-        if c_words:
-            return c_words, []
+        for c in clientes:
+            if c.nombre:
+                c_norm = normalizar_texto_busqueda(c.nombre)
+                if all(p in c_norm for p in palabras):
+                    return c, []
 
-        # Si son palabras distintivas (ej: apellido 'Mogrovejo' >= 5 letras), buscar por ese término
-        for p in palabras:
-            if len(p) >= 5:
-                c_single = db.query(models.Cliente).filter(models.Cliente.nombre.ilike(f"%{p}%")).first()
-                if c_single:
-                    return c_single, []
-
-    # 3. Búsqueda difusa (fuzzy match)
+    # 2. Búsqueda con rapidfuzz token_set_ratio (ignora orden de palabras y variaciones leves)
     try:
         # pyrefly: ignore [missing-import]
-        from rapidfuzz import process, fuzz
-        clientes = db.query(models.Cliente.id, models.Cliente.nombre).all()
-        if not clientes:
-            return None, []
+        from rapidfuzz import fuzz
+        mejor_cliente = None
+        mejor_score = 0
+        for c in clientes:
+            if c.nombre:
+                c_norm = normalizar_texto_busqueda(c.nombre)
+                score = fuzz.token_set_ratio(nombre_norm, c_norm)
+                if score > mejor_score:
+                    mejor_score = score
+                    mejor_cliente = c
 
-        nombres_dict = {c.id: c.nombre for c in clientes if c.nombre}
-        nombres_lista = list(nombres_dict.values())
-
-        matches = process.extract(nombre_limpio, nombres_lista, scorer=fuzz.token_set_ratio, limit=5)
-        coincidencias_validas = []
-        for match in matches:
-            nombre_coincidente, score, index = match
-            if score >= 50:
-                cid_candidates = [cid for cid, cnom in nombres_dict.items() if cnom == nombre_coincidente]
-                if cid_candidates:
-                    coincidencias_validas.append({"id": cid_candidates[0], "nombre": nombre_coincidente, "score": score})
-
-        coincidencias_validas.sort(key=lambda x: x["score"], reverse=True)
-        if coincidencias_validas and coincidencias_validas[0]["score"] >= 60:
-            cliente_real = db.query(models.Cliente).filter(models.Cliente.id == coincidencias_validas[0]["id"]).first()
-            return cliente_real, []
-
-        return None, coincidencias_validas[:3]
+        if mejor_cliente and mejor_score >= 70:
+            return mejor_cliente, []
     except Exception as e:
-        print(f"[SAM Chatbot] Error en búsqueda difusa: {e}")
+        print(f"[SAM Chatbot] Error en rapidfuzz: {e}")
+
+    # 3. Palabra distintiva única (>= 5 letras, ej: 'SOLANO' o 'MOGROVEJO')
+    for p in palabras:
+        if len(p) >= 5:
+            coincidencias = [c for c in clientes if c.nombre and p in normalizar_texto_busqueda(c.nombre)]
+            if len(coincidencias) == 1:
+                return coincidencias[0], []
 
     return None, []
 
