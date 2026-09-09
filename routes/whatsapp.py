@@ -76,6 +76,56 @@ def remove_accents(input_str):
         return ""
     return ''.join(c for c in unicodedata.normalize('NFD', str(input_str)) if unicodedata.category(c) != 'Mn')
 
+def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cliente_id: int = None, tipo: str = "texto"):
+    """
+    Registra un mensaje en el historial del chat y aplica la regla estricta:
+    Guarda únicamente los últimos 30 mensajes por número telefónico, podando los más antiguos.
+    """
+    if not numero or not mensaje:
+        return None
+
+    num_limpio = whatsapp_service.format_whatsapp_number(numero)
+    if not num_limpio:
+        num_limpio = re.sub(r'\D', '', str(numero))
+
+    # Si no tiene cliente_id asignado, buscar coincidencia en la BD
+    if not cliente_id:
+        num_solo_digitos = re.sub(r'\D', '', num_limpio)
+        num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
+        c = db.query(models.Cliente.id).filter(
+            (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
+            (models.Cliente.celular.like(f"%{num_ecuador}%"))
+        ).first()
+        if c:
+            cliente_id = c[0]
+
+    # 1. Crear el nuevo mensaje
+    nuevo_msg = models.WhatsAppMensajeChat(
+        numero=num_limpio,
+        rol=rol,
+        mensaje=str(mensaje).strip(),
+        tipo=tipo,
+        cliente_id=cliente_id,
+        fecha_hora=datetime.now(ECUADOR_TZ)
+    )
+    db.add(nuevo_msg)
+    db.flush()
+
+    # 2. Poda automática: Mantener exactamente los 30 más recientes
+    subq = db.query(models.WhatsAppMensajeChat.id).filter(
+        models.WhatsAppMensajeChat.numero == num_limpio
+    ).order_by(models.WhatsAppMensajeChat.id.desc()).offset(30).all()
+
+    if subq:
+        ids_a_eliminar = [row[0] for row in subq]
+        db.query(models.WhatsAppMensajeChat).filter(
+            models.WhatsAppMensajeChat.id.in_(ids_a_eliminar)
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return nuevo_msg
+
+
 def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
     db = db_session_factory()
     import time
@@ -173,7 +223,7 @@ def enviar_whatsapp_manual(
                 detail="No se pudo enviar el mensaje. Asegúrate de que el puente local de WhatsApp esté conectado."
             )
         
-        # Guardar en historial
+        # Guardar en historial general
         historial = models.WhatsAppHistorial(
             numero_destino=numero,
             mensaje=mensaje_final,
@@ -184,6 +234,12 @@ def enviar_whatsapp_manual(
         )
         db.add(historial)
         db.commit()
+
+        # Guardar en el chat bidireccional del cliente (con regla de máximo 30 mensajes)
+        try:
+            registrar_mensaje_chat(db, numero, "operador", mensaje_final, cliente.id if cliente else None)
+        except Exception as chat_err:
+            print(f"[Chat Warning] Error al registrar en chat: {chat_err}")
         
         return {
             "success": True,
@@ -538,6 +594,162 @@ def webhook_mensaje_whatsapp(
             status_code=500,
             detail=f"Error interno procesando mensaje en SAM: {str(e)}"
         )
+
+# ========================================================================
+# CHATS Y CONVERSACIONES POR CLIENTE (MÁXIMO 30 MENSAJES POR NÚMERO)
+# ========================================================================
+
+class EnviarMensajeChatPayload(BaseModel):
+    mensaje: str
+
+@router.get("/conversaciones", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def listar_conversaciones_chat(db: Session = Depends(get_db)):
+    """
+    Obtiene la lista de clientes con los que se tiene conversación activa,
+    ordenados por la fecha del último mensaje recibido o enviado.
+    """
+    try:
+        # Obtener el último mensaje por número y el conteo de mensajes (máximo 30)
+        subq = db.query(
+            models.WhatsAppMensajeChat.numero,
+            func.max(models.WhatsAppMensajeChat.id).label("max_id"),
+            func.count(models.WhatsAppMensajeChat.id).label("total_msgs")
+        ).group_by(models.WhatsAppMensajeChat.numero).subquery()
+
+        filas = db.query(models.WhatsAppMensajeChat, subq.c.total_msgs).join(
+            subq, models.WhatsAppMensajeChat.id == subq.c.max_id
+        ).order_by(models.WhatsAppMensajeChat.id.desc()).all()
+
+        resultado = []
+        for msg, total_msgs in filas:
+            num_limpio = msg.numero
+            num_solo_digitos = re.sub(r'\D', '', num_limpio)
+            num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
+
+            # Buscar datos del cliente si existe en la BD
+            cliente = None
+            if msg.cliente_id:
+                cliente = db.query(models.Cliente).filter(models.Cliente.id == msg.cliente_id).first()
+            if not cliente:
+                cliente = db.query(models.Cliente).filter(
+                    (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
+                    (models.Cliente.celular.like(f"%{num_ecuador}%"))
+                ).first()
+
+            resultado.append({
+                "numero": msg.numero,
+                "cliente_id": cliente.id if cliente else None,
+                "nombre": cliente.nombre if cliente else f"Cliente ({msg.numero})",
+                "plan": cliente.plan if cliente else "No especificado",
+                "saldo": float(cliente.saldo or 0.0) if cliente else 0.0,
+                "estado": cliente.estado if cliente else "Desconocido",
+                "nodo": cliente.nodo if cliente else "N/A",
+                "parroquia": cliente.parroquia if cliente else "N/A",
+                "ultimo_mensaje": msg.mensaje,
+                "ultimo_rol": msg.rol,
+                "ultima_fecha": msg.fecha_hora.strftime("%Y-%m-%d %H:%M:%S") if msg.fecha_hora else "",
+                "total_mensajes": total_msgs
+            })
+
+        return resultado
+    except Exception as e:
+        print(f"[Error Listar Conversaciones] {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/conversaciones/{numero}", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
+    """
+    Obtiene el historial de chat con un cliente específico (hasta 30 mensajes cronológicos).
+    """
+    try:
+        num_limpio = whatsapp_service.format_whatsapp_number(numero)
+        if not num_limpio:
+            num_limpio = re.sub(r'\D', '', str(numero))
+
+        num_solo_digitos = re.sub(r'\D', '', num_limpio)
+        num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
+
+        # Buscar cliente
+        cliente = db.query(models.Cliente).filter(
+            (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
+            (models.Cliente.celular.like(f"%{num_ecuador}%"))
+        ).first()
+
+        # Obtener hasta los últimos 30 mensajes ordenados por id ASC para visualización natural de chat
+        mensajes = db.query(models.WhatsAppMensajeChat).filter(
+            (models.WhatsAppMensajeChat.numero == num_limpio) |
+            (models.WhatsAppMensajeChat.numero.like(f"%{num_solo_digitos}%"))
+        ).order_by(models.WhatsAppMensajeChat.id.asc()).limit(30).all()
+
+        return {
+            "numero": num_limpio,
+            "cliente": {
+                "id": cliente.id,
+                "nombre": cliente.nombre,
+                "cedula": cliente.cedula,
+                "celular": cliente.celular,
+                "plan": cliente.plan,
+                "saldo": float(cliente.saldo or 0.0),
+                "estado": cliente.estado,
+                "nodo": cliente.nodo,
+                "parroquia": cliente.parroquia,
+                "direccion": cliente.direccion
+            } if cliente else None,
+            "mensajes": [
+                {
+                    "id": m.id,
+                    "rol": m.rol,
+                    "mensaje": m.mensaje,
+                    "tipo": m.tipo,
+                    "fecha_hora": m.fecha_hora.strftime("%Y-%m-%d %H:%M:%S") if m.fecha_hora else ""
+                }
+                for m in mensajes
+            ]
+        }
+    except Exception as e:
+        print(f"[Error Obtener Chat] {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/conversaciones/{numero}/enviar", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def enviar_mensaje_desde_chat(
+    numero: str,
+    payload: EnviarMensajeChatPayload,
+    db: Session = Depends(get_db)
+):
+    """
+    Permite al operador enviar un mensaje directo al cliente desde la interfaz de chat.
+    Despacha a WhatsApp y lo registra con rol 'operador', conservando solo los últimos 30 mensajes.
+    """
+    try:
+        texto = payload.mensaje.strip() if payload.mensaje else ""
+        if not texto:
+            raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío")
+
+        # 1. Enviar a través de WhatsApp
+        success = whatsapp_service.send_whatsapp_message(numero, texto)
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail="No se pudo enviar el mensaje a WhatsApp. Verifica que el servicio esté conectado."
+            )
+
+        # 2. Registrar en la base de datos aplicando la regla de 30 mensajes
+        nuevo_msg = registrar_mensaje_chat(db, numero, "operador", texto)
+
+        return {
+            "success": True,
+            "mensaje": {
+                "id": nuevo_msg.id,
+                "rol": nuevo_msg.rol,
+                "mensaje": nuevo_msg.mensaje,
+                "tipo": nuevo_msg.tipo,
+                "fecha_hora": nuevo_msg.fecha_hora.strftime("%Y-%m-%d %H:%M:%S") if nuevo_msg.fecha_hora else ""
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ========================================================================
 # CRUD DE ADMINISTRADORES DE WHATSAPP

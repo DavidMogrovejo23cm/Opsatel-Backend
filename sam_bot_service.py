@@ -941,11 +941,24 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
     # 0. Limpiar sesión si expiró el tiempo de inactividad (TTL)
     limpiar_sesion_si_expirada(numero)
 
+    # 0.1 Registrar mensaje del cliente en historial de chat persistente (máximo 30 mensajes)
+    try:
+        from routes.whatsapp import registrar_mensaje_chat
+        tipo_msg = "multimedia" if mensaje.startswith("[NON_TEXT_MSG]") else "texto"
+        registrar_mensaje_chat(db, numero, "cliente", mensaje, tipo=tipo_msg)
+    except Exception as e_chat:
+        print(f"[SAM Chatbot] Error registrando mensaje cliente en chat: {e_chat}")
+
     # 1. Manejo de mensajes no soportados (audio, imágenes, stickers)
     if mensaje.startswith("[NON_TEXT_MSG]"):
         tipo_recibido = mensaje.replace("[NON_TEXT_MSG]", "").strip() or "multimedia"
         response_text = f"Hola, soy SAM de Opsatel 😊 Por el momento solo puedo leer mensajes de texto. Por favor, escríbeme tu consulta en texto y con gusto te ayudo."
         guardar_mensaje_historial(numero, "assistant", response_text)
+        try:
+            from routes.whatsapp import registrar_mensaje_chat
+            registrar_mensaje_chat(db, numero, "asistente", response_text)
+        except Exception as e_chat:
+            print(f"[SAM Chatbot] Error registrando respuesta SAM: {e_chat}")
         whatsapp_service.send_whatsapp_message(numero, response_text)
         return response_text
 
@@ -956,6 +969,11 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
         historial_conversaciones[numero] = []
         response_text = "¡Listo! He reiniciado la conversación. ¿En qué te puedo colaborar hoy con tus servicios de Opsatel? 😊"
         guardar_mensaje_historial(numero, "assistant", response_text)
+        try:
+            from routes.whatsapp import registrar_mensaje_chat
+            registrar_mensaje_chat(db, numero, "asistente", response_text)
+        except Exception as e_chat:
+            print(f"[SAM Chatbot] Error registrando respuesta SAM: {e_chat}")
         whatsapp_service.send_whatsapp_message(numero, response_text)
         return response_text
 
@@ -1024,6 +1042,11 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
 
     # 8. Guardar la respuesta generada en el historial
     guardar_mensaje_historial(numero, "assistant", response_text)
+    try:
+        from routes.whatsapp import registrar_mensaje_chat
+        registrar_mensaje_chat(db, numero, "asistente", response_text)
+    except Exception as e_chat:
+        print(f"[SAM Chatbot] Error registrando respuesta SAM: {e_chat}")
     
     # 9. Despachar el mensaje por WhatsApp usando el servicio unificado
     whatsapp_service.send_whatsapp_message(numero, response_text)

@@ -698,6 +698,18 @@ class WhatsAppAdministrador(Base):
     activo = Column(Boolean, default=True)
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
 
+class WhatsAppMensajeChat(Base):
+    """Mensajes de chat bidireccionales entre Cliente y SAM / Operador (Regla: Máximo 30 mensajes por cliente)"""
+    __tablename__ = "whatsapp_mensajes_chat"
+    id = Column(Integer, primary_key=True, index=True)
+    numero = Column(String(50), index=True, nullable=False)  # Formato limpio (ej. 593982520824)
+    rol = Column(String(20), nullable=False)  # 'cliente', 'asistente', 'operador'
+    mensaje = Column(Text, nullable=False)
+    tipo = Column(String(50), default="texto")  # texto, multimedia, sistema
+    cliente_id = Column(Integer, nullable=True)  # ID del cliente si existe en BD
+    fecha_hora = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 
 class CajaNap(Base):
     __tablename__ = "cajas_nap"
