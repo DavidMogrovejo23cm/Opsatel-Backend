@@ -40,6 +40,52 @@ TTL_INACTIVIDAD_SEGUNDOS = 900
 # Límite máximo de mensajes en el historial para evitar fugas de memoria
 MAX_HISTORY_LEN = 12
 
+# Pausa por intervención de Operador Humano: 5 minutos (300 segundos)
+PAUSA_OPERADOR_SEGUNDOS = 300
+pausas_operador = {}
+
+def pausar_bot_por_operador(numero: str):
+    """
+    Pausa las respuestas automáticas de SAM para este contacto durante 5 minutos
+    porque un operador humano intervino en la conversación.
+    """
+    if not numero:
+        return
+    num_limpio = limpiar_numero_whatsapp(numero)
+    expira_en = time.time() + PAUSA_OPERADOR_SEGUNDOS
+    pausas_operador[num_limpio] = expira_en
+    solo_digitos = re.sub(r'\D', '', num_limpio)
+    if solo_digitos and "@lid" not in num_limpio:
+        pausas_operador[solo_digitos] = expira_en
+    print(f"[SAM Chatbot] ⏸️ Bot pausado para {numero} por 5 minutos (control tomado por Operador).")
+
+def esta_bot_pausado_por_operador(numero: str) -> bool:
+    """
+    Verifica si el bot está silenciado para este número debido a intervención reciente de operador humano.
+    """
+    if not numero:
+        return False
+    ahora = time.time()
+    num_limpio = limpiar_numero_whatsapp(numero)
+
+    expira = pausas_operador.get(num_limpio)
+    if expira and ahora < expira:
+        minutos_restantes = int((expira - ahora) / 60) + 1
+        print(f"[SAM Chatbot] 🤫 Bot en silencio para {numero}: Operador humano activo ({minutos_restantes} min restantes).")
+        return True
+    elif expira:
+        pausas_operador.pop(num_limpio, None)
+
+    solo_digitos = re.sub(r'\D', '', num_limpio)
+    if solo_digitos and "@lid" not in num_limpio:
+        expira_d = pausas_operador.get(solo_digitos)
+        if expira_d and ahora < expira_d:
+            return True
+        elif expira_d:
+            pausas_operador.pop(solo_digitos, None)
+
+    return False
+
 def limpiar_sesion_si_expirada(numero: str):
     """Limpia el estado y conversación si pasaron más de 15 minutos de inactividad"""
     ahora = time.time()
@@ -951,13 +997,18 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
     # 0. Limpiar sesión si expiró el tiempo de inactividad (TTL)
     limpiar_sesion_si_expirada(numero)
 
-    # 0.1 Registrar mensaje del cliente en historial de chat persistente (máximo 30 mensajes)
+    # 0.1 Registrar mensaje del cliente en historial de chat persistente (máximo 100 mensajes)
     try:
         from routes.whatsapp import registrar_mensaje_chat
         tipo_msg = "multimedia" if mensaje.startswith("[NON_TEXT_MSG]") else "texto"
         registrar_mensaje_chat(db, numero, "cliente", mensaje, tipo=tipo_msg)
     except Exception as e_chat:
         print(f"[SAM Chatbot] Error registrando mensaje cliente en chat: {e_chat}")
+
+    # 0.2 Comprobar si el bot está en pausa por intervención de un operador humano (5 minutos)
+    if esta_bot_pausado_por_operador(numero) or (jid_original and esta_bot_pausado_por_operador(jid_original)):
+        print(f"[SAM Chatbot] 🤫 Intervención de operador activa para {numero}. Bot en silencio por 5 minutos. Mensaje cliente guardado en chat.")
+        return ""
 
     # 1. Manejo de mensajes no soportados (audio, imágenes, stickers)
     if mensaje.startswith("[NON_TEXT_MSG]"):

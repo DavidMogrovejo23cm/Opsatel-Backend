@@ -186,10 +186,18 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
         except Exception:
             pass
 
-    # 2. Poda automática: Mantener exactamente los 30 más recientes
+    # Si quien envió el mensaje fue un Operador humano, pausar respuestas de SAM por 5 minutos
+    if rol == "operador":
+        try:
+            import sam_bot_service
+            sam_bot_service.pausar_bot_por_operador(num_limpio)
+        except Exception as e_pause:
+            print(f"[WhatsApp Chat] Error activando pausa de SAM para operador: {e_pause}")
+
+    # 2. Poda automática: Mantener exactamente los 100 más recientes
     subq = db.query(models.WhatsAppMensajeChat.id).filter(
         models.WhatsAppMensajeChat.numero == num_limpio
-    ).order_by(models.WhatsAppMensajeChat.id.desc()).offset(30).all()
+    ).order_by(models.WhatsAppMensajeChat.id.desc()).offset(100).all()
 
     if subq:
         ids_a_eliminar = [row[0] for row in subq]
@@ -681,7 +689,7 @@ def webhook_mensaje_whatsapp(
         )
 
 # ========================================================================
-# CHATS Y CONVERSACIONES POR CLIENTE (MÁXIMO 30 MENSAJES POR NÚMERO)
+# CHATS Y CONVERSACIONES POR CLIENTE (MÁXIMO 100 MENSAJES POR NÚMERO)
 # ========================================================================
 
 class EnviarMensajeChatPayload(BaseModel):
@@ -695,7 +703,7 @@ def listar_conversaciones_chat(db: Session = Depends(get_db)):
     Resuelve automáticamente nombres de contactos @lid a través del puente de WhatsApp.
     """
     try:
-        # Obtener el último mensaje por número y el conteo de mensajes (máximo 30)
+        # Obtener el último mensaje por número y el conteo de mensajes (máximo 100)
         subq = db.query(
             models.WhatsAppMensajeChat.numero,
             func.max(models.WhatsAppMensajeChat.id).label("max_id"),
@@ -797,13 +805,13 @@ def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
         num_solo_digitos = re.sub(r'\D', '', num_limpio)
         num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
 
-        # Obtener hasta los últimos 30 mensajes ordenados por id ASC para visualización natural de chat
+        # Obtener hasta los últimos 100 mensajes ordenados por id ASC para visualización natural de chat
         mensajes = db.query(models.WhatsAppMensajeChat).filter(
             (models.WhatsAppMensajeChat.numero == num_limpio) |
             (models.WhatsAppMensajeChat.numero == numero_decodificado) |
             (models.WhatsAppMensajeChat.numero == numero) |
             (models.WhatsAppMensajeChat.numero.like(f"%{num_solo_digitos}%"))
-        ).order_by(models.WhatsAppMensajeChat.id.asc()).limit(30).all()
+        ).order_by(models.WhatsAppMensajeChat.id.asc()).limit(100).all()
 
         # Buscar datos del cliente asociado
         cliente = None
@@ -912,7 +920,8 @@ def enviar_mensaje_desde_chat(
 ):
     """
     Permite al operador enviar un mensaje directo al cliente desde la interfaz de chat.
-    Despacha a WhatsApp (incluyendo JIDs @lid) y lo registra con rol 'operador', conservando solo los últimos 30 mensajes.
+    Despacha a WhatsApp (incluyendo JIDs @lid) y lo registra con rol 'operador', conservando hasta 100 mensajes.
+    Pausa automáticamente el bot SAM durante 5 minutos para que el operador atienda la conversación.
     """
     try:
         numero_decodificado = urllib.parse.unquote(numero).strip()
@@ -922,14 +931,22 @@ def enviar_mensaje_desde_chat(
 
         # 1. Enviar a través de WhatsApp (whatsapp_service y bridge ya preservan @lid)
         success = whatsapp_service.send_whatsapp_message(numero_decodificado, texto)
+
+        # 2. Registrar en la base de datos aplicando la regla de 100 mensajes
+        nuevo_msg = registrar_mensaje_chat(db, numero_decodificado, "operador", texto)
+
+        # 3. Pausar las respuestas automáticas de SAM por 5 minutos para este contacto
+        try:
+            import sam_bot_service
+            sam_bot_service.pausar_bot_por_operador(numero_decodificado)
+        except Exception as e_pause:
+            print(f"[WhatsApp Chat] Error pausando SAM: {e_pause}")
+
         if not success:
             raise HTTPException(
                 status_code=500,
                 detail="No se pudo enviar el mensaje a WhatsApp. Verifica que el servicio esté conectado."
             )
-
-        # 2. Registrar en la base de datos aplicando la regla de 30 mensajes
-        nuevo_msg = registrar_mensaje_chat(db, numero_decodificado, "operador", texto)
 
         return {
             "success": True,

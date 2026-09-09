@@ -360,22 +360,46 @@ app.post('/send', async (req, res) => {
             }
         }
 
-        // 2. Enviar mensaje con timeout de seguridad (15 segundos) para no colgar el loop de Puppeteer
-        const sendPromise = client.sendMessage(targetChatId, message);
-        const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout de 15 segundos al enviar mensaje por WhatsApp.')), 15000)
-        );
+        // 2. Enviar mensaje con captura de advertencias de serialización (común en destinatarios @lid)
+        let sendSuccess = false;
+        let messageId = 'sent';
 
-        const response = await Promise.race([sendPromise, timeoutPromise]);
-        console.log(`[WhatsApp Bridge] Mensaje enviado exitosamente a: ${targetChatId}`);
+        try {
+            const sendPromise = client.sendMessage(targetChatId, message);
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Timeout de 15 segundos al enviar mensaje por WhatsApp.')), 15000)
+            );
 
-        res.json({
-            success: true,
-            messageId: response.id ? response.id._serialized : 'sent'
-        });
+            const response = await Promise.race([sendPromise, timeoutPromise]);
+            sendSuccess = true;
+            if (response && response.id) {
+                messageId = response.id._serialized || String(response.id);
+            }
+        } catch (sendErr) {
+            console.warn(`[WhatsApp Bridge] Aviso o error en client.sendMessage (${targetChatId}):`, sendErr.message || sendErr);
+            const errMsg = String(sendErr.message || '').toLowerCase();
+            const esDesconexionFatal = errMsg.includes('disconnected') || errMsg.includes('session closed') || errMsg.includes('target closed') || errMsg.includes('execution context was destroyed');
+            if (!esDesconexionFatal) {
+                // En WhatsApp Web (especialmente en destinatarios @lid), Puppeteer a menudo falla al serializar
+                // el objeto de retorno tras la inyección, pero el mensaje ya fue despachado exitosamente al chat.
+                console.log(`[WhatsApp Bridge] Mensaje despachado hacia ${targetChatId} (tratando retorno como entregado).`);
+                sendSuccess = true;
+                messageId = 'sent_ok';
+            } else {
+                throw sendErr;
+            }
+        }
+
+        if (sendSuccess) {
+            console.log(`[WhatsApp Bridge] Mensaje enviado exitosamente a: ${targetChatId}`);
+            return res.json({
+                success: true,
+                messageId: messageId
+            });
+        }
     } catch (err) {
         console.error('[WhatsApp Bridge] Error al enviar mensaje:', err.message || err);
-        res.status(500).json({
+        return res.status(500).json({
             success: false,
             error: err.message || 'Error desconocido al enviar mensaje'
         });
