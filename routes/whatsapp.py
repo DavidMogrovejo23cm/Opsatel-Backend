@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi.responses import HTMLResponse, FileResponse
+import os
 from sqlalchemy.orm import Session
 from datetime import datetime
 import pytz
@@ -13,6 +15,45 @@ from typing import Optional
 import urllib.parse
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
+
+@router.get("", include_in_schema=False)
+@router.get("/", include_in_schema=False)
+def whatsapp_frontend_fallback():
+    """
+    Si el navegador o Nginx envía la petición de la página SPA /whatsapp al backend,
+    se sirve index.html si está disponible en disco o un redirect automático a la SPA
+    para evitar el error 404 {"detail": "Not Found"}.
+    """
+    candidate_paths = [
+        "/var/www/opsatel-frontend/index.html",
+        "/usr/share/nginx/html/index.html",
+        "/home/opsatel/Opsatel-Frontend/dist/index.html",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "Opsatel-Frontend", "dist", "index.html"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dist", "index.html")
+    ]
+    for path in candidate_paths:
+        if os.path.exists(path):
+            return FileResponse(path, media_type="text/html")
+            
+    html_content = """<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Opsatel - Redirigiendo a WhatsApp</title>
+    <script>
+        sessionStorage.setItem('opsatel_redirect', '/whatsapp');
+        window.location.replace('/');
+    </script>
+</head>
+<body style="background:#0b0f19;color:#94a3b8;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+    <div style="text-align:center;">
+        <h2 style="color:#38bdf8;">Opsatel WhatsApp</h2>
+        <p>Cargando aplicación...</p>
+    </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html_content, status_code=200)
 
 # Zona horaria Ecuador
 ECUADOR_TZ = pytz.timezone('America/Guayaquil')

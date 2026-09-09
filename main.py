@@ -189,10 +189,21 @@ async def generic_exception_handler(request: Request, exc: Exception):
         headers=CORS_HEADERS
     )
 
-# Silenciar favicon.ico 404
+# Favicon endpoint compatible con navegadores modernos (evita OpaqueResponseBlocking)
+EMPTY_FAVICON_BYTES = b"\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00 \x00h\x04\x00\x00\x16\x00\x00\x00(\x00\x00\x00\x10\x00\x00\x00 \x00\x00\x00\x01\x00 \x00\x00\x00\x00\x00\x00\x04\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" + b"\x00" * 1024
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
-    return Response(status_code=204)
+    for fav_path in [
+        "/var/www/opsatel-frontend/logo.png",
+        "/usr/share/nginx/html/logo.png",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Opsatel-Frontend", "public", "logo.png"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "logo.png")
+    ]:
+        if os.path.exists(fav_path):
+            from fastapi.responses import FileResponse
+            return FileResponse(fav_path, media_type="image/png")
+    return Response(content=EMPTY_FAVICON_BYTES, media_type="image/x-icon", status_code=200)
 
 # Rutas ya importadas arriba
 
