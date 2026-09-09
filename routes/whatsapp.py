@@ -100,11 +100,11 @@ def remove_accents(input_str):
         return ""
     return ''.join(c for c in unicodedata.normalize('NFD', str(input_str)) if unicodedata.category(c) != 'Mn')
 
-def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cliente_id: int = None, tipo: str = "texto"):
+def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cliente_id: int = None, tipo: str = "texto", nombre_remitente: str = ""):
     """
-    Registra un mensaje en el historial del chat y aplica la regla estricta:
-    Guarda únicamente los últimos 30 mensajes por número telefónico, podando los más antiguos.
-    Soporta identificadores @lid y números telefónicos estándar vinculando al cliente correspondiente.
+    Registra un mensaje en el historial del chat y vincula automáticamente al cliente en la base de datos:
+    Guarda hasta 100 mensajes por número telefónico o identificador @lid.
+    Resuelve automáticamente el cliente_id desde la BD por teléfono o nombre.
     """
     if not numero or not mensaje:
         return None
@@ -115,7 +115,7 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
 
     is_lid = "@lid" in str(num_limpio).lower() or str(numero).lower().endswith("@lid")
 
-    # Si no tiene cliente_id asignado, buscar coincidencia en la BD
+    # Si no tiene cliente_id asignado, buscar coincidencia automática en la BD
     if not cliente_id:
         # 1. Comprobar si ya existe algún mensaje previo con este número exacto que tenga cliente_id
         prev_msg = db.query(models.WhatsAppMensajeChat.cliente_id).filter(
@@ -125,14 +125,23 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
         if prev_msg:
             cliente_id = prev_msg[0]
 
-        # 2. Si es LID y no tenemos cliente_id, intentar resolver datos reales mediante el bridge
+        # 2. Si se proporcionó nombre_remitente (desde webhook pushname), buscar directamente en la BD
+        if not cliente_id and nombre_remitente:
+            try:
+                import sam_bot_service
+                c_match, _ = sam_bot_service.buscar_cliente_por_nombre(nombre_remitente, db)
+                if c_match:
+                    cliente_id = c_match.id
+            except Exception as e_nom:
+                print(f"[registrar_mensaje_chat] Error vinculando por nombre_remitente '{nombre_remitente}': {e_nom}")
+
+        # 3. Si es LID y aún no tenemos cliente_id, consultar contacto en el bridge
         if not cliente_id and is_lid:
             info_contacto = obtener_info_contacto_bridge(num_limpio)
             if info_contacto:
                 real_number = info_contacto.get("number")
                 pushname = info_contacto.get("pushname") or info_contacto.get("name")
 
-                # Intentar por número real si se obtuvo
                 if real_number:
                     try:
                         import sam_bot_service
@@ -142,7 +151,6 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
                     except Exception:
                         pass
 
-                # Si aún no coincide por número, intentar por nombre pushname
                 if not cliente_id and pushname:
                     try:
                         import sam_bot_service
@@ -152,7 +160,7 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
                     except Exception:
                         pass
 
-        # 3. Si es un número estándar (@c.us o dígitos)
+        # 4. Si es un número estándar (@c.us o dígitos), buscar por teléfono en la BD
         if not cliente_id and not is_lid:
             try:
                 import sam_bot_service

@@ -385,7 +385,12 @@ def buscar_cliente_por_nombre(nombre_buscar: str, db: Session):
     if not nombre_buscar or len(str(nombre_buscar).strip()) < 2:
         return None, []
 
+    # Limpiar sufijos o prefijos como (WhatsApp), (LID), corchetes, etc.
     nombre_limpio = str(nombre_buscar).strip()
+    nombre_limpio = re.sub(r'\(.*?\)', '', nombre_limpio).strip()
+    nombre_limpio = re.sub(r'\[.*?\]', '', nombre_limpio).strip()
+    if not nombre_limpio or len(nombre_limpio) < 2:
+        return None, []
 
     # 1. Búsqueda directa exacta o substring en SQL
     c_exact = db.query(models.Cliente).filter(models.Cliente.nombre.ilike(f"%{nombre_limpio}%")).first()
@@ -1061,7 +1066,7 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
     try:
         from routes.whatsapp import registrar_mensaje_chat
         tipo_msg = "multimedia" if mensaje.startswith("[NON_TEXT_MSG]") else "texto"
-        registrar_mensaje_chat(db, numero, "cliente", mensaje, tipo=tipo_msg)
+        registrar_mensaje_chat(db, numero, "cliente", mensaje, tipo=tipo_msg, nombre_remitente=nombre_remitente)
     except Exception as e_chat:
         print(f"[SAM Chatbot] Error registrando mensaje cliente en chat: {e_chat}")
 
