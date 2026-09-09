@@ -675,6 +675,20 @@ class WhatsAppHistorial(Base):
     fecha_envio = Column(String(50))  # YYYY-MM-DD HH:MM:SS
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
 
+class WhatsAppDifusionHistorial(Base):
+    """Historial de campañas de difusión masiva y envíos programados grupales"""
+    __tablename__ = "whatsapp_difusiones_historial"
+    id = Column(Integer, primary_key=True, index=True)
+    tipo = Column(String(50), default="difusion_masiva")  # difusion_masiva, envio_programado, envio_manual
+    alcance = Column(String(150), default="TODOS los clientes activos")  # "TODOS los clientes activos", "Nodo: ...", "Parroquia: ..."
+    mensaje = Column(Text, nullable=False)
+    total_destinatarios = Column(Integer, default=0)
+    total_exitosos = Column(Integer, default=0)
+    total_fallidos = Column(Integer, default=0)
+    estado = Column(String(50), default="completado")  # en_proceso, completado, fallido
+    fecha_envio = Column(String(50))  # YYYY-MM-DD HH:MM:SS
+    fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+
 class WhatsAppConfiguracion(Base):
     """Configuración de envío automático de WhatsApp"""
     __tablename__ = "whatsapp_configuracion"

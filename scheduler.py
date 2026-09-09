@@ -57,12 +57,11 @@ def enviar_whatsapp_programado():
                 # Envío diario recurrente
                 debe_enviar = True
             elif rec == 'mensual':
-                # Envío mensual recurrente: mismo día del mes que fecha_programada
-                if config.fecha_programada:
-                    dia_programado = config.fecha_programada.day
-                    dia_actual = ahora.day
-                    if dia_programado == dia_actual:
-                        debe_enviar = True
+                # Envío mensual recurrente: mismo día del mes que fecha_programada (por defecto día 1)
+                dia_programado = config.fecha_programada.day if config.fecha_programada else 1
+                dia_actual = ahora.day
+                if dia_programado == dia_actual:
+                    debe_enviar = True
             elif rec == 'unico':
                 # Envío único programado
                 if config.fecha_programada:
@@ -164,6 +163,25 @@ def enviar_whatsapp_programado():
                 print(f"[WhatsApp] Desactivando configuración única ID {config.id} tras envío.")
                 db.commit()
                 
+            # Registrar resumen de envío programado en historial de difusiones
+            try:
+                rec_tag = "Mensual" if rec == 'mensual' else ("Diario" if rec == 'diario' else "Único")
+                difusion_prog = models.WhatsAppDifusionHistorial(
+                    tipo="envio_programado",
+                    alcance=f"TODOS los clientes activos (Recurrencia {rec_tag})",
+                    mensaje=config.mensaje_programado,
+                    total_destinatarios=len(clientes),
+                    total_exitosos=enviados,
+                    total_fallidos=fallidos,
+                    estado="completado" if fallidos < len(clientes) else "fallido",
+                    fecha_envio=ahora.strftime("%Y-%m-%d %H:%M:%S"),
+                    fecha_creacion=ahora
+                )
+                db.add(difusion_prog)
+                db.commit()
+            except Exception as e_dif:
+                print(f"[WhatsApp Scheduler] Error guardando difusion_prog: {e_dif}")
+
             print(f"[WhatsApp] Envío completado para config ID {config.id}. Enviados: {enviados}, Fallidos: {fallidos}")
     
     except Exception as e:
