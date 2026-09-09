@@ -148,9 +148,14 @@ setInterval(async () => {
 const fastapiPort = parseInt(process.env.FASTAPI_PORT || process.env.BACKEND_PORT || '8000', 10);
 
 // Webhook to send incoming messages to FastAPI (SAM Chatbot)
-function sendWebhook(from, body) {
+function sendWebhook(from, body, pushname = '', originalJid = '') {
     const http = require('http');
-    const payload = JSON.stringify({ numero: from, mensaje: body });
+    const payload = JSON.stringify({ 
+        numero: from, 
+        mensaje: body,
+        nombre: pushname,
+        jid_original: originalJid
+    });
     const options = {
         hostname: '127.0.0.1', // Usar 127.0.0.1 explícito para evitar fallos de IPv6 ::1
         port: fastapiPort,
@@ -162,7 +167,7 @@ function sendWebhook(from, body) {
         }
     };
 
-    console.log(`[Webhook] Enviando mensaje a FastAPI (puerto ${fastapiPort}) de ${from}: ${body.substring(0, 40)}...`);
+    console.log(`[Webhook] Enviando mensaje a FastAPI (puerto ${fastapiPort}) de ${from} (${pushname || 'Sin nombre'}): ${body.substring(0, 40)}...`);
     const req = http.request(options, (res) => {
         let data = '';
         res.on('data', (chunk) => data += chunk);
@@ -191,18 +196,59 @@ client.on('message', async (msg) => {
     if (client.info && client.info.wid && msg.from === client.info.wid._serialized) return;
     if (msg.from.endsWith('@g.us')) return; // Ignore group chats
 
-    console.log(`[WhatsApp Bridge] Mensaje entrante de ${msg.from} (tipo: ${msg.type}): "${msg.body ? msg.body.substring(0, 40) : '[Sin texto]'}"`);
+    let remitente = msg.from;
+    let pushname = msg._data?.notifyName || '';
+    let realPhone = '';
+
+    try {
+        const contact = await msg.getContact();
+        if (contact) {
+            if (contact.number) realPhone = contact.number;
+            if (contact.pushname) pushname = contact.pushname;
+            else if (contact.name) pushname = contact.name;
+        }
+    } catch (eContact) {
+        console.warn(`[WhatsApp Bridge] No se pudo obtener contacto de ${msg.from}:`, eContact.message);
+    }
+
+    // Si viene como @lid pero obtuvimos su número telefónico real, usarlo para vincular con la BD
+    let idDestino = remitente;
+    if (remitente.endsWith('@lid') && realPhone) {
+        idDestino = `${realPhone}@c.us`;
+        console.log(`[WhatsApp Bridge] Mapeando LID ${remitente} -> Teléfono real: ${idDestino} (${pushname})`);
+    }
+
+    console.log(`[WhatsApp Bridge] Mensaje entrante de ${idDestino} (LID original: ${msg.from}, nombre: "${pushname}"): "${msg.body ? msg.body.substring(0, 40) : '[Sin texto]'}"`);
 
     // Manejar mensajes de texto
     if (msg.type === 'chat' && msg.body) {
-        sendWebhook(msg.from, msg.body);
+        sendWebhook(idDestino, msg.body, pushname, msg.from);
     } else if (msg.type && msg.type !== 'chat') {
         // Notificar a SAM sobre mensaje no-texto (audio, imagen, video, documento)
-        sendWebhook(msg.from, `[NON_TEXT_MSG] ${msg.type}`);
+        sendWebhook(idDestino, `[NON_TEXT_MSG] ${msg.type}`, pushname, msg.from);
     }
 });
 
 // --- API Endpoints ---
+
+// Obtener detalles de un contacto (Teléfono real y Nombre público)
+app.get('/contact/:chatId', async (req, res) => {
+    try {
+        const { chatId } = req.params;
+        if (clientStatus !== 'CONNECTED') {
+            return res.status(503).json({ success: false, error: 'WhatsApp desconectado' });
+        }
+        const contact = await client.getContactById(chatId);
+        res.json({
+            success: true,
+            number: contact.number || null,
+            name: contact.name || null,
+            pushname: contact.pushname || null
+        });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
 
 // Cerrar sesión activa (Logout)
 app.post('/logout', async (req, res) => {
@@ -277,36 +323,41 @@ app.post('/send', async (req, res) => {
             cleanNumber = cleanNumber.replace(/\D/g, '');
         }
         
-        // Ecuador specific formatting
-        if (cleanNumber.startsWith('0') && cleanNumber.length === 10) {
-            cleanNumber = '593' + cleanNumber.substring(1);
-        } else if (cleanNumber.length === 9 && !cleanNumber.startsWith('593')) {
-            cleanNumber = '593' + cleanNumber;
+        // Ecuador specific formatting (solo para @c.us)
+        if (server !== 'lid') {
+            if (cleanNumber.startsWith('0') && cleanNumber.length === 10) {
+                cleanNumber = '593' + cleanNumber.substring(1);
+            } else if (cleanNumber.length === 9 && !cleanNumber.startsWith('593')) {
+                cleanNumber = '593' + cleanNumber;
+            }
         }
 
         const chatId = `${cleanNumber}@${server}`;
         console.log(`[WhatsApp Bridge] Preparando envío a: ${chatId}`);
 
-        // 1. Verificación previa: Comprobar si el número está registrado en WhatsApp
-        // Esto evita que Puppeteer quede colgado con modales de error en números inexistentes
+        // 1. Verificación previa: Comprobar si el número está registrado en WhatsApp (SOLO para @c.us)
+        // IMPORTANTE: NO ejecutar getNumberId para @lid porque getNumberId solo acepta números de teléfono
+        // y retorna null para LIDs, provocando rechazos erróneos.
         let targetChatId = chatId;
-        try {
-            const numberCheck = await Promise.race([
-                client.getNumberId(chatId),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout_check')), 6000))
-            ]);
+        if (!chatId.endsWith('@lid') && server !== 'lid') {
+            try {
+                const numberCheck = await Promise.race([
+                    client.getNumberId(chatId),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout_check')), 6000))
+                ]);
 
-            if (numberCheck && numberCheck._serialized) {
-                targetChatId = numberCheck._serialized;
-            } else if (numberCheck === null) {
-                console.warn(`[WhatsApp Bridge] El número ${chatId} no está registrado en WhatsApp. Omitiendo envío.`);
-                return res.status(400).json({
-                    success: false,
-                    error: 'El número no está registrado en WhatsApp.'
-                });
+                if (numberCheck && numberCheck._serialized) {
+                    targetChatId = numberCheck._serialized;
+                } else if (numberCheck === null) {
+                    console.warn(`[WhatsApp Bridge] El número ${chatId} no está registrado en WhatsApp. Omitiendo envío.`);
+                    return res.status(400).json({
+                        success: false,
+                        error: 'El número no está registrado en WhatsApp.'
+                    });
+                }
+            } catch (errCheck) {
+                console.warn(`[WhatsApp Bridge] Aviso en verificación de número (${chatId}): ${errCheck.message}`);
             }
-        } catch (errCheck) {
-            console.warn(`[WhatsApp Bridge] Aviso en verificación de número (${chatId}): ${errCheck.message}`);
         }
 
         // 2. Enviar mensaje con timeout de seguridad (15 segundos) para no colgar el loop de Puppeteer

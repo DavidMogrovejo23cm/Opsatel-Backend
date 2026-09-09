@@ -8,10 +8,34 @@ from .auth import require_role
 import traceback
 import whatsapp_service
 
+import requests
+from typing import Optional
+import urllib.parse
+
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 
 # Zona horaria Ecuador
 ECUADOR_TZ = pytz.timezone('America/Guayaquil')
+
+def obtener_info_contacto_bridge(chat_id: str):
+    """
+    Consulta al puente local de WhatsApp (/contact/:chatId) para obtener
+    el número telefónico real y el nombre de perfil del contacto.
+    """
+    if not chat_id:
+        return None
+    try:
+        bridge_url = getattr(whatsapp_service, "WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+        url = f"{bridge_url.rstrip('/')}/contact/{urllib.parse.quote(chat_id)}"
+        resp = requests.get(url, timeout=3)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("success"):
+                return data
+    except Exception as e:
+        print(f"[WhatsApp Route] Error consultando contacto en bridge para {chat_id}: {e}")
+    return None
+
 
 from sqlalchemy import or_, func
 import unicodedata
@@ -80,24 +104,65 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
     """
     Registra un mensaje en el historial del chat y aplica la regla estricta:
     Guarda únicamente los últimos 30 mensajes por número telefónico, podando los más antiguos.
+    Soporta identificadores @lid y números telefónicos estándar vinculando al cliente correspondiente.
     """
     if not numero or not mensaje:
         return None
 
     num_limpio = whatsapp_service.format_whatsapp_number(numero)
     if not num_limpio:
-        num_limpio = re.sub(r'\D', '', str(numero))
+        num_limpio = str(numero).strip()
+
+    is_lid = "@lid" in str(num_limpio).lower() or str(numero).lower().endswith("@lid")
 
     # Si no tiene cliente_id asignado, buscar coincidencia en la BD
     if not cliente_id:
-        num_solo_digitos = re.sub(r'\D', '', num_limpio)
-        num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
-        c = db.query(models.Cliente.id).filter(
-            (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
-            (models.Cliente.celular.like(f"%{num_ecuador}%"))
-        ).first()
-        if c:
-            cliente_id = c[0]
+        # 1. Comprobar si ya existe algún mensaje previo con este número exacto que tenga cliente_id
+        prev_msg = db.query(models.WhatsAppMensajeChat.cliente_id).filter(
+            models.WhatsAppMensajeChat.numero == num_limpio,
+            models.WhatsAppMensajeChat.cliente_id.isnot(None)
+        ).order_by(models.WhatsAppMensajeChat.id.desc()).first()
+        if prev_msg:
+            cliente_id = prev_msg[0]
+
+        # 2. Si es LID y no tenemos cliente_id, intentar resolver datos reales mediante el bridge
+        if not cliente_id and is_lid:
+            info_contacto = obtener_info_contacto_bridge(num_limpio)
+            if info_contacto:
+                real_number = info_contacto.get("number")
+                pushname = info_contacto.get("pushname") or info_contacto.get("name")
+
+                # Intentar por número real si se obtuvo
+                if real_number:
+                    real_digits = re.sub(r'\D', '', real_number)
+                    num_ec = "0" + real_digits[3:] if real_digits.startswith("593") and len(real_digits) > 3 else real_digits
+                    c = db.query(models.Cliente.id).filter(
+                        (models.Cliente.celular.like(f"%{real_digits}%")) |
+                        (models.Cliente.celular.like(f"%{num_ec}%"))
+                    ).first()
+                    if c:
+                        cliente_id = c[0]
+
+                # Si aún no coincide por número, intentar por nombre pushname
+                if not cliente_id and pushname:
+                    try:
+                        import sam_bot_service
+                        c_match, _ = sam_bot_service.buscar_cliente_por_nombre(pushname, db)
+                        if c_match:
+                            cliente_id = c_match.id
+                    except Exception:
+                        pass
+
+        # 3. Si es un número estándar (@c.us o dígitos)
+        if not cliente_id and not is_lid:
+            num_solo_digitos = re.sub(r'\D', '', num_limpio)
+            num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
+            c = db.query(models.Cliente.id).filter(
+                (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
+                (models.Cliente.celular.like(f"%{num_ecuador}%"))
+            ).first()
+            if c:
+                cliente_id = c[0]
 
     # 1. Crear el nuevo mensaje
     nuevo_msg = models.WhatsAppMensajeChat(
@@ -110,6 +175,16 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
     )
     db.add(nuevo_msg)
     db.flush()
+
+    # Si se determinó cliente_id, propagarlo a mensajes anteriores de este mismo identificador que no lo tenían
+    if cliente_id:
+        try:
+            db.query(models.WhatsAppMensajeChat).filter(
+                models.WhatsAppMensajeChat.numero == num_limpio,
+                models.WhatsAppMensajeChat.cliente_id.is_(None)
+            ).update({"cliente_id": cliente_id}, synchronize_session=False)
+        except Exception:
+            pass
 
     # 2. Poda automática: Mantener exactamente los 30 más recientes
     subq = db.query(models.WhatsAppMensajeChat.id).filter(
@@ -561,10 +636,14 @@ def enviar_whatsapp_global(
     }
 
 from pydantic import BaseModel
+from typing import Optional
+import urllib.parse
 
 class WhatsAppWebhookPayload(BaseModel):
     numero: str
     mensaje: str
+    nombre: Optional[str] = None
+    jid_original: Optional[str] = None
 
 @router.post("/webhook-mensaje")
 def webhook_mensaje_whatsapp(
@@ -578,10 +657,15 @@ def webhook_mensaje_whatsapp(
     try:
         import sam_bot_service
         
+        # Si el mensaje provino de un LID (@lid), enviar la respuesta al LID original
+        destino = payload.jid_original if (payload.jid_original and "@lid" in str(payload.jid_original).lower()) else payload.numero
+
         response_text = sam_bot_service.procesar_mensaje_entrante(
-            numero=payload.numero,
+            numero=destino,
             mensaje=payload.mensaje,
-            db=db
+            db=db,
+            nombre_remitente=payload.nombre or "",
+            jid_original=payload.jid_original or ""
         )
         return {
             "success": True,
@@ -589,6 +673,7 @@ def webhook_mensaje_whatsapp(
         }
     except Exception as e:
         print(f"[Webhook Mensaje Error] {str(e)}")
+        import traceback
         print(traceback.format_exc())
         raise HTTPException(
             status_code=500,
@@ -607,6 +692,7 @@ def listar_conversaciones_chat(db: Session = Depends(get_db)):
     """
     Obtiene la lista de clientes con los que se tiene conversación activa,
     ordenados por la fecha del último mensaje recibido o enviado.
+    Resuelve automáticamente nombres de contactos @lid a través del puente de WhatsApp.
     """
     try:
         # Obtener el último mensaje por número y el conteo de mensajes (máximo 30)
@@ -623,23 +709,63 @@ def listar_conversaciones_chat(db: Session = Depends(get_db)):
         resultado = []
         for msg, total_msgs in filas:
             num_limpio = msg.numero
+            is_lid = "@lid" in str(num_limpio).lower()
             num_solo_digitos = re.sub(r'\D', '', num_limpio)
             num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
 
             # Buscar datos del cliente si existe en la BD
             cliente = None
+            pushname_fallback = None
+
             if msg.cliente_id:
                 cliente = db.query(models.Cliente).filter(models.Cliente.id == msg.cliente_id).first()
-            if not cliente:
+
+            if not cliente and not is_lid:
                 cliente = db.query(models.Cliente).filter(
                     (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
                     (models.Cliente.celular.like(f"%{num_ecuador}%"))
                 ).first()
 
+            # Si es LID y no tenemos cliente vinculado, intentar resolver contacto por puente
+            if not cliente and is_lid:
+                info_contacto = obtener_info_contacto_bridge(num_limpio)
+                if info_contacto:
+                    real_number = info_contacto.get("number")
+                    pushname = info_contacto.get("pushname") or info_contacto.get("name")
+                    if real_number:
+                        real_digits = re.sub(r'\D', '', real_number)
+                        num_ec = "0" + real_digits[3:] if real_digits.startswith("593") and len(real_digits) > 3 else real_digits
+                        cliente = db.query(models.Cliente).filter(
+                            (models.Cliente.celular.like(f"%{real_digits}%")) |
+                            (models.Cliente.celular.like(f"%{num_ec}%"))
+                        ).first()
+
+                    if not cliente and pushname:
+                        try:
+                            import sam_bot_service
+                            c_match, _ = sam_bot_service.buscar_cliente_por_nombre(pushname, db)
+                            if c_match:
+                                cliente = c_match
+                            else:
+                                pushname_fallback = pushname
+                        except Exception:
+                            pushname_fallback = pushname
+
+                    if cliente:
+                        try:
+                            db.query(models.WhatsAppMensajeChat).filter(
+                                models.WhatsAppMensajeChat.numero == num_limpio
+                            ).update({"cliente_id": cliente.id}, synchronize_session=False)
+                            db.commit()
+                        except Exception:
+                            db.rollback()
+
+            nombre_mostrar = cliente.nombre if cliente else (f"{pushname_fallback} (WhatsApp)" if pushname_fallback else f"Cliente ({msg.numero})")
+
             resultado.append({
                 "numero": msg.numero,
                 "cliente_id": cliente.id if cliente else None,
-                "nombre": cliente.nombre if cliente else f"Cliente ({msg.numero})",
+                "nombre": nombre_mostrar,
                 "plan": cliente.plan if cliente else "No especificado",
                 "saldo": float(cliente.saldo or 0.0) if cliente else 0.0,
                 "estado": cliente.estado if cliente else "Desconocido",
@@ -656,34 +782,85 @@ def listar_conversaciones_chat(db: Session = Depends(get_db)):
         print(f"[Error Listar Conversaciones] {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/conversaciones/{numero}", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+@router.get("/conversaciones/{numero:path}", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
     """
     Obtiene el historial de chat con un cliente específico (hasta 30 mensajes cronológicos).
     """
     try:
-        num_limpio = whatsapp_service.format_whatsapp_number(numero)
+        numero_decodificado = urllib.parse.unquote(numero).strip()
+        num_limpio = whatsapp_service.format_whatsapp_number(numero_decodificado)
         if not num_limpio:
-            num_limpio = re.sub(r'\D', '', str(numero))
+            num_limpio = numero_decodificado
 
+        is_lid = "@lid" in str(num_limpio).lower()
         num_solo_digitos = re.sub(r'\D', '', num_limpio)
         num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
-
-        # Buscar cliente
-        cliente = db.query(models.Cliente).filter(
-            (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
-            (models.Cliente.celular.like(f"%{num_ecuador}%"))
-        ).first()
 
         # Obtener hasta los últimos 30 mensajes ordenados por id ASC para visualización natural de chat
         mensajes = db.query(models.WhatsAppMensajeChat).filter(
             (models.WhatsAppMensajeChat.numero == num_limpio) |
+            (models.WhatsAppMensajeChat.numero == numero_decodificado) |
+            (models.WhatsAppMensajeChat.numero == numero) |
             (models.WhatsAppMensajeChat.numero.like(f"%{num_solo_digitos}%"))
         ).order_by(models.WhatsAppMensajeChat.id.asc()).limit(30).all()
 
-        return {
-            "numero": num_limpio,
-            "cliente": {
+        # Buscar datos del cliente asociado
+        cliente = None
+        pushname_fallback = None
+
+        # 1. Comprobar si algún mensaje en el historial ya tiene cliente_id asignado
+        for m in reversed(mensajes):
+            if m.cliente_id:
+                cliente = db.query(models.Cliente).filter(models.Cliente.id == m.cliente_id).first()
+                if cliente:
+                    break
+
+        # 2. Si no es LID, buscar por teléfono estándar en la base de datos
+        if not cliente and not is_lid:
+            cliente = db.query(models.Cliente).filter(
+                (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
+                (models.Cliente.celular.like(f"%{num_ecuador}%"))
+            ).first()
+
+        # 3. Si es LID y no se ha vinculado, resolver mediante el bridge de WhatsApp
+        if not cliente and is_lid:
+            info_contacto = obtener_info_contacto_bridge(num_limpio)
+            if info_contacto:
+                real_number = info_contacto.get("number")
+                pushname = info_contacto.get("pushname") or info_contacto.get("name")
+                if real_number:
+                    real_digits = re.sub(r'\D', '', real_number)
+                    num_ec = "0" + real_digits[3:] if real_digits.startswith("593") and len(real_digits) > 3 else real_digits
+                    cliente = db.query(models.Cliente).filter(
+                        (models.Cliente.celular.like(f"%{real_digits}%")) |
+                        (models.Cliente.celular.like(f"%{num_ec}%"))
+                    ).first()
+
+                if not cliente and pushname:
+                    try:
+                        import sam_bot_service
+                        c_match, _ = sam_bot_service.buscar_cliente_por_nombre(pushname, db)
+                        if c_match:
+                            cliente = c_match
+                        else:
+                            pushname_fallback = pushname
+                    except Exception:
+                        pushname_fallback = pushname
+
+                if cliente:
+                    try:
+                        db.query(models.WhatsAppMensajeChat).filter(
+                            (models.WhatsAppMensajeChat.numero == num_limpio) |
+                            (models.WhatsAppMensajeChat.numero == numero_decodificado)
+                        ).update({"cliente_id": cliente.id}, synchronize_session=False)
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+
+        cliente_data = None
+        if cliente:
+            cliente_data = {
                 "id": cliente.id,
                 "nombre": cliente.nombre,
                 "cedula": cliente.cedula,
@@ -694,7 +871,24 @@ def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
                 "nodo": cliente.nodo,
                 "parroquia": cliente.parroquia,
                 "direccion": cliente.direccion
-            } if cliente else None,
+            }
+        elif pushname_fallback:
+            cliente_data = {
+                "id": None,
+                "nombre": f"{pushname_fallback} (WhatsApp)",
+                "cedula": "N/A",
+                "celular": numero_decodificado,
+                "plan": "No registrado",
+                "saldo": 0.0,
+                "estado": "WhatsApp",
+                "nodo": "N/A",
+                "parroquia": "N/A",
+                "direccion": "N/A"
+            }
+
+        return {
+            "numero": num_limpio,
+            "cliente": cliente_data,
             "mensajes": [
                 {
                     "id": m.id,
@@ -710,7 +904,7 @@ def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
         print(f"[Error Obtener Chat] {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/conversaciones/{numero}/enviar", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+@router.post("/conversaciones/{numero:path}/enviar", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def enviar_mensaje_desde_chat(
     numero: str,
     payload: EnviarMensajeChatPayload,
@@ -718,15 +912,16 @@ def enviar_mensaje_desde_chat(
 ):
     """
     Permite al operador enviar un mensaje directo al cliente desde la interfaz de chat.
-    Despacha a WhatsApp y lo registra con rol 'operador', conservando solo los últimos 30 mensajes.
+    Despacha a WhatsApp (incluyendo JIDs @lid) y lo registra con rol 'operador', conservando solo los últimos 30 mensajes.
     """
     try:
+        numero_decodificado = urllib.parse.unquote(numero).strip()
         texto = payload.mensaje.strip() if payload.mensaje else ""
         if not texto:
             raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío")
 
-        # 1. Enviar a través de WhatsApp
-        success = whatsapp_service.send_whatsapp_message(numero, texto)
+        # 1. Enviar a través de WhatsApp (whatsapp_service y bridge ya preservan @lid)
+        success = whatsapp_service.send_whatsapp_message(numero_decodificado, texto)
         if not success:
             raise HTTPException(
                 status_code=500,
@@ -734,21 +929,22 @@ def enviar_mensaje_desde_chat(
             )
 
         # 2. Registrar en la base de datos aplicando la regla de 30 mensajes
-        nuevo_msg = registrar_mensaje_chat(db, numero, "operador", texto)
+        nuevo_msg = registrar_mensaje_chat(db, numero_decodificado, "operador", texto)
 
         return {
             "success": True,
             "mensaje": {
-                "id": nuevo_msg.id,
-                "rol": nuevo_msg.rol,
-                "mensaje": nuevo_msg.mensaje,
-                "tipo": nuevo_msg.tipo,
-                "fecha_hora": nuevo_msg.fecha_hora.strftime("%Y-%m-%d %H:%M:%S") if nuevo_msg.fecha_hora else ""
+                "id": nuevo_msg.id if nuevo_msg else None,
+                "rol": "operador",
+                "mensaje": texto,
+                "tipo": "texto",
+                "fecha_hora": datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S")
             }
         }
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[Error Enviar Mensaje Chat] {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ========================================================================

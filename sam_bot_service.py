@@ -51,10 +51,17 @@ def limpiar_sesion_si_expirada(numero: str):
     ultimas_interacciones[numero] = ahora
 
 def limpiar_numero_whatsapp(numero: str) -> str:
-    """Limpia el formato del número eliminando @c.us y no-dígitos"""
-    if "@" in numero:
-        numero = numero.split("@")[0]
-    return re.sub(r'\D', '', str(numero))
+    """Limpia el formato del número conservando identificadores @lid intactos si corresponden"""
+    if not numero:
+        return ""
+    num_str = str(numero).strip()
+    if "@lid" in num_str.lower():
+        parts = num_str.split("@")
+        clean_user = re.sub(r'[^\w.-]', '', parts[0])
+        return f"{clean_user}@lid"
+    if "@" in num_str:
+        num_str = num_str.split("@")[0]
+    return re.sub(r'\D', '', num_str)
 
 def obtener_contexto_conversacion(numero: str, mensaje_actual: str) -> str:
     """Construye un string con el historial y el mensaje actual"""
@@ -932,13 +939,13 @@ def procesar_comando_administrador(numero: str, mensaje: str, contexto: str, db:
 # -------------------------------------------------------------
 # FUNCIÓN PRINCIPAL DE ENTRADA AL SERVICIO
 # -------------------------------------------------------------
-def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
+def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_remitente: str = "", jid_original: str = "") -> str:
     """
     Punto de entrada principal para el chatbot SAM.
-    Recibe el número telefónico del remitente y el contenido del mensaje.
+    Recibe el número telefónico o JID del remitente y el contenido del mensaje.
     Procesa según la intención detectada y devuelve la respuesta generada sin atascarse.
     """
-    # Limpiar formato del número eliminando @c.us y caracteres no numéricos
+    # Limpiar formato del número preservando @lid si corresponde
     numero = limpiar_numero_whatsapp(numero)
 
     # 0. Limpiar sesión si expiró el tiempo de inactividad (TTL)

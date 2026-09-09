@@ -41,6 +41,10 @@ def format_whatsapp_number(number: str) -> str:
     if not cleaned:
         return ""
 
+    # Si es un identificador de dispositivo vinculado (@lid) de WhatsApp, preservarlo tal cual
+    if server.lower() == "@lid":
+        return f"{cleaned}@lid"
+
     # Detección y filtrado de teléfonos fijos de Ecuador (02, 03, 04, 05, 06, 07)
     # Tienen 9 dígitos y no inician con 9 (los celulares inician con 09 o 9)
     if len(cleaned) == 9 and cleaned.startswith(('02', '03', '04', '05', '06', '07')):
