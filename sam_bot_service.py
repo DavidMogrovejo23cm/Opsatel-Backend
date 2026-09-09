@@ -12,16 +12,19 @@ import whatsapp_service
 CLAUDE_MODEL = "claude-3-5-haiku-20241022"
 
 # Inicializar cliente de Anthropic si la clave está configurada
+import time
+
 client_ai = None
 def get_anthropic_client():
     global client_ai
     if client_ai is None:
         api_key = os.getenv("ANTHROPIC_API_KEY")
-        if api_key:
-            client_ai = anthropic.Anthropic(api_key=api_key)
+        if api_key and api_key.strip():
+            client_ai = anthropic.Anthropic(api_key=api_key.strip())
         else:
-            # Fallback a la clave de pruebas si no está en el .env
-            client_ai = anthropic.Anthropic(api_key="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")
+            # Clave no configurada: avisar y permitir fallback a lógica por reglas/palabras clave
+            print("[SAM Chatbot] Aviso: ANTHROPIC_API_KEY no configurada. Usando fallback de reglas y palabras clave.")
+            return None
     return client_ai
 
 # Estructura para almacenar el historial de conversaciones por número en memoria
@@ -29,9 +32,23 @@ def get_anthropic_client():
 historial_conversaciones = {}
 # Estado del skill activo por número: {numero: "skill_name"}
 estados_skills = {}
+# Registro de última interacción por número para auto-expiración (TTL)
+ultimas_interacciones = {}
 
+# Límite de inactividad (TTL): 15 minutos en segundos
+TTL_INACTIVIDAD_SEGUNDOS = 900
 # Límite máximo de mensajes en el historial para evitar fugas de memoria
 MAX_HISTORY_LEN = 12
+
+def limpiar_sesion_si_expirada(numero: str):
+    """Limpia el estado y conversación si pasaron más de 15 minutos de inactividad"""
+    ahora = time.time()
+    ultimo = ultimas_interacciones.get(numero)
+    if ultimo and (ahora - ultimo > TTL_INACTIVIDAD_SEGUNDOS):
+        estados_skills[numero] = None
+        if numero in historial_conversaciones:
+            historial_conversaciones[numero] = []
+    ultimas_interacciones[numero] = ahora
 
 def limpiar_numero_whatsapp(numero: str) -> str:
     """Limpia el formato del número eliminando @c.us y no-dígitos"""
@@ -57,21 +74,62 @@ def guardar_mensaje_historial(numero: str, role: str, content: str):
     if len(historial_conversaciones[numero]) > MAX_HISTORY_LEN:
         historial_conversaciones[numero] = historial_conversaciones[numero][-MAX_HISTORY_LEN:]
 
-def clasificar_intencion(contexto: str) -> str:
-    """Clasifica el mensaje actual del usuario en una de las intenciones disponibles"""
+def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
+    """
+    Clasifica la intención del usuario basándose prioritariamente en su ÚLTIMO mensaje,
+    permitiendo cambios de tema inmediatos para evitar atascos.
+    """
+    # 1. Detección rápida y prioritaria de palabras clave en el mensaje actual
+    msg_limpio = mensaje_actual.strip().lower() if mensaje_actual else ""
+    if not msg_limpio and contexto:
+        lineas = contexto.strip().split("\n")
+        msg_limpio = lineas[-1].replace("user:", "").strip().lower() if lineas else ""
+
+    # Detección de consultas de pago/saldo
+    if any(w in msg_limpio for w in ["saldo", "debo", "pagar", "pago", "factura", "cuanto", "cuánto", "deuda", "estado de cuenta", "comprobante"]):
+        return "consultar_pagos_y_saldos"
+
+    # Detección de soporte técnico / fallas
+    if any(w in msg_limpio for w in [
+        "foco rojo", "luz roja", "sin internet", "sin servicio", "no tengo internet",
+        "no hay internet", "se fue el internet", "sin señal", "sin senal", "luz los",
+        "los rojo", "parpadea", "modem", "módem", "router", "falla", "fallando", "desconectado", "cable roto"
+    ]):
+        return "soporte_tecnico_foco_rojo"
+
+    # Detección de entretenimiento / películas
+    if any(w in msg_limpio for w in [
+        "pelicula", "película", "serie", "recomendar", "recomendacion", "recomendación",
+        "sugerir", "sugerencia", "qué ver", "que ver", "opsatv", "estrenos",
+        "tendencia", "cartelera", "accion", "comedia", "terror", "suspenso"
+    ]):
+        return "recomendacion_peliculas_opsatv"
+
+    # Detección de registro de cliente potencial
+    if any(w in msg_limpio for w in ["nuevo cliente", "prospecto", "ingresar cliente", "contratar internet", "nueva instalacion"]):
+        return "registrar_cliente_potencial"
+
+    # Agradecimientos / Cierre
+    if any(w in msg_limpio for w in ["gracias", "muchas gracias", "ya funciona", "ya vale", "perfecto", "listo gracias", "chao", "adios"]):
+        return "general"
+
+    # 2. Clasificación con Claude si el cliente AI está disponible
     client = get_anthropic_client()
+    if not client:
+        return "general"
     
-    prompt = f"""Eres un enrutador inteligente de intenciones del chatbot SAM.
-Debes clasificar la intención del usuario basándote en la conversación actual.
+    prompt = f"""Eres un enrutador inteligente de intenciones del chatbot SAM de Opsatel.
+Tu objetivo es clasificar la intención del usuario basándote prioritariamente en su ÚLTIMO mensaje, permitiendo cambios de tema si el usuario ya no desea continuar con el tema anterior.
 
 Intenciones disponibles:
 - registrar_cliente_potencial: Si el usuario desea registrar, ingresar o guardar un prospecto, nuevo cliente, o prospecto de ventas.
 - consultar_pagos_y_saldos: Si el usuario pregunta por su deuda, saldo pendiente, facturas, último pago, comprobante de pago o estado de cuenta.
-- recomendacion_peliculas_opsatv: Si el usuario menciona alguna de estas palabras clave o conceptos: recomendar, recomendación, sugerir, sugerencia, qué ver, qué me recomiendas, ver, película, serie, buscar películas, encontrar series, estrenos, tendencia, top, popular, famoso, cartelera, OPSATV, acción (en contexto de cine), comedia, drama, terror, ciencia ficción, suspenso, thriller, aventura, animación, romance, documental, misterio, o cualquier solicitud relacionada con entretenimiento audiovisual.
-- soporte_tecnico_foco_rojo: Si el usuario reporta problemas de internet, internet lento, sin servicio, sin señal, se fue el internet, no tengo internet, foco rojo, luz roja, luz LOS, cable desconectado, router parpadeando, equipo apagado o fallas técnicas.
-- general: Si es un saludo, despedida, pregunta genérica, agradecimiento o no encaja en las anteriores.
+- recomendacion_peliculas_opsatv: Si el usuario solicita recomendaciones de películas, series, catálogo OPSATV o entretenimiento.
+- soporte_tecnico_foco_rojo: Si el usuario reporta problemas de internet, internet lento, sin servicio, sin señal, foco rojo, luz LOS, cable desconectado o fallas técnicas.
+- general: Si es un saludo, despedida, agradecimiento ("gracias", "ya funciona"), pregunta genérica o charla casual.
 
-Conversación actual:
+Último mensaje del usuario: "{msg_limpio}"
+Conversación previa para contexto:
 "{contexto}"
 
 Tu tarea: Responde únicamente con el nombre de la intención ("registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv", "soporte_tecnico_foco_rojo" o "general"). No agregues explicaciones, puntuación ni texto adicional."""
@@ -91,28 +149,7 @@ Tu tarea: Responde únicamente con el nombre de la intención ("registrar_client
                 return intent
         return "general"
     except Exception as e:
-        print(f"[SAM Chatbot] Error clasificando intención: {e}")
-        # Obtener el último mensaje del usuario
-        lineas = contexto.strip().split("\n")
-        ultimo_mensaje = lineas[-1].replace("user:", "").strip().lower() if lineas else ""
-        if any(w in ultimo_mensaje for w in ["saldo", "debo", "pagar", "pago", "factura", "cuanto", "cuánto", "deuda"]):
-            return "consultar_pagos_y_saldos"
-        elif any(w in ultimo_mensaje for w in ["registrar", "nuevo cliente", "prospecto", "ingresar cliente"]):
-            return "registrar_cliente_potencial"
-        elif any(w in ultimo_mensaje for w in [
-            "foco rojo", "luz roja", "sin internet", "sin servicio", "no tengo internet",
-            "no hay internet", "se fue el internet", "sin señal", "sin senal", "luz los",
-            "los rojo", "parpadea", "modem", "módem", "router", "falla", "fallando", "desconectado"
-        ]):
-            return "soporte_tecnico_foco_rojo"
-        elif any(w in ultimo_mensaje for w in [
-            "pelicula", "película", "serie", "recomendar", "recomendacion", "recomendación",
-            "sugerir", "sugerencia", "qué ver", "que ver", "opsatv", "ver", "estrenos",
-            "tendencia", "top", "popular", "famoso", "cartelera", "accion", "comedia",
-            "drama", "terror", "ciencia ficcion", "suspenso", "thriller", "aventura",
-            "animacion", "romance", "documental", "misterio", "buscar", "encontrar"
-        ]):
-            return "recomendacion_peliculas_opsatv"
+        print(f"[SAM Chatbot] Error clasificando intención con IA: {e}")
         return "general"
 
 
@@ -899,53 +936,96 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session) -> str:
     """
     Punto de entrada principal para el chatbot SAM.
     Recibe el número telefónico del remitente y el contenido del mensaje.
-    Procesa según la intención detectada y devuelve la respuesta generada.
+    Procesa según la intención detectada y devuelve la respuesta generada sin atascarse.
     """
-    # 1. Guardar mensaje del usuario en el historial
+    # 0. Limpiar sesión si expiró el tiempo de inactividad (TTL)
+    limpiar_sesion_si_expirada(numero)
+
+    # 1. Manejo de mensajes no soportados (audio, imágenes, stickers)
+    if mensaje.startswith("[NON_TEXT_MSG]"):
+        tipo_recibido = mensaje.replace("[NON_TEXT_MSG]", "").strip() or "multimedia"
+        response_text = f"Hola, soy SAM de Opsatel 😊 Por el momento solo puedo leer mensajes de texto. Por favor, escríbeme tu consulta en texto y con gusto te ayudo."
+        guardar_mensaje_historial(numero, "assistant", response_text)
+        whatsapp_service.send_whatsapp_message(numero, response_text)
+        return response_text
+
+    # 2. Comando explícito de cancelación / reinicio de conversación
+    msg_limpio = mensaje.strip().lower()
+    if msg_limpio in ["cancelar", "salir", "menu", "menú", "inicio", "empezar de nuevo", "reset", "reiniciar"]:
+        estados_skills[numero] = None
+        historial_conversaciones[numero] = []
+        response_text = "¡Listo! He reiniciado la conversación. ¿En qué te puedo colaborar hoy con tus servicios de Opsatel? 😊"
+        guardar_mensaje_historial(numero, "assistant", response_text)
+        whatsapp_service.send_whatsapp_message(numero, response_text)
+        return response_text
+
+    # 3. Guardar mensaje del usuario en el historial
     guardar_mensaje_historial(numero, "user", mensaje)
     
-    # 2. Obtener el contexto actual de la conversación
+    # 4. Obtener el contexto actual de la conversación
     contexto = obtener_contexto_conversacion(numero, mensaje)
     
-    # 3. Verificar si el remitente es un Administrador registrado
+    # 5. Verificar si el remitente es un Administrador registrado
     admin_obj = es_numero_administrador(numero, db)
 
-    # 4. Determinar el skill activo o clasificar la intención actual
-    skill_activo = estados_skills.get(numero)
-    ya_solicitado = (skill_activo == "consultar_pagos_y_saldos")
+    # 6. Determinar skill activo y evaluar cambio de intención (DESENGANCHE DINÁMICO)
+    skill_previo = estados_skills.get(numero)
+    intencion_detectada = clasificar_intencion(contexto, mensaje)
     
-    if not skill_activo:
-        skill_activo = clasificar_intencion(contexto)
-        
-    print(f"[SAM Chatbot] Procesando mensaje de {numero} (Admin: {admin_obj.nombre if admin_obj else 'No'}) - Skill: {skill_activo}")
+    skill_activo = intencion_detectada
+    ya_solicitado = False
+
+    if skill_previo:
+        # Si el usuario estaba en un skill pero su nuevo mensaje expresa claramente OTRA intención diferente:
+        if intencion_detectada != "general" and intencion_detectada != skill_previo:
+            print(f"[SAM Chatbot] 🔄 Desenganche de tema: Cambiando de '{skill_previo}' a '{intencion_detectada}'")
+            skill_activo = intencion_detectada
+            estados_skills[numero] = None
+        # Si estaba en soporte y ahora da las gracias o dice que ya funciona:
+        elif skill_previo == "soporte_tecnico_foco_rojo" and any(w in msg_limpio for w in ["gracias", "muchas gracias", "ya funciona", "ya vale", "perfecto", "listo", "solucionado", "chao", "adios"]):
+            skill_activo = "general"
+            estados_skills[numero] = None
+        # Si estaba consultando pagos y estamos esperando su cédula:
+        elif skill_previo == "consultar_pagos_y_saldos":
+            skill_activo = "consultar_pagos_y_saldos"
+            ya_solicitado = True
+        # Si estaba en registro interactivo de cliente potencial:
+        elif skill_previo == "registrar_cliente_potencial":
+            skill_activo = "registrar_cliente_potencial"
+        else:
+            skill_activo = intencion_detectada
+            estados_skills[numero] = None
+    else:
+        skill_activo = intencion_detectada
+
+    print(f"[SAM Chatbot] Procesando mensaje de {numero} (Admin: {admin_obj.nombre if admin_obj else 'No'}) - Skill seleccionado: {skill_activo}")
     
-    # 5. Ejecutar la lógica según el skill y rol del usuario
+    # 7. Ejecutar la lógica según el skill y rol del usuario
     response_text = ""
 
-    # Si es Administrador y envía una instalación o consulta administrativa:
+    # Modo Administrador exclusivo para comandos rápidos de gestión:
     if admin_obj and (skill_activo == "registrar_cliente_potencial" or any(w in mensaje.lower() for w in ["instalacion", "instalación", "caja", "cobro", "moroso"])):
         response_text = procesar_comando_administrador(numero, mensaje, contexto, db, admin_obj)
     elif skill_activo == "registrar_cliente_potencial":
         estados_skills[numero] = "registrar_cliente_potencial"
         response_text = procesar_registro_cliente(numero, mensaje, contexto, db)
     elif skill_activo == "consultar_pagos_y_saldos":
-        estados_skills[numero] = "consultar_pagos_y_saldos"
         response_text = procesar_consulta_pago(numero, mensaje, contexto, db, ya_solicitado)
     elif skill_activo == "recomendacion_peliculas_opsatv":
         estados_skills[numero] = None
         response_text = procesar_recomendacion_peliculas(numero, mensaje, contexto)
     elif skill_activo == "soporte_tecnico_foco_rojo":
-        estados_skills[numero] = "soporte_tecnico_foco_rojo"
+        # ¡Importante! Soporte técnico NO deja el skill enganchado para la siguiente consulta
+        estados_skills[numero] = None
         response_text = procesar_soporte_tecnico(numero, mensaje, contexto, db)
     else:
         estados_skills[numero] = None
         response_text = procesar_chat_general(numero, mensaje, contexto)
 
-        
-    # 6. Guardar la respuesta generada en el historial
+    # 8. Guardar la respuesta generada en el historial
     guardar_mensaje_historial(numero, "assistant", response_text)
     
-    # 7. Despachar el mensaje por WhatsApp usando el bridge local
+    # 9. Despachar el mensaje por WhatsApp usando el servicio unificado
     whatsapp_service.send_whatsapp_message(numero, response_text)
     
     return response_text

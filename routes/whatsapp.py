@@ -15,6 +15,61 @@ ECUADOR_TZ = pytz.timezone('America/Guayaquil')
 
 from sqlalchemy import or_, func
 import unicodedata
+import re
+
+def personalizar_mensaje_cliente(mensaje_base: str, cliente) -> str:
+    """
+    Personaliza un mensaje con los datos del cliente desde la BD.
+    Soporta etiquetas: {nombre}, {nombre_completo}, {cliente}, {saldo}, {plan}, {cedula}, {nodo}, {parroquia}.
+    Si el mensaje no contiene ninguna etiqueta de nombre, se añade automáticamente un saludo cordial personalizado con su nombre.
+    """
+    if not mensaje_base:
+        return ""
+
+    nombre_raw = getattr(cliente, "nombre", "") or ""
+    nombre_limpio = " ".join(nombre_raw.strip().split())
+    if nombre_limpio:
+        partes = nombre_limpio.split()
+        primer_nombre = partes[0].capitalize()
+        nombre_corto = primer_nombre
+    else:
+        primer_nombre = "estimado/a cliente"
+        nombre_limpio = "Estimado/a cliente"
+        nombre_corto = "estimado/a cliente"
+
+    saldo_val = getattr(cliente, "saldo", 0.0) or 0.0
+    saldo_str = f"${float(saldo_val):.2f}"
+    plan_str = str(getattr(cliente, "plan", "") or "No especificado").strip()
+    cedula_str = str(getattr(cliente, "cedula", "") or "").strip()
+    nodo_str = str(getattr(cliente, "nodo", "") or "").strip()
+    parroquia_str = str(getattr(cliente, "parroquia", "") or "").strip()
+
+    msg = mensaje_base
+    tiene_etiqueta_nombre = False
+
+    if re.search(r'\{nombre\}|\{cliente\}', msg, re.IGNORECASE):
+        tiene_etiqueta_nombre = True
+        msg = re.sub(r'\{nombre\}|\{cliente\}', nombre_corto, msg, flags=re.IGNORECASE)
+
+    if re.search(r'\{nombre_completo\}', msg, re.IGNORECASE):
+        tiene_etiqueta_nombre = True
+        msg = re.sub(r'\{nombre_completo\}', nombre_limpio, msg, flags=re.IGNORECASE)
+
+    msg = re.sub(r'\{saldo\}', saldo_str, msg, flags=re.IGNORECASE)
+    msg = re.sub(r'\{plan\}', plan_str, msg, flags=re.IGNORECASE)
+    msg = re.sub(r'\{cedula\}', cedula_str, msg, flags=re.IGNORECASE)
+    msg = re.sub(r'\{nodo\}', nodo_str, msg, flags=re.IGNORECASE)
+    msg = re.sub(r'\{parroquia\}', parroquia_str, msg, flags=re.IGNORECASE)
+
+    if not tiene_etiqueta_nombre:
+        if primer_nombre != "estimado/a cliente":
+            saludo = f"Hola *{primer_nombre}*,\n"
+        else:
+            saludo = "Estimado/a cliente,\n"
+        msg = f"{saludo}{msg.strip()}"
+
+    return msg
+
 
 def remove_accents(input_str):
     if not input_str:
@@ -23,6 +78,8 @@ def remove_accents(input_str):
 
 def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
     db = db_session_factory()
+    import time
+    import random
     try:
         # Obtener clientes activos con celular registrado (soporta ACTIVO / ACTIVA / Activo)
         query = db.query(models.Cliente).filter(
@@ -43,24 +100,31 @@ def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
         clientes = query.all()
         
         nodo_label = f"nodo/parroquia '{nodo}'" if (nodo and str(nodo).lower() not in ["todos", "all", "todos los nodos"]) else "TODOS los nodos"
-        print(f"[Broadcast Task] Iniciando envío masivo a {len(clientes)} clientes activos ({nodo_label}).")
+        print(f"[Broadcast Task] Iniciando difusión masiva con protección anti-baneo a {len(clientes)} clientes activos ({nodo_label}).")
         
-        for cliente in clientes:
+        for idx, cliente in enumerate(clientes):
             numero = cliente.celular.strip()
-            success = whatsapp_service.send_whatsapp_message(numero, mensaje)
+            mensaje_personalizado = personalizar_mensaje_cliente(mensaje, cliente)
+            success = whatsapp_service.send_whatsapp_message(numero, mensaje_personalizado)
             
             # Guardar en historial
             historial = models.WhatsAppHistorial(
                 numero_destino=numero,
-                mensaje=mensaje,
+                mensaje=mensaje_personalizado,
                 tipo_envio=f"difusion_{nodo if (nodo and str(nodo).lower() not in ['todos', 'all']) else 'global'}",
                 estado="enviado" if success else "fallido",
                 fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S") if success else None,
                 fecha_creacion=datetime.now(ECUADOR_TZ)
             )
             db.add(historial)
-        db.commit()
-        print(f"[Broadcast Task] Envío masivo finalizado.")
+            db.commit()
+
+            # Pausa aleatoria anti-baneo (entre 4.0 y 7.5 segundos por mensaje)
+            if idx < len(clientes) - 1:
+                delay_sec = random.uniform(4.0, 7.5)
+                time.sleep(delay_sec)
+
+        print(f"[Broadcast Task] Envío masivo finalizado exitosamente.")
     except Exception as e:
         db.rollback()
         print(f"[Broadcast Task] Error durante el envío masivo: {str(e)}")
@@ -74,9 +138,7 @@ def enviar_whatsapp_manual(
 ):
     """
     Envía un mensaje de WhatsApp de forma manual a un número específico.
-    
-    - numero: Número de teléfono con formato +593XXXXXXXXX
-    - mensaje: Texto del mensaje a enviar
+    Si el número pertenece a un cliente en la BD o incluye variables {nombre}, {saldo}, etc., se personaliza.
     """
     try:
         numero = payload.numero
@@ -85,8 +147,25 @@ def enviar_whatsapp_manual(
         if not numero or not mensaje:
             raise HTTPException(status_code=400, detail="Número y mensaje son obligatorios")
         
+        # Buscar si el número corresponde a un cliente en la BD para personalizar
+        num_limpio = whatsapp_service.format_whatsapp_number(numero)
+        num_solo_digitos = re.sub(r'\D', '', num_limpio)
+        num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
+
+        cliente = db.query(models.Cliente).filter(
+            (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
+            (models.Cliente.celular.like(f"%{num_ecuador}%"))
+        ).first()
+
+        mensaje_final = mensaje
+        if cliente:
+            # Si el mensaje contiene variables o el cliente fue hallado, personalizar
+            tiene_variables = bool(re.search(r'\{nombre\}|\{saldo\}|\{plan\}|\{cedula\}|\{nodo\}|\{parroquia\}|\{cliente\}', mensaje, re.IGNORECASE))
+            if tiene_variables:
+                mensaje_final = personalizar_mensaje_cliente(mensaje, cliente)
+
         # Enviar mensaje usando el servicio unificado
-        success = whatsapp_service.send_whatsapp_message(numero, mensaje)
+        success = whatsapp_service.send_whatsapp_message(numero, mensaje_final)
         
         if not success:
             raise HTTPException(
@@ -97,7 +176,7 @@ def enviar_whatsapp_manual(
         # Guardar en historial
         historial = models.WhatsAppHistorial(
             numero_destino=numero,
-            mensaje=mensaje,
+            mensaje=mensaje_final,
             tipo_envio="manual",
             estado="enviado",
             fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S"),
@@ -122,7 +201,7 @@ def enviar_whatsapp_manual(
             detail=f"Error al enviar mensaje: {str(e)}"
         )
 
-@router.post("/programar")
+@router.post("/programar", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def programar_whatsapp(
     payload: schemas.WhatsAppConfiguracionCreate,
     db: Session = Depends(get_db)
@@ -184,7 +263,7 @@ def programar_whatsapp(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al programar: {str(e)}")
 
-@router.get("/configuracion")
+@router.get("/configuracion", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def obtener_configuracion(db: Session = Depends(get_db)):
     """Obtiene la configuración actual de envío programado"""
     try:
@@ -209,7 +288,7 @@ def obtener_configuracion(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.patch("/configuracion/{config_id}")
+@router.patch("/configuracion/{config_id}", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def actualizar_configuracion(
     config_id: int,
     payload: schemas.WhatsAppConfiguracionUpdate,
@@ -264,7 +343,29 @@ def actualizar_configuracion(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/historial")
+@router.delete("/configuracion/{config_id}", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def eliminar_configuracion(
+    config_id: int,
+    db: Session = Depends(get_db)
+):
+    """Elimina una configuración de envío programado"""
+    try:
+        config = db.query(models.WhatsAppConfiguracion).filter(
+            models.WhatsAppConfiguracion.id == config_id
+        ).first()
+        
+        if not config:
+            raise HTTPException(status_code=404, detail="Configuración no encontrada")
+        
+        db.delete(config)
+        db.commit()
+        
+        return {"success": True, "message": "Configuración eliminada"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/historial", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def obtener_historial(
     limite: int = 50,
     db: Session = Depends(get_db)
@@ -292,29 +393,7 @@ def obtener_historial(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/configuracion/{config_id}")
-def eliminar_configuracion(
-    config_id: int,
-    db: Session = Depends(get_db)
-):
-    """Elimina una configuración de envío programado"""
-    try:
-        config = db.query(models.WhatsAppConfiguracion).filter(
-            models.WhatsAppConfiguracion.id == config_id
-        ).first()
-        
-        if not config:
-            raise HTTPException(status_code=404, detail="Configuración no encontrada")
-        
-        db.delete(config)
-        db.commit()
-        
-        return {"success": True, "message": "Configuración eliminada"}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/historial/{historial_id}/marcar-enviado")
+@router.post("/historial/{historial_id}/marcar-enviado", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def marcar_historial_enviado(
     historial_id: int,
     db: Session = Depends(get_db)
@@ -338,6 +417,24 @@ def marcar_historial_enviado(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/logout", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def cerrar_sesion_puente():
+    """
+    Cierra la sesión activa en el microservicio Node.js (whatsapp-web.js).
+    Permite volver a escanear un nuevo código QR.
+    """
+    import requests
+    provider = whatsapp_service.WHATSAPP_PROVIDER
+    if provider != "local-bridge":
+        return {"success": True, "message": f"Proveedor {provider} no requiere logout local"}
+    
+    url = f"{whatsapp_service.WHATSAPP_BRIDGE_URL.rstrip('/')}/logout"
+    try:
+        resp = requests.post(url, timeout=10)
+        return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo contactar con el puente local para cerrar sesión: {str(e)}")
 
 @router.get("/status-bridge", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def obtener_status_puente():

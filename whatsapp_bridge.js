@@ -104,13 +104,16 @@ client.on('disconnected', (reason) => {
     }, 10000);
 });
 
+// Puerto de destino hacia FastAPI para el webhook
+const fastapiPort = parseInt(process.env.FASTAPI_PORT || process.env.BACKEND_PORT || '8000', 10);
+
 // Webhook to send incoming messages to FastAPI (SAM Chatbot)
 function sendWebhook(from, body) {
     const http = require('http');
     const payload = JSON.stringify({ numero: from, mensaje: body });
     const options = {
         hostname: 'localhost',
-        port: 8000,
+        port: fastapiPort,
         path: '/whatsapp/webhook-mensaje',
         method: 'POST',
         headers: {
@@ -119,7 +122,7 @@ function sendWebhook(from, body) {
         }
     };
 
-    console.log(`[Webhook] Enviando mensaje a FastAPI de ${from}: ${body.substring(0, 30)}...`);
+    console.log(`[Webhook] Enviando mensaje a FastAPI (puerto ${fastapiPort}) de ${from}: ${body.substring(0, 30)}...`);
     const req = http.request(options, (res) => {
         let data = '';
         res.on('data', (chunk) => data += chunk);
@@ -129,7 +132,7 @@ function sendWebhook(from, body) {
     });
 
     req.on('error', (e) => {
-        console.error(`[Webhook] Error conectando a FastAPI: ${e.message}`);
+        console.error(`[Webhook] Error conectando a FastAPI en puerto ${fastapiPort}: ${e.message}`);
     });
 
     req.write(payload);
@@ -143,13 +146,42 @@ client.on('message', async (msg) => {
     if (client.info && client.info.wid && msg.from === client.info.wid._serialized) return;
     if (msg.from.endsWith('@g.us')) return; // Ignore group chats
 
-    // Send only text messages
+    // Manejar mensajes de texto
     if (msg.type === 'chat' && msg.body) {
         sendWebhook(msg.from, msg.body);
+    } else if (msg.type && msg.type !== 'chat') {
+        // Notificar a SAM sobre mensaje no-texto (audio, imagen, video, documento)
+        sendWebhook(msg.from, `[NON_TEXT_MSG] ${msg.type}`);
     }
 });
 
 // --- API Endpoints ---
+
+// Cerrar sesión activa (Logout)
+app.post('/logout', async (req, res) => {
+    try {
+        console.log('[WhatsApp Bridge] Solicitud de cierre de sesión recibida...');
+        if (client) {
+            try {
+                await client.logout();
+            } catch (errLogout) {
+                console.warn('[WhatsApp Bridge] Aviso en client.logout():', errLogout.message);
+            }
+            clientStatus = 'DISCONNECTED';
+            activeQrCode = null;
+            cleanChromiumLocks('./.wwebjs_auth');
+            
+            setTimeout(() => {
+                console.log('[WhatsApp Bridge] Reiniciando cliente para generar nuevo QR...');
+                client.initialize().catch(errInit => console.error('Error al reinicializar tras logout:', errInit));
+            }, 3000);
+        }
+        res.json({ success: true, message: 'Sesión de WhatsApp cerrada. Se generará un nuevo QR para vincular.' });
+    } catch (err) {
+        console.error('[WhatsApp Bridge] Error al cerrar sesión:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 // Get Status
 app.get('/status', (req, res) => {

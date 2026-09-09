@@ -76,34 +76,42 @@ def enviar_whatsapp_programado():
                 
             print(f"[WhatsApp] Iniciando envío automático para config ID {config.id} a las {hora_actual}")
             
-            # Obtener clientes con celular
+            # Obtener clientes activos con celular registrado
+            from sqlalchemy import func
+            import time
+            import random
+            from routes.whatsapp import personalizar_mensaje_cliente
+
             clientes = db.query(models.Cliente).filter(
+                func.upper(models.Cliente.estado).in_(["ACTIVO", "ACTIVA"]),
                 models.Cliente.celular != None,
                 models.Cliente.celular != ""
             ).all()
             
             if not clientes:
-                print(f"[WhatsApp] No hay clientes con celular registrado para config ID {config.id}")
+                print(f"[WhatsApp] No hay clientes activos con celular registrado para config ID {config.id}")
                 if es_envio_unico:
                     config.activo = False
                     db.commit()
                 continue
             
-            # Enviar mensaje a cada cliente
+            # Enviar mensaje personalizado a cada cliente activo
             enviados = 0
             fallidos = 0
             
             for cliente in clientes:
                 try:
                     numero = cliente.celular.strip()
+                    # Personalizar mensaje con los datos reales del cliente en la BD
+                    mensaje_personalizado = personalizar_mensaje_cliente(config.mensaje_programado, cliente)
                     
                     # Enviar mensaje usando el servicio unificado
-                    success = whatsapp_service.send_whatsapp_message(numero, config.mensaje_programado)
+                    success = whatsapp_service.send_whatsapp_message(numero, mensaje_personalizado)
                     
-                    # Guardar en historial
+                    # Guardar en historial con el mensaje final personalizado
                     historial = models.WhatsAppHistorial(
                         numero_destino=numero,
-                        mensaje=config.mensaje_programado,
+                        mensaje=mensaje_personalizado,
                         tipo_envio="automatico",
                         estado="enviado" if success else "fallido",
                         fecha_envio=ahora.strftime("%Y-%m-%d %H:%M:%S") if success else None,
@@ -113,11 +121,14 @@ def enviar_whatsapp_programado():
                     
                     if success:
                         enviados += 1
-                        print(f"[WhatsApp Scheduler] Mensaje enviado a {numero}")
+                        print(f"[WhatsApp Scheduler] Mensaje personalizado enviado a {numero}")
                     else:
                         fallidos += 1
                         print(f"[WhatsApp Scheduler] Falló el envío a {numero}")
                     
+                    # Pequeña pausa prudencial para simular comportamiento orgánico
+                    time.sleep(random.uniform(2.0, 4.0))
+
                 except Exception as e:
                     fallidos += 1
                     # Guardar como fallido en historial
