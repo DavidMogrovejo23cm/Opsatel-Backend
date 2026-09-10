@@ -875,15 +875,17 @@ def webhook_mensaje_whatsapp(
     try:
         import sam_bot_service
         
-        # Si el mensaje provino de un LID (@lid), enviar la respuesta al LID original
+        # Si el mensaje provino de un LID (@lid), enviar la respuesta al LID original pero preservar el teléfono real
         destino = payload.jid_original if (payload.jid_original and "@lid" in str(payload.jid_original).lower()) else payload.numero
+        tel_real = payload.numero if (payload.numero and "@lid" not in str(payload.numero).lower()) else ""
 
         response_text = sam_bot_service.procesar_mensaje_entrante(
             numero=destino,
             mensaje=payload.mensaje,
             db=db,
             nombre_remitente=payload.nombre or "",
-            jid_original=payload.jid_original or ""
+            jid_original=payload.jid_original or "",
+            telefono_real=tel_real
         )
         return {
             "success": True,

@@ -557,9 +557,19 @@ Respuesta:"""
     
     if "auto" in nombre_buscado:
         # No se especificó nombre de otra persona y tampoco detectamos cédula en este primer mensaje.
-        # Por lo tanto, solicitamos la cédula para iniciar el flujo interactivo.
-        estados_skills[numero] = "consultar_pagos_y_saldos"
-        return "Por favor, ayúdame con tu número de cédula para consultar tu saldo."
+        # Primero intentar resolver al cliente automáticamente por su número celular o si es administrador
+        cliente_auto = buscar_cliente_por_celular(numero, db)
+        if not cliente_auto:
+            adm = es_numero_administrador(numero, db)
+            if adm and adm.numero:
+                cliente_auto = buscar_cliente_por_celular(adm.numero, db)
+
+        if cliente_auto:
+            cliente = cliente_auto
+            estados_skills[numero] = None
+        else:
+            estados_skills[numero] = "consultar_pagos_y_saldos"
+            return "Por favor, ayúdame con tu número de cédula para consultar tu saldo."
     else:
         # Búsqueda por el nombre extraído (para compatibilidad de consultas de terceros)
         cliente, sugerencias = buscar_cliente_por_nombre(nombre_buscado, db)
@@ -853,20 +863,131 @@ def procesar_chat_general(numero: str, mensaje: str, contexto: str) -> str:
 # -------------------------------------------------------------
 # LÓGICA EXCLUSIVA PARA ADMINISTRADORES Y ALTA DIRECTA
 # -------------------------------------------------------------
-def es_numero_administrador(numero: str, db: Session):
-    """Verifica si el número remitente pertenece a un administrador activo"""
-    if not numero:
-        return None
-    num_limpio = limpiar_numero_whatsapp(numero)
-    num_ecuador = "0" + num_limpio[3:] if num_limpio.startswith("593") and len(num_limpio) > 3 else num_limpio
+def es_numero_administrador(numero: str, db: Session, jid_original: str = "", nombre_remitente: str = "", telefono_real: str = ""):
+    """
+    Verifica si el remitente pertenece a un Administrador activo registrado en el
+    apartado de administradores (models.WhatsAppAdministrador).
     
+    Regla fundamental:
+    Si el usuario también está registrado como Cliente en el sistema, pero su número,
+    identificador o perfil coincide con el apartado de administradores, SIEMPRE se le
+    otorgan los permisos y acceso prioritario a las skills exclusivas de Administrador
+    (caja, morosos, alta directa de instalaciones, etc.).
+    """
+    if not numero and not jid_original and not telefono_real:
+        return None
+
     try:
-        admin = db.query(models.WhatsAppAdministrador).filter(
-            models.WhatsAppAdministrador.activo == True,
-            (models.WhatsAppAdministrador.numero.like(f"%{num_limpio}%")) |
-            (models.WhatsAppAdministrador.numero.like(f"%{num_ecuador}%"))
-        ).first()
-        return admin
+        admins = db.query(models.WhatsAppAdministrador).filter(
+            models.WhatsAppAdministrador.activo == True
+        ).all()
+        if not admins:
+            return None
+
+        # 1. Recopilar candidatos de números/identificadores del remitente
+        candidatos_num = set()
+        candidatos_nombre = set()
+
+        for raw_val in [numero, jid_original, telefono_real]:
+            if not raw_val:
+                continue
+            raw_str = str(raw_val).strip()
+            candidatos_num.add(raw_str)
+            digits = re.sub(r'\D', '', raw_str)
+            if digits:
+                candidatos_num.add(digits)
+                if digits.startswith("593") and len(digits) > 3:
+                    candidatos_num.add("0" + digits[3:])
+                if digits.startswith("09") and len(digits) == 10:
+                    candidatos_num.add("593" + digits[1:])
+                if len(digits) >= 8:
+                    candidatos_num.add(digits[-8:])
+                    candidatos_num.add(digits[-9:])
+
+        if nombre_remitente:
+            candidatos_nombre.add(nombre_remitente.strip())
+
+        # 2. Si el remitente es un @lid, consultar puente de WhatsApp
+        is_lid = any("@lid" in str(c).lower() for c in candidatos_num)
+        if is_lid:
+            try:
+                from routes.whatsapp import obtener_info_contacto_bridge
+                lid_target = next((c for c in candidatos_num if "@lid" in str(c).lower()), None)
+                if lid_target:
+                    info = obtener_info_contacto_bridge(lid_target)
+                    if info:
+                        if info.get("number"):
+                            candidatos_num.add(str(info["number"]))
+                            num_d = re.sub(r'\D', '', str(info["number"]))
+                            if num_d:
+                                candidatos_num.add(num_d)
+                                if len(num_d) >= 8:
+                                    candidatos_num.add(num_d[-8:])
+                                    candidatos_num.add(num_d[-9:])
+                        if info.get("pushname"):
+                            candidatos_nombre.add(str(info["pushname"]))
+                        elif info.get("name"):
+                            candidatos_nombre.add(str(info["name"]))
+            except Exception as e_bridge:
+                print(f"[SAM Chatbot] Error obteniendo info bridge para LID: {e_bridge}")
+
+        # 3. Comprobar si también es cliente en models.Cliente y agregar sus datos de contacto
+        try:
+            for cand in list(candidatos_num):
+                c = buscar_cliente_por_celular(cand, db)
+                if c:
+                    if c.celular:
+                        c_digs = re.sub(r'\D', '', str(c.celular))
+                        if c_digs:
+                            candidatos_num.add(c_digs)
+                            if len(c_digs) >= 8:
+                                candidatos_num.add(c_digs[-8:])
+                                candidatos_num.add(c_digs[-9:])
+                    if c.nombre:
+                        candidatos_nombre.add(str(c.nombre))
+                    break
+        except Exception:
+            pass
+
+        # 4. Comparar contra cada administrador registrado en la base de datos
+        for admin in admins:
+            if not admin.numero:
+                continue
+            adm_raw = str(admin.numero).strip()
+            adm_digits = re.sub(r'\D', '', adm_raw)
+            adm_ultimos_8 = adm_digits[-8:] if len(adm_digits) >= 8 else adm_digits
+            adm_ultimos_9 = adm_digits[-9:] if len(adm_digits) >= 9 else adm_digits
+
+            # Comparación por teléfono
+            for cand in candidatos_num:
+                cand_str = str(cand).strip()
+                cand_digits = re.sub(r'\D', '', cand_str)
+                cand_ultimos_8 = cand_digits[-8:] if len(cand_digits) >= 8 else cand_digits
+                cand_ultimos_9 = cand_digits[-9:] if len(cand_digits) >= 9 else cand_digits
+
+                if cand_digits and adm_digits and cand_digits == adm_digits:
+                    print(f"[SAM Chatbot] 👑 Remitente identificado como Administrador: {admin.nombre} (Coincidencia exacta {cand_digits})")
+                    return admin
+                if len(adm_ultimos_8) >= 8 and len(cand_ultimos_8) >= 8 and adm_ultimos_8 == cand_ultimos_8:
+                    print(f"[SAM Chatbot] 👑 Remitente identificado como Administrador: {admin.nombre} (Coincidencia últimos 8 dígitos {adm_ultimos_8})")
+                    return admin
+                if len(adm_ultimos_9) >= 9 and len(cand_ultimos_9) >= 9 and adm_ultimos_9 == cand_ultimos_9:
+                    print(f"[SAM Chatbot] 👑 Remitente identificado como Administrador: {admin.nombre} (Coincidencia últimos 9 dígitos {adm_ultimos_9})")
+                    return admin
+                if adm_digits and cand_digits and len(adm_digits) >= 8 and len(cand_digits) >= 8:
+                    if adm_digits in cand_digits or cand_digits in adm_digits:
+                        print(f"[SAM Chatbot] 👑 Remitente identificado como Administrador: {admin.nombre} (Coincidencia substring)")
+                        return admin
+
+            # Comparación por nombre (si coincide el nombre de admin con el remitente o el cliente)
+            if admin.nombre:
+                for cand_nom in candidatos_nombre:
+                    score = fuzz.token_set_ratio(normalizar_texto_busqueda(admin.nombre), normalizar_texto_busqueda(cand_nom))
+                    if score >= 85:
+                        print(f"[SAM Chatbot] 👑 Remitente identificado como Administrador por nombre: {admin.nombre} (Score {score} con '{cand_nom}')")
+                        return admin
+
+        return None
     except Exception as e:
         print(f"[SAM Chatbot] Error verificando admin en DB: {e}")
         return None
@@ -1006,10 +1127,13 @@ Responde ÚNICAMENTE con el JSON final en este formato exacto:
         return f"⚠️ Hola {admin_obj.nombre}, ocurrió un inconveniente registrando el cliente en la Hoja de Ruta: {str(e)}"
 
 def procesar_comando_administrador(numero: str, mensaje: str, contexto: str, db: Session, admin_obj) -> str:
-    """Procesa comandos administrativos (Caja del día, Morosos, etc.)"""
+    """Procesa comandos administrativos (Caja del día, Morosos, Instalaciones a Hoja de Ruta, etc.)"""
     msg_lower = mensaje.lower()
     
-    if any(w in msg_lower for w in ["caja", "cobro", "recaudacion", "recaudación", "cuanto se cobro", "cuánto se cobró"]):
+    if any(w in msg_lower for w in [
+        "caja", "cobro", "cobros", "recaudacion", "recaudación", "cuanto se cobro", "cuánto se cobró",
+        "cuanto cobramos", "ingresos", "cierre"
+    ]):
         import pytz
         from datetime import datetime
         ECUADOR_TZ = pytz.timezone('America/Guayaquil')
@@ -1021,38 +1145,54 @@ def procesar_comando_administrador(numero: str, mensaje: str, contexto: str, db:
         
         total_monto = sum(float(p.monto or 0) for p in pagos_hoy)
         total_pagos = len(pagos_hoy)
+
+        metodos = {}
+        for p in pagos_hoy:
+            met = (p.metodo_pago or "Otros").title()
+            metodos[met] = metodos.get(met, 0.0) + float(p.monto or 0)
+        
+        desglose_txt = ""
+        if metodos:
+            desglose_txt = "\n*Desglose por método:*\n" + "\n".join([f"• {m}: ${val:.2f}" for m, val in metodos.items()])
         
         return (
             f"👑 *[Resumen de Caja del Día — {admin_obj.nombre}]*\n\n"
             f"📅 *Fecha*: {hoy_str}\n"
             f"💰 *Total Recaudado*: ${total_monto:.2f}\n"
-            f"📊 *Número de Pagos*: {total_pagos}\n\n"
-            f"_Consulta realizada desde el Centro de WhatsApp Opsatel._"
+            f"📊 *Número de Pagos*: {total_pagos}"
+            f"{desglose_txt}\n\n"
+            f"_Reporte generado en tiempo real desde el Centro de Operaciones Opsatel._"
         )
         
-    elif any(w in msg_lower for w in ["moroso", "morosos", "corte", "cortes", "suspendido", "suspendidos"]):
+    elif any(w in msg_lower for w in [
+        "moroso", "morosos", "corte", "cortes", "suspendido", "suspendidos", "deudores", "deuda general"
+    ]):
         morosos = db.query(models.Cliente).filter(models.Cliente.estado == "Moroso").count()
+        suspendidos = db.query(models.Cliente).filter(models.Cliente.estado == "Suspendido").count()
         return (
-            f"👑 *[Reporte de Morosidad — {admin_obj.nombre}]*\n\n"
-            f"⚠️ *Clientes en estado Moroso actualmente*: {morosos}\n\n"
-            f"_Para más detalles, consulta el panel web de Opsatel._"
+            f"👑 *[Reporte de Morosidad y Cortes — {admin_obj.nombre}]*\n\n"
+            f"⚠️ *Clientes en estado Moroso*: {morosos}\n"
+            f"🚫 *Clientes en estado Suspendido*: {suspendidos}\n\n"
+            f"_Para revisar la lista detallada, ingresa al panel web de Opsatel._"
         )
 
-    elif any(w in msg_lower for w in ["instalacion", "instalación", "nuevo cliente", "ingresar cliente", "registrar"]):
+    elif any(w in msg_lower for w in ["instalacion", "instalación", "nuevo cliente", "ingresar cliente", "registrar", "alta"]):
         return procesar_registro_cliente_admin_directo(numero, mensaje, contexto, db, admin_obj)
         
     return (
-        f"👑 Hola *{admin_obj.nombre}*, reconozco tu perfil de Administrador en Opsatel.\n\n"
-        f"Puedes enviarme:\n"
-        f"• Datos de una instalación (ej: *INSTALACION BAÑOS ...*) para registrarla y mandarla directo a la Hoja de Ruta.\n"
-        f"• *'Resumen de caja'* para ver la recaudación del día.\n"
-        f"• *'Reporte de morosos'* para ver los clientes suspendidos."
+        f"👑 *¡Hola {admin_obj.nombre}!* Reconozco tu perfil de Administrador en Opsatel.\n\n"
+        f"Como tu número está registrado en el *apartado de Administradores*, tienes acceso prioritario a tus funciones exclusivas de gestión:\n"
+        f"• 💰 *'Resumen de caja'* (recaudación y pagos del día)\n"
+        f"• ⚠️ *'Reporte de morosos'* (clientes suspendidos o en corte)\n"
+        f"• 🛠️ *Datos de instalación* (ej: *INSTALACION BAÑOS ...* para registrarla y pasarla directo a la Hoja de Ruta)\n\n"
+        f"💡 _Nota: Como también eres cliente de Opsatel, si deseas consultar tu propio saldo personal solo pregúntame '¿cuánto debo?' o solicita soporte técnico cuando lo requieras._ 😊\n\n"
+        f"¿En qué te colaboro hoy?"
     )
 
 # -------------------------------------------------------------
 # FUNCIÓN PRINCIPAL DE ENTRADA AL SERVICIO
 # -------------------------------------------------------------
-def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_remitente: str = "", jid_original: str = "") -> str:
+def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_remitente: str = "", jid_original: str = "", telefono_real: str = "") -> str:
     """
     Punto de entrada principal para el chatbot SAM.
     Recibe el número telefónico o JID del remitente y el contenido del mensaje.
@@ -1111,8 +1251,8 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
     # 4. Obtener el contexto actual de la conversación
     contexto = obtener_contexto_conversacion(numero, mensaje)
     
-    # 5. Verificar si el remitente es un Administrador registrado
-    admin_obj = es_numero_administrador(numero, db)
+    # 5. Verificar si el remitente es un Administrador registrado (en el apartado de Administradores)
+    admin_obj = es_numero_administrador(numero, db, jid_original=jid_original, nombre_remitente=nombre_remitente, telefono_real=telefono_real)
 
     # 6. Determinar skill activo y evaluar cambio de intención (DESENGANCHE DINÁMICO)
     skill_previo = estados_skills.get(numero)
@@ -1149,8 +1289,18 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
     # 7. Ejecutar la lógica según el skill y rol del usuario
     response_text = ""
 
-    # Modo Administrador exclusivo para comandos rápidos de gestión:
-    if admin_obj and (skill_activo == "registrar_cliente_potencial" or any(w in mensaje.lower() for w in ["instalacion", "instalación", "caja", "cobro", "moroso"])):
+    # Detección de comandos y permisos exclusivos para Administradores
+    es_comando_admin = admin_obj and (
+        skill_activo == "registrar_cliente_potencial"
+        or any(w in mensaje.lower() for w in [
+            "instalacion", "instalación", "caja", "cobro", "cobros", "recaudacion", "recaudación",
+            "cuanto se cobro", "cuánto se cobró", "cuanto cobramos", "ingresos", "cierre",
+            "moroso", "morosos", "corte", "cortes", "suspendido", "suspendidos",
+            "deudores", "alta", "comandos", "admin", "panel", "reporte"
+        ])
+    )
+
+    if es_comando_admin:
         response_text = procesar_comando_administrador(numero, mensaje, contexto, db, admin_obj)
     elif skill_activo == "registrar_cliente_potencial":
         estados_skills[numero] = "registrar_cliente_potencial"
@@ -1161,9 +1311,13 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
         estados_skills[numero] = None
         response_text = procesar_recomendacion_peliculas(numero, mensaje, contexto)
     elif skill_activo == "soporte_tecnico_foco_rojo":
-        # ¡Importante! Soporte técnico NO deja el skill enganchado para la siguiente consulta
+        # Soporte técnico no deja el skill enganchado para la siguiente consulta
         estados_skills[numero] = None
         response_text = procesar_soporte_tecnico(numero, mensaje, contexto, db)
+    elif admin_obj and (any(w in msg_limpio for w in ["hola", "buenos dias", "buenas tardes", "buenas noches", "saludos", "que tal", "sam", "ayuda", "menu", "menú", "inicio"]) or len(msg_limpio.split()) <= 2):
+        # Saludo o menú de un Administrador registrado (incluso si también es cliente)
+        estados_skills[numero] = None
+        response_text = procesar_comando_administrador(numero, mensaje, contexto, db, admin_obj)
     else:
         estados_skills[numero] = None
         response_text = procesar_chat_general(numero, mensaje, contexto)
