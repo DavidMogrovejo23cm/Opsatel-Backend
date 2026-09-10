@@ -21,6 +21,18 @@ router = APIRouter(prefix="/clientes", tags=["clientes"])
 _stats_cache = None
 _stats_cache_time = None
 
+# Precios de respaldo históricos en caso de no encontrarse en la tabla PlanInternet
+PLAN_PRICES = {
+    "100mb": 17.25,
+    "100M/100M": 17.25,
+    "600mb": 17.87,
+    "600M/600M": 17.87,
+    "700mb": 21.73,
+    "800mb": 32.20,
+    "800M/800M": 32.20,
+    "650M/650M": 20.00
+}
+
 import traceback
 from datetime import datetime
 from config_manager import get_config, save_config
@@ -110,10 +122,72 @@ def clean_existing_database_formats(db: Session):
         if fixed_count > 0:
             db.commit()
             print(f"AUTOMIGRACIÓN: Se corrigieron {fixed_count} clientes con formatos inconsistentes de Excel (.0 o ceros a la izquierda).")
+        auto_fix_initial_balances(db)
     except Exception as e:
         db.rollback()
         print(f"Error en AUTOMIGRACIÓN de formatos de clientes: {e}")
 
+
+def auto_fix_initial_balances(db: Session):
+    """
+    Verifica si existen clientes en estado 'En Activación' o 'Pendiente'
+    recién ingresados sin saldo inicial asignado (saldo=0 y total_pago=0),
+    y calcula automáticamente su monto a pagar del primer mes según su plan y fecha de firma.
+    """
+    try:
+        sin_saldo = db.query(models.Cliente).filter(
+            models.Cliente.estado.in_(["En Activación", "Pendiente"]),
+            (models.Cliente.saldo == None) | (models.Cliente.saldo == 0),
+            (models.Cliente.total_pago == None) | (models.Cliente.total_pago == 0)
+        ).all()
+        has_changes = False
+        for c in sin_saldo:
+            tarifa = 0.0
+            if getattr(c, 'mantenimiento', False):
+                tarifa = 10.0
+            elif (getattr(c, 'tercera_edad', False) or getattr(c, 'plan_corporativo', False)) and c.precio_plan_especial:
+                tarifa = float(c.precio_plan_especial)
+            elif c.precio_plan_especial and float(c.precio_plan_especial) > 0:
+                tarifa = float(c.precio_plan_especial)
+            elif c.plan:
+                plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == c.plan).first()
+                if not plan_info:
+                    plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre.ilike(c.plan)).first()
+                if plan_info and plan_info.precio is not None:
+                    tarifa = float(plan_info.precio)
+                else:
+                    tarifa = float(PLAN_PRICES.get(c.plan, 0.0))
+                    if tarifa == 0.0:
+                        import re as _re
+                        match_precio = _re.search(r'\$?(\d+(?:[\.,]\d{1,2})?)', str(c.plan))
+                        if match_precio:
+                            try:
+                                tarifa = float(match_precio.group(1).replace(',', '.'))
+                            except ValueError:
+                                pass
+            if tarifa > 0:
+                saldo_calc = tarifa
+                try:
+                    f_str = (c.fecha_firma or "").strip().split(" ")[0].split("T")[0]
+                    if f_str and "-" in f_str:
+                        parts = f_str.split("-")
+                        f_year, f_month, f_day = int(parts[0]), int(parts[1]), int(parts[2])
+                    else:
+                        now = datetime.now()
+                        f_year, f_month, f_day = now.year, now.month, now.day
+                    _, total_days = calendar.monthrange(f_year, f_month)
+                    active_days = (total_days - f_day) + 1
+                    if total_days > 0 and active_days > 0:
+                        saldo_calc = round((tarifa / total_days) * active_days, 2)
+                except Exception:
+                    saldo_calc = round(tarifa, 2)
+                c.saldo = saldo_calc
+                sync_cliente_balances(c, db)
+                has_changes = True
+        if has_changes:
+            db.commit()
+    except Exception as e:
+        print(f"Error en auto_fix_initial_balances: {e}")
 
 
 def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
@@ -142,6 +216,7 @@ def get_pendientes_count(db: Session = Depends(get_db)):
 @router.get("/")
 def listar_clientes(db: Session = Depends(get_db)):
     try:
+        auto_fix_initial_balances(db)
         from libreqos_models import ClientQoSState
         data = db.query(models.Cliente).all()
         
@@ -275,6 +350,52 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         iptv_b = "[1,2,5]"
         iptv_out = "[1,2]"
             
+    # Determinar tarifa base del plan
+    tarifa_base = 0.0
+    if cliente.mantenimiento:
+        tarifa_base = 10.00
+    elif (cliente.tercera_edad or cliente.plan_corporativo) and cliente.precio_plan_especial and float(cliente.precio_plan_especial) > 0:
+        tarifa_base = float(cliente.precio_plan_especial)
+    elif cliente.precio_plan_especial and float(cliente.precio_plan_especial) > 0:
+        tarifa_base = float(cliente.precio_plan_especial)
+    else:
+        plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre == cliente.plan).first()
+        if not plan_info:
+            plan_info = db.query(models.PlanInternet).filter(models.PlanInternet.nombre.ilike(cliente.plan)).first()
+        if plan_info and plan_info.precio is not None:
+            tarifa_base = float(plan_info.precio)
+        else:
+            tarifa_base = float(PLAN_PRICES.get(cliente.plan, 0.00))
+            if tarifa_base == 0.0 and cliente.plan:
+                import re as _re
+                match_precio = _re.search(r'\$?(\d+(?:[\.,]\d{1,2})?)', str(cliente.plan))
+                if match_precio:
+                    try:
+                        tarifa_base = float(match_precio.group(1).replace(',', '.'))
+                    except ValueError:
+                        pass
+
+    # Determinar saldo inicial (valor a pagar por el primer mes / ingreso)
+    if cliente.saldo is not None and float(cliente.saldo) > 0:
+        saldo_inicial = round(float(cliente.saldo), 2)
+    else:
+        saldo_inicial = tarifa_base
+        try:
+            f_str = (cliente.fecha_firma or "").strip().split(" ")[0].split("T")[0]
+            if f_str and "-" in f_str:
+                parts = f_str.split("-")
+                f_year, f_month, f_day = int(parts[0]), int(parts[1]), int(parts[2])
+            else:
+                now = datetime.now()
+                f_year, f_month, f_day = now.year, now.month, now.day
+
+            _, total_days = calendar.monthrange(f_year, f_month)
+            active_days = (total_days - f_day) + 1
+            if total_days > 0 and active_days > 0:
+                saldo_inicial = round((tarifa_base / total_days) * active_days, 2)
+        except Exception:
+            saldo_inicial = round(tarifa_base, 2)
+
     db_cliente = models.Cliente(
         id=nuevo_id, # Asignamos el ID manualmente para llenar el hueco
         nombre=cliente.nombre,
@@ -296,6 +417,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         mantenimiento=bool(cliente.mantenimiento),
         comentarios=cliente.comentarios,
         estado=cliente.estado if (getattr(cliente, 'estado', None) and cliente.estado.strip()) else "En Activación",
+        saldo=saldo_inicial,
         iptv_activar=iptv_act,
         iptv_user=iptv_u,
         iptv_pass=iptv_p,

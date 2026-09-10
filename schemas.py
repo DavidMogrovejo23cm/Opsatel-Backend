@@ -30,6 +30,7 @@ class ClienteCreate(BaseModel):
     tv_tipo: Optional[str] = "Ninguno"  # "Ninguno", "IPTV", "CATV"
     comentarios: Optional[str] = None
     estado: Optional[str] = "En Activación"
+    saldo: Optional[float] = None
 
 class ClienteUpdateTecnico(BaseModel):
     mac: str
