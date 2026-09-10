@@ -96,6 +96,16 @@ def limpiar_sesion_si_expirada(numero: str):
             historial_conversaciones[numero] = []
     ultimas_interacciones[numero] = ahora
 
+def limpiar_todo_historial_conversaciones():
+    """Limpia todo el historial de conversaciones y estados en memoria de SAM."""
+    global historial_conversaciones, estados_skills, ultimas_interacciones, pausas_operador
+    historial_conversaciones.clear()
+    estados_skills.clear()
+    ultimas_interacciones.clear()
+    pausas_operador.clear()
+    print("[SAM Chatbot] 🧹 Todo el historial y estados de conversación han sido limpiados en memoria.")
+
+
 def limpiar_numero_whatsapp(numero: str) -> str:
     """Limpia el formato del número conservando identificadores @lid intactos si corresponden"""
     if not numero:

@@ -1005,6 +1005,40 @@ def listar_conversaciones_chat(db: Session = Depends(get_db)):
         print(f"[Error Listar Conversaciones] {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.delete("/conversaciones/all", dependencies=[Depends(require_role(["administrador"]))])
+def eliminar_todas_las_conversaciones(db: Session = Depends(get_db)):
+    """
+    Elimina TODOS los mensajes de chat y conversaciones en vivo de WhatsApp.
+    También limpia el historial y estados en memoria de SAM Bot.
+    Acción exclusiva para administradores.
+    """
+    try:
+        total_eliminados = db.query(models.WhatsAppMensajeChat).delete(synchronize_session=False)
+        db.commit()
+
+        # Limpiar memoria de conversaciones en SAM Bot
+        try:
+            import sam_bot_service
+            if hasattr(sam_bot_service, "limpiar_todo_historial_conversaciones"):
+                sam_bot_service.limpiar_todo_historial_conversaciones()
+            else:
+                sam_bot_service.historial_conversaciones.clear()
+                sam_bot_service.estados_skills.clear()
+                sam_bot_service.ultimas_interacciones.clear()
+                sam_bot_service.pausas_operador.clear()
+        except Exception as e_mem:
+            print(f"[Aviso SAM] No se pudo limpiar la memoria: {e_mem}")
+
+        return {
+            "success": True,
+            "message": f"Se han eliminado exitosamente {total_eliminados} mensajes. Todas las conversaciones en vivo han sido borradas.",
+            "total_eliminados": total_eliminados
+        }
+    except Exception as e:
+        db.rollback()
+        print(f"[Error Eliminar Conversaciones] {e}")
+        raise HTTPException(status_code=500, detail=f"Error al eliminar conversaciones: {str(e)}")
+
 @router.get("/conversaciones/{numero:path}", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
     """
@@ -1221,6 +1255,48 @@ def vincular_cliente_a_chat(
             "direccion": getattr(cliente, "direccion", "N/A") or "N/A"
         }
     }
+
+@router.delete("/conversaciones/{numero:path}", dependencies=[Depends(require_role(["administrador"]))])
+def eliminar_conversacion_individual(numero: str, db: Session = Depends(get_db)):
+    """
+    Elimina los mensajes de chat de una conversación individual con un número o @lid.
+    """
+    try:
+        numero_decodificado = urllib.parse.unquote(numero).strip()
+        num_limpio = whatsapp_service.format_whatsapp_number(numero_decodificado)
+        if not num_limpio:
+            num_limpio = numero_decodificado
+
+        num_solo_digitos = re.sub(r'\D', '', num_limpio)
+
+        filtros = [
+            models.WhatsAppMensajeChat.numero == num_limpio,
+            models.WhatsAppMensajeChat.numero == numero_decodificado,
+            models.WhatsAppMensajeChat.numero == numero
+        ]
+        if num_solo_digitos and "@lid" not in num_limpio:
+            filtros.append(models.WhatsAppMensajeChat.numero.like(f"%{num_solo_digitos}%"))
+
+        eliminados = db.query(models.WhatsAppMensajeChat).filter(or_(*filtros)).delete(synchronize_session=False)
+        db.commit()
+
+        try:
+            import sam_bot_service
+            if num_limpio in sam_bot_service.historial_conversaciones:
+                sam_bot_service.historial_conversaciones.pop(num_limpio, None)
+            if num_limpio in sam_bot_service.estados_skills:
+                sam_bot_service.estados_skills.pop(num_limpio, None)
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "message": f"Conversación eliminada ({eliminados} mensajes eliminados).",
+            "total_eliminados": eliminados
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar conversación: {str(e)}")
 
 @router.get("/buscar-clientes-chat", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def buscar_clientes_para_chat(q: str = "", db: Session = Depends(get_db)):
