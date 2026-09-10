@@ -133,7 +133,7 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
 
 @router.get("/pendientes-count")
 def get_pendientes_count(db: Session = Depends(get_db)):
-    count = db.query(models.Cliente).filter(models.Cliente.estado == "Pendiente").count()
+    count = db.query(models.Cliente).filter(models.Cliente.estado.in_(["Pendiente", "En Activación"])).count()
     return {"count": count}
 
 # El sistema ahora utiliza exclusivamente la tabla 'planes_internet' de la base de datos 
@@ -295,7 +295,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         precio_plan_especial=cliente.precio_plan_especial,
         mantenimiento=bool(cliente.mantenimiento),
         comentarios=cliente.comentarios,
-        estado="Activo",
+        estado=cliente.estado if (getattr(cliente, 'estado', None) and cliente.estado.strip()) else "En Activación",
         iptv_activar=iptv_act,
         iptv_user=iptv_u,
         iptv_pass=iptv_p,
@@ -517,7 +517,7 @@ def obtener_siguiente_valor_tecnico(
 
 
 
-@router.patch("/{id}/pasar-a-activacion", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+@router.patch("/{id}/pasar-a-activacion", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def pasar_a_activacion(id: int, db: Session = Depends(get_db)):
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
     if not cliente:

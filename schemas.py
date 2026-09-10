@@ -29,6 +29,7 @@ class ClienteCreate(BaseModel):
     iptv_pass: Optional[str] = None
     tv_tipo: Optional[str] = "Ninguno"  # "Ninguno", "IPTV", "CATV"
     comentarios: Optional[str] = None
+    estado: Optional[str] = "En Activación"
 
 class ClienteUpdateTecnico(BaseModel):
     mac: str

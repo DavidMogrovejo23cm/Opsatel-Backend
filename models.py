@@ -36,7 +36,7 @@ class Cliente(Base):
 
     fecha_firma = Column("FECHA_FIRMA", String(50))
 
-    estado = Column("ESTADO", String(50), default="Activo")
+    estado = Column("ESTADO", String(50), default="En Activación")
 
     
 

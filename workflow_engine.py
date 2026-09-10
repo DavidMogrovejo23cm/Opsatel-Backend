@@ -168,6 +168,7 @@ class WorkflowEngine:
             cliente.id_port = str(reserved_ont_id)
             cliente.service_port = str(reserved_sp)
             cliente.estado = "Activo"
+            cliente.instalation_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.db.commit()
 
             _add_timeline("DATABASE_UPDATE", "SUCCESS", "Cliente marcado como Activo con recursos asignados")
