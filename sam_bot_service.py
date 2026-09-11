@@ -14,7 +14,7 @@ from rapidfuzz import fuzz, process
 import whatsapp_service
 
 # Configuración de Modelos de Inteligencia Artificial
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
 
 client_gemini = None
@@ -63,31 +63,55 @@ def hay_proveedor_ia() -> bool:
 def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
     """
     Genera texto usando Google Gemini (prioridad) o Anthropic Claude (respaldo).
-    Si ninguno está configurado o ambos fallan, lanza excepción para que el skill active su fallback.
+    Si el modelo específico de Gemini no está disponible o fue deprecado (404), prueba automáticamente variantes.
     """
+    global GEMINI_MODEL
     # 1. Intentar con Google Gemini (Prioridad)
     client_g = get_gemini_client()
     if client_g:
-        try:
-            # pyrefly: ignore [missing-import]
-            from google.genai import types
-            config = types.GenerateContentConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            )
-            response = client_g.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-                config=config
-            )
-            if response and response.text:
-                return response.text.strip()
-            raise ValueError("Respuesta vacía de Google Gemini.")
-        except Exception as e_gem:
-            print(f"[SAM Chatbot] Error en llamada a Gemini: {e_gem}")
-            # Si Gemini falla pero Anthropic está configurado, continuar al fallback
-            if not get_anthropic_client():
-                raise e_gem
+        # pyrefly: ignore [missing-import]
+        from google.genai import types
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+        model_candidates = [
+            GEMINI_MODEL,
+            "gemini-2.5-flash",
+            "gemini-1.5-flash",
+            "gemini-3.6-flash",
+            "gemini-2.0-flash-exp",
+            "gemini-1.5-pro",
+        ]
+        seen = set()
+        model_list = [m for m in model_candidates if not (m in seen or seen.add(m))]
+
+        last_gem_err = None
+        for model_name in model_list:
+            try:
+                response = client_g.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=config
+                )
+                if response and response.text:
+                    if GEMINI_MODEL != model_name:
+                        print(f"[SAM Chatbot] [IA] Modelo Gemini activo verificado: {model_name}")
+                        GEMINI_MODEL = model_name
+                    return response.text.strip()
+            except Exception as e_gem:
+                last_gem_err = e_gem
+                err_str = str(e_gem)
+                if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
+                    print(f"[SAM Chatbot] [IA] Modelo '{model_name}' no disponible, probando siguiente variante...")
+                    continue
+                else:
+                    print(f"[SAM Chatbot] Error en llamada a Gemini ({model_name}): {e_gem}")
+                    break
+
+        # Si Gemini no pudo responder pero Anthropic está configurado, continuar al fallback
+        if not get_anthropic_client():
+            raise last_gem_err or RuntimeError("No se pudo obtener respuesta de Google Gemini.")
 
     # 2. Intentar con Anthropic Claude (Respaldo)
     client_a = get_anthropic_client()
@@ -1335,8 +1359,8 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
         # Soporte técnico no deja el skill enganchado para la siguiente consulta
         estados_skills[numero] = None
         response_text = procesar_soporte_tecnico(numero, mensaje, contexto, db)
-    elif admin_obj and (any(w in msg_limpio for w in ["hola", "buenos dias", "buenas tardes", "buenas noches", "saludos", "que tal", "sam", "ayuda", "menu", "menú", "inicio"]) or len(msg_limpio.split()) <= 2):
-        # Saludo o menú de un Administrador registrado (incluso si también es cliente)
+    elif admin_obj and (msg_limpio in ["menu", "menú", "admin", "comandos", "inicio"] or (any(w in msg_limpio for w in ["hola", "buenos dias", "buenas tardes", "buenas noches", "saludos", "que tal", "sam", "ayuda"]) and len(msg_limpio.split()) <= 2)):
+        # Saludo o menú de un Administrador registrado (únicamente si es un saludo breve o comando de menú)
         estados_skills[numero] = None
         response_text = procesar_comando_administrador(numero, mensaje, contexto, db, admin_obj)
     else:
