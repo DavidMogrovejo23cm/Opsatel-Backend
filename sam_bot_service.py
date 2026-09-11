@@ -377,16 +377,26 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
         if not any(w in msg_limpio for w in ["debo", "saldo", "foco rojo", "sin internet"]):
             return "general"
 
-    # 2. Consultas sobre Planes, Ofertas, Precios, Megas o Servicios -> GENERAL (para responder con los datos reales de BD)
+    # 2. Intención explícita de CONTRATAR o AGENDAR INSTALACIÓN -> REGISTRAR CLIENTE
+    if any(w in msg_limpio for w in [
+        "quiero contratar", "deseo contratar", "agendar instalacion", "agendar instalación",
+        "solicitar instalacion", "solicitar instalación", "quiero instalar", "deseo instalar",
+        "instalenme", "instálenme", "contratar internet", "contratar el plan", "nuevo cliente",
+        "prospecto", "nueva instalacion", "nueva instalación", "agendar cita", "quiero el servicio",
+        "contratar", "me interesa contratar"
+    ]):
+        return "registrar_cliente_potencial"
+
+    # 3. Consultas informativas sobre Planes, Ofertas, Precios, Megas o Servicios -> GENERAL
     if any(w in msg_limpio for w in [
         "plan", "planes", "precio", "precios", "oferta", "ofertas", "megas", "costo",
         "tarifa", "cuanto cuesta", "cuánto cuesta", "cuanto vale", "cuánto vale",
-        "que ofrecen", "qué ofrecen", "servicios", "promocion", "promociones", "contratar",
-        "adquirir", "velocidad", "cobertura"
+        "que ofrecen", "qué ofrecen", "servicios", "promocion", "promociones",
+        "velocidad", "cobertura", "subir de nivel", "cambiar de plan", "mejorar plan"
     ]):
         return "general"
 
-    # 3. Consultas explícitas de Pago / Saldo / Deuda personal
+    # 4. Consultas explícitas de Pago / Saldo / Deuda personal
     tiene_cedula = bool(re.search(r'\b\d{10}\b', msg_limpio))
     es_pregunta_deuda = any(w in msg_limpio for w in [
         "cuanto debo", "cuánto debo", "mi saldo", "saldo pendiente", "mi deuda",
@@ -396,7 +406,7 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     if tiene_cedula or es_pregunta_deuda:
         return "consultar_pagos_y_saldos"
 
-    # 4. Soporte técnico / fallas
+    # 5. Soporte técnico / fallas
     if any(w in msg_limpio for w in [
         "foco rojo", "luz roja", "sin internet", "sin servicio", "no tengo internet",
         "no hay internet", "se fue el internet", "sin señal", "sin senal", "luz los",
@@ -404,17 +414,13 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     ]):
         return "soporte_tecnico_foco_rojo"
 
-    # 5. Entretenimiento / películas
+    # 6. Entretenimiento / películas
     if any(w in msg_limpio for w in [
         "pelicula", "película", "serie", "recomendar", "recomendacion", "recomendación",
         "sugerir", "sugerencia", "qué ver", "que ver", "opsatv", "estrenos",
         "tendencia", "cartelera"
     ]):
         return "recomendacion_peliculas_opsatv"
-
-    # 6. Registro formal de instalación / cliente potencial
-    if any(w in msg_limpio for w in ["nuevo cliente", "prospecto", "ingresar cliente", "nueva instalacion"]):
-        return "registrar_cliente_potencial"
 
     # 7. Agradecimientos / Cierre
     if any(w in msg_limpio for w in ["gracias", "muchas gracias", "ya funciona", "ya vale", "perfecto", "listo gracias", "chao", "adios"]):
@@ -428,6 +434,7 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
 Tu objetivo es clasificar la intención del usuario basándote prioritariamente en su ÚLTIMO mensaje.
 
 Reglas:
+- Si el usuario desea contratar, solicitar instalación, agendar cita de servicio o nuevo contrato, responde: "registrar_cliente_potencial".
 - Si el usuario pregunta por planes de internet, precios, ofertas, megas, servicios o cómo te llamas / quién eres, responde siempre: "general".
 - Si el usuario pregunta cuánto debe de su saldo personal o envía una cédula, responde: "consultar_pagos_y_saldos".
 - Si el usuario reporta una avería o foco rojo en el módem, responde: "soporte_tecnico_foco_rojo".
@@ -436,7 +443,7 @@ Reglas:
 
 Último mensaje del usuario: "{msg_limpio}"
 
-Responde únicamente con una de estas opciones: "general", "consultar_pagos_y_saldos", "soporte_tecnico_foco_rojo", "recomendacion_peliculas_opsatv" o "registrar_cliente_potencial"."""
+Responde únicamente con una de estas opciones: "general", "registrar_cliente_potencial", "consultar_pagos_y_saldos", "soporte_tecnico_foco_rojo", "recomendacion_peliculas_opsatv"."""
 
     try:
         intencion = generar_respuesta_ia(prompt, max_tokens=25, temperature=0.0).lower().strip()
@@ -458,84 +465,118 @@ Eres SAM, la IA encargada de recopilar los datos para registrar un nuevo cliente
 """
 
 def procesar_registro_cliente(numero: str, mensaje: str, contexto: str, db: Session) -> str:
-    # Obtener entidades de la base de datos para fuzzy mapping
+    """
+    Skill para recopilar datos de contratación de nuevos clientes y agendar automáticamente
+    la orden de trabajo en la Hoja de Ruta técnica dentro de la jornada de 8:00 AM a 17:00 PM.
+    - Cédula: Opcional.
+    - Coordenadas/Ubicación GPS: Obligatoria.
+    - Disponibilidad técnica real consultada en tiempo real.
+    """
+    import pytz
+    from datetime import datetime, timedelta
+
+    EC_TZ = pytz.timezone('America/Guayaquil')
+    ahora_ec = datetime.now(EC_TZ)
+
+    # 1. Obtener planes y nodos válidos de la BD
     valid_nodos = [n[0] for n in db.query(models.Nodo.nombre).filter(models.Nodo.nombre != None).all()]
     valid_planes = [pl[0] for pl in db.query(models.PlanInternet.nombre).filter(models.PlanInternet.nombre != None).all()]
 
-    prompt_dinamico = f"""# Skill: Registrar Cliente
-Eres SAM, la IA encargada de recopilar los datos para registrar un nuevo cliente en el sistema de OPSATEL.
-Debes mantener un tono amigable, claro, profesional y dar respuestas cortas.
-Siempre menciona que eres SAM, el Sistema Autónomo Multitarea de OPSATEL y que vas a recopilar datos para registrar un cliente.
+    # 2. Consultar disponibilidad técnica en Hoja de Ruta para los próximos 4 días laborables
+    dias_disponibles_txt = []
+    for d_offset in range(5):
+        dia_obj = ahora_ec + timedelta(days=d_offset)
+        if dia_obj.weekday() == 6:  # Domingo no laborable regular
+            continue
+        f_str = dia_obj.strftime("%Y-%m-%d")
+        nom_dia = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"][dia_obj.weekday()]
+        conteo = db.query(models.HojaRuta).filter(models.HojaRuta.fecha == f_str, models.HojaRuta.estado != "Cancelado").count()
+        dias_disponibles_txt.append(f"• {nom_dia} {f_str}: {conteo} citas técnicas agendadas")
+    disponibilidad_str = "\n".join(dias_disponibles_txt)
 
-Los datos que debes conseguir son:
-* nombre: Nombre completo del cliente.
-* cedula: Cédula o RUC (10 o 13 dígitos).
-* celular: Teléfono de contacto.
-* direccion: Dirección domiciliaria.
-* plan: Plan de internet elegido (debe mapearse a uno de los PLANES VÁLIDOS).
-* nodo: Sector o Nodo de red (debe mapearse a uno de los NODOS VÁLIDOS).
-* parroquia: Parroquia.
-* latitud: Latitud GPS (opcional, si se conoce).
-* longitud: Longitud GPS (opcional, si se conoce).
-* comentarios: Notas adicionales (opcional).
+    prompt_dinamico = f"""# Skill: Contratación y Agendamiento Técnico en Hoja de Ruta (OPSATEL)
+Eres SAM, el asesor virtual de OPSATEL encargado de tomar los datos del contrato y agendar la orden de instalación en la Hoja de Ruta técnica.
+Mantén un trato cálido, humano, ágil y profesional.
 
-PLANES VÁLIDOS en el sistema: {json.dumps(valid_planes, ensure_ascii=False)}
-NODOS VÁLIDOS en el sistema: {json.dumps(valid_nodos, ensure_ascii=False)}
+REGLAS DE LOS DATOS DEL CONTRATO:
+1. DATOS OBLIGATORIOS:
+   - nombre: Nombre y apellido completos del titular.
+   - celular: Teléfono de contacto (por defecto el número de WhatsApp actual: {numero}).
+   - ubicacion: COORDENADAS GPS O ENLACE DE GOOGLE MAPS (¡OBLIGATORIA! para que los técnicos puedan verificar la fibra óptica y llegar al domicilio exacto). Si el cliente no sabe cómo obtenerlas, explícale amablemente que puede compartir su ubicación actual por WhatsApp o enviar el link de Google Maps de su vivienda.
+   - direccion: Dirección domiciliaria con calles y referencias claras (ej: color de casa, frente a qué lugar).
+   - parroquia: Parroquia o sector donde se instalará.
+   - plan: Plan de internet seleccionado (debe ser uno de los PLANES VÁLIDOS de OPSATEL).
+   - fecha_instalacion: Fecha acordada para la instalación (coordinar según la disponibilidad mostrada abajo).
+   - hora_instalacion: Hora acordada para la cita (¡ATENCIÓN! Los técnicos ÚNICAMENTE trabajan en la jornada de 8:00 AM a 17:00 PM / 8:00 a 17:00. NUNCA agendes fuera de ese horario).
 
-Reglas:
-- No inventes datos.
-- Si falta algún dato obligatorio (nombre, cedula, celular, direccion, plan, nodo), pídelo amigablemente. Puedes pedir varios datos juntos para agilizar.
-- Muestra el avance estructurado para que el usuario lo vea de esta forma:
-Nombre: <valor o (pendiente)>
-Cédula: <valor o (pendiente)>
-Celular: <valor o (pendiente)>
-Dirección: <valor o (pendiente)>
-Plan: <valor o (pendiente)>
-Nodo: <valor o (pendiente)>
-Parroquia: <valor o (pendiente)>
-Coordenadas GPS: <latitud, longitud o (pendiente)>
-Comentarios: <valor o (pendiente)>
+2. DATO OPCIONAL:
+   - cedula: Cédula de 10 dígitos o RUC. ¡LA CÉDULA ES TOTALMENTE OPCIONAL! Si el cliente te la brinda la anotas; si no la tiene o prefiere entregarla en persona a los técnicos durante la visita, NO insistas ni frenes el agendamiento; continúa con los demás datos.
 
-- Cuando TODOS los datos obligatorios estén listos, muestra la ficha y pide confirmación explícita.
-- Únicamente cuando el usuario confirme diciendo "sí", "correcto", "confirmado", "ok", etc., genera un JSON final de una sola línea, sin preámbulos ni explicaciones.
+PLANES VÁLIDOS: {json.dumps(valid_planes, ensure_ascii=False)}
+NODOS / SECTORES VÁLIDOS: {json.dumps(valid_nodos, ensure_ascii=False)}
 
-Formato exacto del JSON final:
-{{"nombre": "", "cedula": "", "celular": "", "direccion": "", "plan": "", "nodo": "", "parroquia": "", "latitud": 0.0, "longitud": 0.0, "comentarios": ""}}
+DISPONIBILIDAD TÉCNICA PRÓXIMA (Jornada técnica: 8:00 AM a 17:00 PM):
+{disponibilidad_str}
+
+DINÁMICA DE LA CONVERSACIÓN:
+- Sé ágil y empático: puedes pedir varios datos juntos para no hacer el proceso largo.
+- Explica al cliente que los técnicos laboran de 8:00 AM a 17:00 PM y oriéntale sobre las mejores opciones de fecha y hora disponibles.
+- Cuando tengas los datos obligatorios (nombre, celular, ubicación/coordenadas, dirección, plan, fecha y hora), muestra un resumen ordenado y pide confirmación (ej: "¿Están correctos todos los datos para confirmar tu instalación?").
+- ÚNICAMENTE cuando el usuario confirme diciendo "sí", "correcto", "confirmo", "de acuerdo", "ok", etc., responde GENERANDO SOLAMENTE UN JSON de una sola línea en este formato exacto:
+
+{{"nombre": "", "cedula": "", "celular": "", "direccion": "", "ubicacion": "", "plan": "", "nodo": "", "parroquia": "", "fecha_instalacion": "YYYY-MM-DD", "hora_instalacion": "10:00 AM", "comentarios": ""}}
 """
 
     try:
         content = f"{prompt_dinamico}\n\nConversación hasta ahora:\n{contexto}"
-        res_text = generar_respuesta_ia(content, max_tokens=600, temperature=0.2)
+        res_text = generar_respuesta_ia(content, max_tokens=700, temperature=0.2)
         
-        # Verificar si la IA generó el JSON final
+        # Verificar si la IA generó el JSON final de confirmación
         json_match = re.search(r'\{.*"nombre".*\}', res_text)
         if json_match:
             try:
                 data = json.loads(json_match.group(0))
                 
-                # Crear cliente en la tabla real (hoja_de_c__lculo_sin_t__tulo)
-                ubicacion_gps = f"{data.get('latitud') or 0.0}, {data.get('longitud') or 0.0}"
-                
-                # Normalización de cédula y celular
+                # Ubicación / Coordenadas GPS (Obligatoria)
+                ubicacion_val = str(data.get("ubicacion") or "").strip()
+                if not ubicacion_val:
+                    lat = data.get("latitud")
+                    lon = data.get("longitud")
+                    if lat and lon and (lat != 0.0 or lon != 0.0):
+                        ubicacion_val = f"{lat}, {lon}"
+                    else:
+                        ubicacion_val = str(data.get("direccion") or "")
+
+                # Normalización de cédula (Opcional)
                 cedula = str(data.get("cedula") or "").strip()
-                if cedula.isdigit() and len(cedula) == 9:
+                if cedula.lower() in ["sin cedula", "sin cédula", "no", "ninguna", "pendiente", "null", "none"]:
+                    cedula = ""
+                elif cedula.isdigit() and len(cedula) == 9:
                     cedula = "0" + cedula
                     
-                celular = str(data.get("celular") or "").strip()
+                # Normalización de celular
+                celular = str(data.get("celular") or numero).strip()
                 if celular.isdigit() and len(celular) == 9 and celular.startswith("9"):
                     celular = "0" + celular
 
-                # Lógica para reutilizar IDs (Encontrar el primer hueco disponible)
+                # Fecha y Hora de instalación (Jornada técnica: 8:00 AM a 17:00 PM)
+                fecha_inst = str(data.get("fecha_instalacion") or "").strip()
+                if not fecha_inst or len(fecha_inst) < 8:
+                    fecha_inst = (ahora_ec + timedelta(days=1)).strftime("%Y-%m-%d")
+
+                hora_inst = str(data.get("hora_instalacion") or "09:00 AM").strip()
+
+                # Reutilizar primer ID disponible en models.Cliente
                 ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
                 ids = [i[0] for i in ids_query]
-                
                 nuevo_id = 1
                 for current_id in ids:
                     if current_id == nuevo_id:
                         nuevo_id += 1
                     elif current_id > nuevo_id:
-                        break # Encontramos un hueco
+                        break
 
+                # 1. Crear Cliente en la BD (hoja_de_c__lculo_sin_t__tulo)
                 nuevo_cliente = models.Cliente(
                     id=nuevo_id,
                     nombre=data.get("nombre"),
@@ -545,31 +586,68 @@ Formato exacto del JSON final:
                     plan=data.get("plan"),
                     nodo=data.get("nodo"),
                     parroquia=data.get("parroquia"),
-                    ubicacion=ubicacion_gps,
+                    ubicacion=ubicacion_val,
                     comentarios=data.get("comentarios"),
                     estado="Pendiente",
                     saldo=0.00
                 )
-                
                 db.add(nuevo_cliente)
+                db.flush()
+
+                # 2. Crear Orden de Trabajo en Hoja de Ruta
+                obs_hoja = f"Plan: {data.get('plan') or 'No especificado'} | Dirección: {data.get('direccion') or 'No especificada'}"
+                if cedula:
+                    obs_hoja += f" | Cédula: {cedula}"
+                if data.get("comentarios"):
+                    obs_hoja += f" | Obs: {data.get('comentarios')}"
+
+                nueva_hoja = models.HojaRuta(
+                    fecha=fecha_inst,
+                    hora=hora_inst,
+                    cliente_id=nuevo_cliente.id,
+                    nombre_cliente=nuevo_cliente.nombre,
+                    ubicacion_cliente=ubicacion_val,
+                    celular_cliente=celular,
+                    parroquia=data.get("parroquia"),
+                    actividad="Instalación Fibra Óptica",
+                    observacion=obs_hoja,
+                    estado="Pendiente"
+                )
+                db.add(nueva_hoja)
                 db.commit()
                 db.refresh(nuevo_cliente)
+                db.refresh(nueva_hoja)
                 
                 # Limpiar estado de skill
                 estados_skills[numero] = None
                 if numero in historial_conversaciones:
                     historial_conversaciones[numero] = []
+
+                ced_txt = f"• *Cédula*: {cedula}\n" if cedula else "• *Cédula*: (Pendiente por validar en visita técnica)\n"
                     
-                return f"✅ ¡Perfecto! He registrado a *{data.get('nombre')}* en el sistema de OPSATEL en estado Pendiente exitosamente."
+                return (
+                    f"🎉 *¡Solicitud de Instalación Agendada con Éxito en OPSATEL!*\n\n"
+                    f"He registrado tus datos y creado tu orden de trabajo en nuestra Hoja de Ruta técnica:\n\n"
+                    f"📋 *Orden de Trabajo*: #{nueva_hoja.id}\n"
+                    f"👤 *Titular*: {nuevo_cliente.nombre}\n"
+                    f"{ced_txt}"
+                    f"📞 *Teléfono*: {celular}\n"
+                    f"🚀 *Plan Elegido*: {nuevo_cliente.plan}\n"
+                    f"🏠 *Dirección*: {nuevo_cliente.direccion}\n"
+                    f"📍 *Ubicación*: {ubicacion_val}\n"
+                    f"📅 *Fecha Agendada*: {fecha_inst}\n"
+                    f"⏰ *Horario Técnico*: {hora_inst} *(Jornada técnica: 8:00 AM a 5:00 PM)*\n\n"
+                    f"🔧 Nuestro equipo técnico se comunicará contigo antes de llegar a tu domicilio para coordinar la instalación de tu fibra óptica. ¡Bienvenido a la familia OPSATEL! 😊"
+                )
             except Exception as db_err:
-                print(f"[SAM Chatbot] Error guardando cliente: {db_err}")
+                print(f"[SAM Chatbot] Error guardando cliente y orden de trabajo: {db_err}")
                 db.rollback()
-                return "Hubo un inconveniente al guardar los datos del cliente en la base de datos. Por favor, reintente en unos momentos."
+                return "Hubo un inconveniente al guardar los datos en la base de datos. Por favor, reintenta en unos momentos."
         else:
             return res_text
     except Exception as e:
         print(f"[SAM Chatbot] Error en skill registrar cliente: {e}")
-        return "Disculpa, tuve un problema al procesar el registro de cliente. ¿Podrías indicarme los datos nuevamente?"
+        return "Disculpa, tuve un problema al procesar los datos de instalación. ¿Podrías indicarme los datos nuevamente?"
 
 # -------------------------------------------------------------
 # SKILL: CONSULTAR PAGOS Y SALDOS
