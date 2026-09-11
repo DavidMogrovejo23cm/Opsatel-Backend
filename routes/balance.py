@@ -426,7 +426,8 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
         pagos_mes = [p for p in pagos if str(p.fecha_pago)[:7] == mes]
 
     internet_ef = internet_pich = internet_jep = 0.0
-    plus_ef = plus_pich = 0.0
+    plus_ef = plus_pich = plus_jep = 0.0
+    adicional_ef = adicional_pich = adicional_jep = 0.0
     adicional_total = 0.0
 
     for p in pagos_mes:
@@ -434,18 +435,28 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
         m_internet = float(p.monto_internet or 0)
         m_plus    = float(p.monto_plus or 0)
         m_adic    = float(p.monto_adicional or 0)
+
+        # Si por alguna razón es un pago antiguo donde no se separaron los componentes pero hay un monto
+        if m_internet == 0 and m_plus == 0 and m_adic == 0 and float(p.monto or 0) > 0:
+            m_internet = float(p.monto or 0)
+
         adicional_total += m_adic
-        if "JEP" in metodo:
+
+        if "JEP" in metodo or "GUAYAQUIL" in metodo:
             internet_jep += m_internet
+            plus_jep += m_plus
+            adicional_jep += m_adic
         elif "PICHINCHA" in metodo:
             internet_pich += m_internet
             plus_pich += m_plus
+            adicional_pich += m_adic
         else:
             internet_ef += m_internet
             plus_ef += m_plus
+            adicional_ef += m_adic
 
     total_internet = internet_ef + internet_pich + internet_jep
-    total_plus     = plus_ef + plus_pich
+    total_plus     = plus_ef + plus_pich + plus_jep
 
     extras = db.query(models.ClienteExtra).all()
     month_key = {
@@ -499,12 +510,12 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
 
     balance_neto = total_ingresos - total_egresos - total_proyectos
 
-    # Consolidado de Bancos
+    # Consolidado de Bancos (Adicionales se suman directamente al banco correspondiente)
     bancos_resumen = {
-        "efectivo": round(internet_ef + plus_ef + extras_ef, 2),
-        "pichincha": round(internet_pich + plus_pich + extras_pich, 2),
-        "jep": round(internet_jep + extras_jep, 2),
-        "otros": round(adicional_total, 2)
+        "efectivo": round(internet_ef + plus_ef + adicional_ef + extras_ef, 2),
+        "pichincha": round(internet_pich + plus_pich + adicional_pich + extras_pich, 2),
+        "jep": round(internet_jep + plus_jep + adicional_jep + extras_jep, 2),
+        "otros": 0.0
     }
 
     # Consolidado PLATAFORMA (Adicionales de Clientes + Extras General)
@@ -514,7 +525,7 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
         "mes": mes,
         "ingresos": {
             "internet": {"total": total_internet, "efectivo": internet_ef, "pichincha": internet_pich, "jep": internet_jep},
-            "iptv":     {"total": total_plus,     "efectivo": plus_ef,    "pichincha": plus_pich},
+            "iptv":     {"total": total_plus,     "efectivo": plus_ef,    "pichincha": plus_pich, "jep": plus_jep},
             "adicional": adicional_total,
             "extras":   {"total": total_extras,   "efectivo": extras_ef,  "pichincha": extras_pich, "jep": extras_jep},
             "plataforma": {"total": total_plataforma, "adicional": adicional_total, "extras": total_extras},
