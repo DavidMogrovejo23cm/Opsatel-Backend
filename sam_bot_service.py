@@ -362,17 +362,41 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     Clasifica la intención del usuario basándose prioritariamente en su ÚLTIMO mensaje,
     permitiendo cambios de tema inmediatos para evitar atascos.
     """
-    # 1. Detección rápida y prioritaria de palabras clave en el mensaje actual
     msg_limpio = mensaje_actual.strip().lower() if mensaje_actual else ""
     if not msg_limpio and contexto:
         lineas = contexto.strip().split("\n")
         msg_limpio = lineas[-1].replace("user:", "").strip().lower() if lineas else ""
 
-    # Detección de consultas de pago/saldo
-    if any(w in msg_limpio for w in ["saldo", "debo", "pagar", "pago", "factura", "cuanto", "cuánto", "deuda", "estado de cuenta", "comprobante"]):
+    # 1. Preguntas sobre identidad, nombre del bot o charla social -> GENERAL
+    if any(w in msg_limpio for w in [
+        "como te llamas", "cómo te llamas", "quien eres", "quién eres", "tu nombre",
+        "que haces", "qué haces", "hola", "buenos dias", "buenas tardes", "buenas noches",
+        "saludos", "que tal", "sam", "ayuda"
+    ]):
+        # Si no menciona deuda ni falla, es charla general
+        if not any(w in msg_limpio for w in ["debo", "saldo", "foco rojo", "sin internet"]):
+            return "general"
+
+    # 2. Consultas sobre Planes, Ofertas, Precios, Megas o Servicios -> GENERAL (para responder con los datos reales de BD)
+    if any(w in msg_limpio for w in [
+        "plan", "planes", "precio", "precios", "oferta", "ofertas", "megas", "costo",
+        "tarifa", "cuanto cuesta", "cuánto cuesta", "cuanto vale", "cuánto vale",
+        "que ofrecen", "qué ofrecen", "servicios", "promocion", "promociones", "contratar",
+        "adquirir", "velocidad", "cobertura"
+    ]):
+        return "general"
+
+    # 3. Consultas explícitas de Pago / Saldo / Deuda personal
+    tiene_cedula = bool(re.search(r'\b\d{10}\b', msg_limpio))
+    es_pregunta_deuda = any(w in msg_limpio for w in [
+        "cuanto debo", "cuánto debo", "mi saldo", "saldo pendiente", "mi deuda",
+        "mi factura", "factura pendiente", "estado de cuenta", "cuanto tengo que pagar",
+        "cuánto tengo que pagar", "pago pendiente", "mi pago"
+    ])
+    if tiene_cedula or es_pregunta_deuda:
         return "consultar_pagos_y_saldos"
 
-    # Detección de soporte técnico / fallas
+    # 4. Soporte técnico / fallas
     if any(w in msg_limpio for w in [
         "foco rojo", "luz roja", "sin internet", "sin servicio", "no tengo internet",
         "no hay internet", "se fue el internet", "sin señal", "sin senal", "luz los",
@@ -380,45 +404,42 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     ]):
         return "soporte_tecnico_foco_rojo"
 
-    # Detección de entretenimiento / películas
+    # 5. Entretenimiento / películas
     if any(w in msg_limpio for w in [
         "pelicula", "película", "serie", "recomendar", "recomendacion", "recomendación",
         "sugerir", "sugerencia", "qué ver", "que ver", "opsatv", "estrenos",
-        "tendencia", "cartelera", "accion", "comedia", "terror", "suspenso"
+        "tendencia", "cartelera"
     ]):
         return "recomendacion_peliculas_opsatv"
 
-    # Detección de registro de cliente potencial
-    if any(w in msg_limpio for w in ["nuevo cliente", "prospecto", "ingresar cliente", "contratar internet", "nueva instalacion"]):
+    # 6. Registro formal de instalación / cliente potencial
+    if any(w in msg_limpio for w in ["nuevo cliente", "prospecto", "ingresar cliente", "nueva instalacion"]):
         return "registrar_cliente_potencial"
 
-    # Agradecimientos / Cierre
+    # 7. Agradecimientos / Cierre
     if any(w in msg_limpio for w in ["gracias", "muchas gracias", "ya funciona", "ya vale", "perfecto", "listo gracias", "chao", "adios"]):
         return "general"
 
-    # 2. Clasificación con IA si algún proveedor está disponible
+    # 8. Clasificación con IA si no coincide con las reglas anteriores
     if not hay_proveedor_ia():
         return "general"
-    
-    prompt = f"""Eres un enrutador inteligente de intenciones del chatbot SAM de Opsatel.
-Tu objetivo es clasificar la intención del usuario basándote prioritariamente en su ÚLTIMO mensaje, permitiendo cambios de tema si el usuario ya no desea continuar con el tema anterior.
 
-Intenciones disponibles:
-- registrar_cliente_potencial: Si el usuario desea registrar, ingresar o guardar un prospecto, nuevo cliente, o prospecto de ventas.
-- consultar_pagos_y_saldos: Si el usuario pregunta por su deuda, saldo pendiente, facturas, último pago, comprobante de pago o estado de cuenta.
-- recomendacion_peliculas_opsatv: Si el usuario solicita recomendaciones de películas, series, catálogo OPSATV o entretenimiento.
-- soporte_tecnico_foco_rojo: Si el usuario reporta problemas de internet, internet lento, sin servicio, sin señal, foco rojo, luz LOS, cable desconectado o fallas técnicas.
-- general: Si es un saludo, despedida, agradecimiento ("gracias", "ya funciona"), pregunta genérica o charla casual.
+    prompt = f"""Eres un enrutador inteligente de intenciones del chatbot SAM de Opsatel.
+Tu objetivo es clasificar la intención del usuario basándote prioritariamente en su ÚLTIMO mensaje.
+
+Reglas:
+- Si el usuario pregunta por planes de internet, precios, ofertas, megas, servicios o cómo te llamas / quién eres, responde siempre: "general".
+- Si el usuario pregunta cuánto debe de su saldo personal o envía una cédula, responde: "consultar_pagos_y_saldos".
+- Si el usuario reporta una avería o foco rojo en el módem, responde: "soporte_tecnico_foco_rojo".
+- Si pide películas o series, responde: "recomendacion_peliculas_opsatv".
+- De lo contrario, responde: "general".
 
 Último mensaje del usuario: "{msg_limpio}"
-Conversación previa para contexto:
-"{contexto}"
 
-Tu tarea: Responde únicamente con el nombre de la intención ("registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv", "soporte_tecnico_foco_rojo" o "general"). No agregues explicaciones, puntuación ni texto adicional."""
+Responde únicamente con una de estas opciones: "general", "consultar_pagos_y_saldos", "soporte_tecnico_foco_rojo", "recomendacion_peliculas_opsatv" o "registrar_cliente_potencial"."""
 
     try:
-        intencion = generar_respuesta_ia(prompt, max_tokens=30, temperature=0.0).lower()
-        
+        intencion = generar_respuesta_ia(prompt, max_tokens=25, temperature=0.0).lower().strip()
         valid_intents = ["registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv", "soporte_tecnico_foco_rojo", "general"]
         for intent in valid_intents:
             if intent in intencion:
@@ -675,150 +696,92 @@ def extraer_cedula(texto: str) -> str:
     return ""
 
 def procesar_consulta_pago(numero: str, mensaje: str, contexto: str, db: Session, ya_solicitado: bool = False) -> str:
-    # 1. Comprobar si el usuario desea cancelar el flujo activo
-    if mensaje.strip().lower() in ["cancelar", "salir", "cancel", "no"]:
+    """Procesa consultas de saldo y pagos usando datos 100% reales de MySQL de forma natural"""
+    # 1. Cancelar flujo si el usuario lo pide
+    if mensaje.strip().lower() in ["cancelar", "salir", "cancel", "no", "menu", "menú"]:
         estados_skills[numero] = None
-        if numero in historial_conversaciones:
-            historial_conversaciones[numero] = []
-        return "Entendido, he cancelado la consulta de saldo. ¿En qué más te puedo ayudar hoy?"
+        return "Entendido, con gusto te ayudo con cualquier otra consulta sobre Opsatel 😊"
 
-    # 2. Comprobar si el mensaje actual ya contiene una cédula
+    # 2. Comprobar si el mensaje actual contiene una cédula de 10 dígitos
     cedula_extraida = extraer_cedula(mensaje)
-    
+    cliente = None
+
     if cedula_extraida:
         cliente = db.query(models.Cliente).filter(models.Cliente.cedula == cedula_extraida).first()
-        if cliente:
-            # Encontrado, limpiamos el estado del skill y devolvemos la información
+        if not cliente:
+            ced_alt = cedula_extraida[1:] if cedula_extraida.startswith("0") else ("0" + cedula_extraida)
+            cliente = db.query(models.Cliente).filter(models.Cliente.cedula == ced_alt).first()
+
+        if not cliente:
             estados_skills[numero] = None
-            
-            # Obtener pagos e historial
-            pagos = db.query(models.Pago).filter(models.Pago.cliente_id == cliente.id).order_by(models.Pago.fecha_pago.desc()).limit(3).all()
-            historial_pagos_text = ""
-            if pagos:
-                for p in pagos:
-                    fecha_str = p.fecha_pago.strftime("%d/%m/%Y") if p.fecha_pago else "N/A"
-                    historial_pagos_text += f"- {fecha_str}: ${p.monto} ({p.metodo_pago or 'No especificado'})\n"
-            else:
-                historial_pagos_text = "No registra pagos previos en el sistema.\n"
-                
-            prompt_pago = f"""Eres SAM, el Sistema Autónomo Multitarea de OPSATEL.
-Un cliente ha solicitado información sobre su saldo y estado de cuenta.
-Genera una respuesta amigable, educada y concisa informando sobre estos datos.
+            return f"No encontré ningún contrato registrado con la cédula **{cedula_extraida}** en nuestra base de datos. Por favor verifica el número o escríbeme para ayudarte 😊"
 
-Datos reales del cliente:
-- Nombre: {cliente.nombre}
-- Cédula: {cliente.cedula}
-- Celular registrado: {cliente.celular}
-- Plan contratado: {cliente.plan or 'No definido'}
-- Mensualidad contratada: ${cliente.pago_mensual or 0.00}
-- Saldo pendiente (Deuda): ${cliente.saldo or 0.00}
-- Estado del servicio: {cliente.estado}
-- Últimos 3 pagos registrados:
-{historial_pagos_text}
-
-Reglas:
-- Si el saldo (deuda) es 0 o menor, felicítalo por estar al día.
-- Si tiene saldo pendiente, infórmale el monto exacto de forma clara y respetuosa.
-- Mantén la respuesta breve y al grano, ideal para WhatsApp.
-- No inventes ningún dato que no esté listado arriba.
-"""
-            try:
-                return generar_respuesta_ia(prompt_pago, max_tokens=250, temperature=0.3)
-            except Exception as e:
-                print(f"[SAM Chatbot] Error generando respuesta de pago: {e}")
-                return f"Hola {cliente.nombre}, tu saldo pendiente es de ${cliente.saldo or 0.00} y tu servicio se encuentra en estado: {cliente.estado}."
-        else:
-            # Cédula ingresada pero no encontrada en BD. No limpiamos el estado del skill
-            return f"Lo siento, no encontré ningún cliente con el número de cédula **{cedula_extraida}** en nuestra base de datos. Por favor, verifica el número e ingrésalo nuevamente, o escribe **cancelar** para volver al inicio."
-
-    # 3. Si no hay cédula en el mensaje actual:
-    if ya_solicitado:
-        # Ya estábamos en el flujo y no ingresó una cédula válida
-        return "No logré identificar un número de cédula de 10 dígitos. Por favor, indícame tu número de cédula para consultar tu saldo, o escribe **cancelar** para volver al inicio."
-        
-    # Si es el primer mensaje del flujo, verificamos si menciona a un tercero por nombre
-    prompt_extract = f"""Del siguiente mensaje de WhatsApp del usuario, determina si está pidiendo consultar el saldo/pago de otra persona mencionando su nombre de forma explícita.
-Si menciona un nombre, responde únicamente con el nombre extraído.
-Si el usuario pregunta por su propio saldo (ej. "cuanto debo", "mi saldo", "mi pago") o no menciona ningún nombre específico, responde únicamente con la palabra "auto".
-
-Mensaje: "{mensaje}"
-Respuesta:"""
-    
-    nombre_buscado = "auto"
-    try:
-        nombre_buscado = generar_respuesta_ia(prompt_extract, max_tokens=30, temperature=0.0).lower()
-    except Exception as e:
-        print(f"[SAM Chatbot] Error al extraer nombre: {e}")
-        
-    cliente = None
-    sugerencias = []
-    
-    if "auto" in nombre_buscado:
-        # No se especificó nombre de otra persona y tampoco detectamos cédula en este primer mensaje.
-        # Primero intentar resolver al cliente automáticamente por su número celular o si es administrador
-        cliente_auto = buscar_cliente_por_celular(numero, db)
-        if not cliente_auto:
+    # 3. Si no hay cédula, verificar si el número telefónico de quien escribe pertenece a un cliente registrado
+    if not cliente:
+        cliente = buscar_cliente_por_celular(numero, db)
+        if not cliente:
             adm = es_numero_administrador(numero, db)
             if adm and adm.numero:
-                cliente_auto = buscar_cliente_por_celular(adm.numero, db)
+                cliente = buscar_cliente_por_celular(adm.numero, db)
 
-        if cliente_auto:
-            cliente = cliente_auto
-            estados_skills[numero] = None
-        else:
-            estados_skills[numero] = "consultar_pagos_y_saldos"
-            return "Por favor, ayúdame con tu número de cédula para consultar tu saldo."
-    else:
-        # Búsqueda por el nombre extraído (para compatibilidad de consultas de terceros)
-        cliente, sugerencias = buscar_cliente_por_nombre(nombre_buscado, db)
-        # Como es consulta directa por nombre, no mantenemos estado activo del skill
+    # 4. Si el cliente fue identificado (por cédula o por su número telefónico registrado)
+    if cliente:
         estados_skills[numero] = None
-        
-    if not cliente:
-        if sugerencias:
-            sug_text = "\n".join([f"- {s['nombre']}" for s in sugerencias])
-            return f"No encontré un cliente exacto para '{nombre_buscado}'. ¿Te refieres a alguno de estos?\n{sug_text}\n\nPor favor indícame el nombre tal como aparece arriba."
+        pagos = db.query(models.Pago).filter(models.Pago.cliente_id == cliente.id).order_by(models.Pago.fecha_pago.desc()).limit(3).all()
+        historial_pagos_text = ""
+        if pagos:
+            for p in pagos:
+                fecha_str = p.fecha_pago.strftime("%d/%m/%Y") if p.fecha_pago else "N/A"
+                historial_pagos_text += f"- {fecha_str}: ${p.monto} ({p.metodo_pago or 'No especificado'})\n"
         else:
-            return f"Lo lamento, no encontré ningún cliente con el nombre '{nombre_buscado}' en nuestra base de datos."
-            
-    # Si encontramos al cliente por nombre, obtenemos sus últimos pagos y saldo
-    pagos = db.query(models.Pago).filter(models.Pago.cliente_id == cliente.id).order_by(models.Pago.fecha_pago.desc()).limit(3).all()
-    
-    # Formatear el historial de pagos
-    historial_pagos_text = ""
-    if pagos:
-        for p in pagos:
-            fecha_str = p.fecha_pago.strftime("%d/%m/%Y") if p.fecha_pago else "N/A"
-            historial_pagos_text += f"- {fecha_str}: ${p.monto} ({p.metodo_pago or 'No especificado'})\n"
-    else:
-        historial_pagos_text = "No registra pagos previos en el sistema.\n"
-        
-    # Prompt para que Claude genere la respuesta de SAM con datos reales
-    prompt_pago = f"""Eres SAM, el Sistema Autónomo Multitarea de OPSATEL.
-Un cliente ha solicitado información sobre su saldo y estado de cuenta.
-Genera una respuesta amigable, educada y concisa informando sobre estos datos.
+            historial_pagos_text = "No registra pagos previos en el sistema.\n"
 
-Datos reales del cliente:
+        prompt_pago = f"""Eres SAM, el asesor virtual oficial de OPSATEL.
+Un cliente ha consultado sobre su estado de cuenta / saldo.
+Genera una respuesta muy amable, concisa y profesional con estos datos reales de la base de datos:
+
+Datos del cliente:
 - Nombre: {cliente.nombre}
-- Celular registrado: {cliente.celular}
+- Cédula: {cliente.cedula or 'No registrada'}
 - Plan contratado: {cliente.plan or 'No definido'}
 - Mensualidad contratada: ${cliente.pago_mensual or 0.00}
-- Saldo pendiente (Deuda): ${cliente.saldo or 0.00}
+- Saldo pendiente (Deuda actual): ${cliente.saldo or 0.00}
 - Estado del servicio: {cliente.estado}
-- Últimos 3 pagos registrados:
+- Últimos pagos registrados:
 {historial_pagos_text}
 
-Reglas:
-- Si el saldo (deuda) es 0 o menor, felicítalo por estar al día.
-- Si tiene saldo pendiente, infórmale el monto exacto de forma clara y respetuosa.
-- Mantén la respuesta breve y al grano, ideal para WhatsApp.
-- No inventes ningún dato que no esté listado arriba.
-"""
-    try:
-        return generar_respuesta_ia(prompt_pago, max_tokens=250, temperature=0.3)
-    except Exception as e:
-        print(f"[SAM Chatbot] Error generando respuesta de pago: {e}")
-        return f"Hola {cliente.nombre}, tu saldo pendiente es de ${cliente.saldo or 0.00} y tu servicio se encuentra en estado: {cliente.estado}."
+Instrucciones:
+- Si el saldo es 0 o menor, felicítalo calurosamente por estar al día con sus pagos en Opsatel.
+- Si tiene saldo pendiente, indícale el valor exacto de forma respetuosa y clara.
+- Mantén un tono natural, empático y humano para WhatsApp (evita sonar a robot)."""
+
+        try:
+            return generar_respuesta_ia(prompt_pago, max_tokens=250, temperature=0.3)
+        except Exception as e:
+            print(f"[SAM Chatbot] Error generando respuesta de pago: {e}")
+            return f"Hola {cliente.nombre}, tu saldo pendiente es de ${cliente.saldo or 0.00} y tu servicio se encuentra en estado: {cliente.estado}."
+
+    # 5. Si no se identificó por teléfono ni por cédula, verificar si preguntó por el nombre de otra persona (ej: "saldo de Juan Pérez")
+    match_nombre = re.search(r'(?:saldo|deuda|cuenta)\s+de\s+([a-záéíóúñA-ZÁÉÍÓÚÑ\s]{3,35})', mensaje, re.IGNORECASE)
+    if match_nombre:
+        posible_nombre = match_nombre.group(1).strip()
+        palabras_nom = posible_nombre.split()
+        if len(palabras_nom) <= 4:
+            cliente_nom, _ = buscar_cliente_por_nombre(posible_nombre, db)
+            if cliente_nom:
+                estados_skills[numero] = None
+                pagos = db.query(models.Pago).filter(models.Pago.cliente_id == cliente_nom.id).order_by(models.Pago.fecha_pago.desc()).limit(3).all()
+                historial_pagos_text = "\n".join([f"- {p.fecha_pago.strftime('%d/%m/%Y') if p.fecha_pago else 'N/A'}: ${p.monto}" for p in pagos]) if pagos else "No registra pagos previos."
+                prompt_pago = f"""Eres SAM de OPSATEL. Informa de manera cortés el estado de cuenta de {cliente_nom.nombre}:
+- Plan: {cliente_nom.plan}
+- Saldo pendiente: ${cliente_nom.saldo or 0.00}
+- Estado: {cliente_nom.estado}
+- Últimos pagos: {historial_pagos_text}"""
+                return generar_respuesta_ia(prompt_pago, max_tokens=250, temperature=0.3)
+
+    # 6. Si no hay datos suficientes, pedir la cédula amablemente
+    estados_skills[numero] = "consultar_pagos_y_saldos"
+    return "Con mucho gusto te ayudo a consultar tu saldo en OPSATEL 😊 Por favor indícame tu número de cédula (10 dígitos) para buscar tu contrato en el sistema."
 
 # -------------------------------------------------------------
 # SKILL: RECOMENDACIÓN DE PELÍCULAS Y SERIES OPSATV
@@ -1013,64 +976,89 @@ Conversación actual:
 # -------------------------------------------------------------
 # CHAT GENERAL (PERSONALIDAD HUMANA E INTELIGENTE DE SAM)
 # -------------------------------------------------------------
-PROMPT_GENERAL = """Eres SAM (Sistema Autónomo Multitarea de OPSATEL), el asistente virtual oficial de la empresa proveedora de Internet y Telecomunicaciones OPSATEL.
+PROMPT_GENERAL = """Eres SAM (Sistema Autónomo Multitarea de OPSATEL), el asesor virtual oficial y humano de atención al cliente de la empresa de telecomunicaciones e internet por fibra óptica OPSATEL en Ecuador.
 
-PERSONALIDAD Y TONO:
-- Tu trato es sumamente cálido, empático, inteligente, fluido y 100% humano, como el mejor asesor de atención al cliente de la empresa.
-- Exprésate con cordialidad y claridad sin sonar como un robot ni usar plantillas frías o acartonadas.
-- Si el usuario te saluda o hace una pregunta abierta, dale una bienvenida muy amable y ofrece tu ayuda dispuesta.
-- Si el usuario realiza preguntas de cultura general, ciencia o curiosidades (por ejemplo: "¿cuál es la distancia de la Tierra al Sol?", "¿quién inventó internet?", etc.), respóndelas con total amabilidad, precisión y soltura científica de forma concisa. Al final de tu respuesta, recuérdale con simpatía que eres el asistente de OPSATEL y que estás listo para ayudarle con sus pagos, planes de internet o soporte técnico. 😊
-- Si te realizan una consulta sobre la que no tengas datos exactos en el sistema, responde siempre con amabilidad humana.
-- NUNCA respondas con mensajes fríos de error o disculpas robóticas. Sé conversacional, resolutivo, positivo y cercano en todo momento."""
+DIRECTRICES DE ATENCIÓN (SÉ 100% NATURAL, CÁLIDO, EMPÁTICO Y HUMANO):
+1. TONO: Hablas como un asesor de atención al cliente real de primer nivel: sumamente cordial, educado, claro y dispuesto a ayudar. NUNCA suenes como un robot ni uses plantillas acartonadas.
+2. TRATO AL USUARIO:
+   - NUNCA digas "cliente desconocido", "usuario no identificado", ni menciones errores de base de datos o fallos del sistema.
+   - Si el usuario es un CLIENTE REGISTRADO (aparece en DATOS DEL CLIENTE REGISTRADO):
+     Salúdalo cordialmente por su nombre (ej: "¡Hola [Nombre]! Qué gusto saludarte de nuevo en OPSATEL 😊").
+   - Si el usuario es un PROSPECTO O CLIENTE NUEVO (no registrado):
+     Dale una cálida bienvenida a OPSATEL (ej: "¡Hola! Bienvenido a OPSATEL 😊 Con mucho gusto te ayudo."). Si pregunta por servicios o planes, puedes preguntarle con amabilidad su nombre o de qué sector o parroquia nos escribe para verificar la cobertura de fibra óptica.
+3. PREGUNTAS SOBRE TI ("¿cómo te llamas?", "¿quién eres?"):
+   - Responde con simpatía y cercanía: "¡Hola! Me llamo SAM, soy el asesor virtual oficial de OPSATEL. Estoy aquí para ayudarte con toda la información sobre nuestros planes de internet, pagos, consultas de saldo o soporte técnico. ¿En qué te puedo colaborar hoy? 😊"
+4. PREGUNTAS SOBRE PLANES, PRECIOS O OFERTAS ("¿cuáles son los planes?", "¿cuánto cuesta el internet?", etc.):
+   - Presenta de forma clara, ordenada y atractiva los planes de internet REALES listados abajo (Megas, Precio mensual y Pantallas de televisión TV/IPTV).
+   - Pregúntale amablemente en qué sector o parroquia se encuentra para verificar la disponibilidad de fibra óptica e iniciar su contratación.
+5. PREGUNTAS SOBRE MEDIOS DE PAGO O BANCOS:
+   - Infórmale las entidades bancarias oficiales registradas para depósitos o transferencias.
+6. CULTURA GENERAL / CURIOSIDADES:
+   - Respóndelas con simpatía, soltura y precisión. Al final recuérdale amablemente que estás a su disposición para cualquier duda sobre los servicios de OPSATEL.
+7. ACTITUD SIEMPRE POSITIVA Y RESOLUTIVA:
+   - NUNCA respondas negativamente ni des explicaciones técnicas sobre tu funcionamiento interno. Responde siempre con positivismo, cortesía y orientación al cliente.
+"""
 
 def procesar_chat_general(numero: str, mensaje: str, contexto: str, db: Session = None) -> str:
     info_bd = []
+    nombre_cliente = None
     if db:
         try:
-            # 1. Obtener Planes de Internet reales de la base de datos
+            # 1. Verificar si el usuario que escribe ya es un cliente registrado
+            cliente = buscar_cliente_por_celular(numero, db)
+            if not cliente:
+                adm = es_numero_administrador(numero, db)
+                if adm and adm.numero:
+                    cliente = buscar_cliente_por_celular(adm.numero, db)
+
+            if cliente and cliente.nombre:
+                nombre_cliente = cliente.nombre
+                info_bd.append(
+                    f"DATOS DEL CLIENTE REGISTRADO QUE TE ESCRIBE:\n"
+                    f"- Nombre del cliente: {cliente.nombre}\n"
+                    f"- Plan actual contratado: {cliente.plan or 'No definido'}\n"
+                    f"- Saldo pendiente: ${cliente.saldo or 0.00}\n"
+                    f"- Estado actual del servicio: {cliente.estado}"
+                )
+            else:
+                info_bd.append("ESTADO DEL REMITENTE: Prospecto o nuevo cliente interesado (Aún no registrado en la BD). Trátalo con máxima cordialidad y dale la bienvenida a OPSATEL.")
+
+            # 2. Obtener Planes de Internet reales de la base de datos
             planes = db.query(models.PlanInternet).all()
             if planes:
                 lista_planes = []
                 for p in planes:
-                    linea = f"- {p.nombre}: {p.megas} Megas por ${float(p.precio):.2f}/mes"
+                    linea = f"• {p.nombre}: {p.megas} Megas por ${float(p.precio):.2f}/mes"
                     if p.pantallas:
                         linea += f" (incluye {p.pantallas} pantalla(s) de TV/IPTV)"
                     lista_planes.append(linea)
-                info_bd.append("PLANES DE INTERNET VIGENTES EN OPSATEL (Datos reales de la base de datos):\n" + "\n".join(lista_planes))
+                info_bd.append("PLANES DE INTERNET VIGENTES EN OPSATEL (Datos oficiales de la base de datos):\n" + "\n".join(lista_planes))
 
-            # 2. Obtener Bancos / Medios de pago registrados
+            # 3. Obtener Bancos / Medios de pago registrados
             bancos = db.query(models.Banco).all()
             if bancos:
                 nombres_bancos = [b.nombre for b in bancos if b.nombre]
                 if nombres_bancos:
-                    info_bd.append("BANCOS / MEDIOS DE PAGO REGISTRADOS EN OPSATEL:\n" + ", ".join(nombres_bancos))
+                    info_bd.append("BANCOS AUTORIZADOS PARA PAGOS Y TRANSFERENCIAS:\n" + ", ".join(nombres_bancos))
 
-            # 3. Verificar si el usuario que escribe ya es un cliente registrado
-            cliente = buscar_cliente_por_telefono(numero, db)
-            if cliente:
-                info_bd.append(
-                    f"DATOS DEL CLIENTE REMITENTE (Identificado en el sistema):\n"
-                    f"- Nombre: {cliente.nombre}\n"
-                    f"- Plan actual: {cliente.plan or 'No definido'}\n"
-                    f"- Saldo pendiente: ${cliente.saldo or 0.00}\n"
-                    f"- Estado del servicio: {cliente.estado}"
-                )
         except Exception as e_bd:
             print(f"[SAM Chatbot] Error cargando contexto de BD para chat general: {e_bd}")
 
-    bloque_bd = ("\n\nDATOS DEL SISTEMA OPSATEL (Usa estos datos reales para responder preguntas sobre planes, precios o clientes):\n" + "\n\n".join(info_bd)) if info_bd else ""
+    bloque_bd = ("\n\nINFORMACIÓN OFICIAL DE OPSATEL:\n" + "\n\n".join(info_bd)) if info_bd else ""
 
     prompt_completo = f"""{PROMPT_GENERAL}
 {bloque_bd}
 
-Conversación actual:
+Conversación actual con el usuario:
 {contexto}
 """
     try:
         return generar_respuesta_ia(prompt_completo, max_tokens=350, temperature=0.5)
     except Exception as e:
         print(f"[SAM Chatbot] Error en chat general: {e}")
-        return "Hola soy Sam de Opsatel, espero estés teniendo un excelente día 😊 ¿En qué te puedo ayudar hoy?"
+        if nombre_cliente:
+            return f"¡Hola {nombre_cliente}! Espero que estés teniendo un excelente día 😊 ¿En qué te puedo ayudar hoy con tus servicios de Opsatel?"
+        return "¡Hola! Bienvenido a OPSATEL, espero estés teniendo un excelente día 😊 ¿En qué te puedo ayudar hoy?"
 
 
 # -------------------------------------------------------------
@@ -1468,22 +1456,29 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
     ya_solicitado = False
 
     if skill_previo:
-        # Si el usuario estaba en un skill pero su nuevo mensaje expresa claramente OTRA intención diferente:
-        if intencion_detectada != "general" and intencion_detectada != skill_previo:
+        # Si el usuario hace cualquier pregunta general o cambia de tema:
+        if intencion_detectada == "general":
+            skill_activo = "general"
+            estados_skills[numero] = None
+        elif intencion_detectada != skill_previo:
             print(f"[SAM Chatbot] 🔄 Desenganche de tema: Cambiando de '{skill_previo}' a '{intencion_detectada}'")
             skill_activo = intencion_detectada
             estados_skills[numero] = None
-        # Si estaba en soporte y ahora da las gracias o dice que ya funciona:
-        elif skill_previo == "soporte_tecnico_foco_rojo" and any(w in msg_limpio for w in ["gracias", "muchas gracias", "ya funciona", "ya vale", "perfecto", "listo", "solucionado", "chao", "adios"]):
-            skill_activo = "general"
-            estados_skills[numero] = None
-        # Si estaba consultando pagos y estamos esperando su cédula:
+        # Si estaba consultando pagos: solo continuar en el skill si ingresó cédula de 10 dígitos
         elif skill_previo == "consultar_pagos_y_saldos":
-            skill_activo = "consultar_pagos_y_saldos"
-            ya_solicitado = True
+            if extraer_cedula(mensaje):
+                skill_activo = "consultar_pagos_y_saldos"
+                ya_solicitado = True
+            else:
+                skill_activo = "general"
+                estados_skills[numero] = None
         # Si estaba en registro interactivo de cliente potencial:
         elif skill_previo == "registrar_cliente_potencial":
-            skill_activo = "registrar_cliente_potencial"
+            if any(w in msg_limpio for w in ["cancelar", "salir", "no", "planes", "precio", "como te llamas"]):
+                skill_activo = "general"
+                estados_skills[numero] = None
+            else:
+                skill_activo = "registrar_cliente_potencial"
         else:
             skill_activo = intencion_detectada
             estados_skills[numero] = None
@@ -1502,7 +1497,7 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
             "instalacion", "instalación", "caja", "cobro", "cobros", "recaudacion", "recaudación",
             "cuanto se cobro", "cuánto se cobró", "cuanto cobramos", "ingresos", "cierre",
             "moroso", "morosos", "corte", "cortes", "suspendido", "suspendidos",
-            "deudores", "alta", "comandos", "admin", "panel", "reporte"
+            "deudores", "alta"
         ])
     )
 
@@ -1520,8 +1515,8 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
         # Soporte técnico no deja el skill enganchado para la siguiente consulta
         estados_skills[numero] = None
         response_text = procesar_soporte_tecnico(numero, mensaje, contexto, db)
-    elif admin_obj and (msg_limpio in ["menu", "menú", "admin", "comandos", "inicio"] or (any(w in msg_limpio for w in ["hola", "buenos dias", "buenas tardes", "buenas noches", "saludos", "que tal", "sam", "ayuda"]) and len(msg_limpio.split()) <= 2)):
-        # Saludo o menú de un Administrador registrado (únicamente si es un saludo breve o comando de menú)
+    elif admin_obj and msg_limpio in ["menu", "menú", "admin", "comandos", "panel"]:
+        # Menú explícito de gestión administrativa
         estados_skills[numero] = None
         response_text = procesar_comando_administrador(numero, mensaje, contexto, db, admin_obj)
     else:
