@@ -1,31 +1,108 @@
 import os
 import re
 import json
-# pyrefly: ignore [missing-import]
-import anthropic
+import time
+from dotenv import load_dotenv
+
+# Cargar automáticamente variables de entorno desde .env
+load_dotenv()
+
 from sqlalchemy.orm import Session
 import models
 # pyrefly: ignore [missing-import]
 from rapidfuzz import fuzz, process
 import whatsapp_service
 
-CLAUDE_MODEL = "claude-3-5-haiku-20241022"
+# Configuración de Modelos de Inteligencia Artificial
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
 
-# Inicializar cliente de Anthropic si la clave está configurada
-import time
+client_gemini = None
+client_anthropic = None
 
-client_ai = None
+def get_gemini_client():
+    """Inicializa y retorna el cliente de Google Gemini si GEMINI_API_KEY o GOOGLE_API_KEY está presente"""
+    global client_gemini
+    if client_gemini is None:
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if api_key and api_key.strip():
+            try:
+                # pyrefly: ignore [missing-import]
+                from google import genai
+                client_gemini = genai.Client(api_key=api_key.strip())
+                print(f"[SAM Chatbot] [IA] Cliente Google Gemini conectado exitosamente ({GEMINI_MODEL}).")
+            except Exception as e:
+                print(f"[SAM Chatbot] Error inicializando Google Gemini: {e}")
+                client_gemini = None
+        else:
+            return None
+    return client_gemini
+
 def get_anthropic_client():
-    global client_ai
-    if client_ai is None:
+    """Inicializa y retorna el cliente de Anthropic Claude como alternativa"""
+    global client_anthropic
+    if client_anthropic is None:
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if api_key and api_key.strip():
-            client_ai = anthropic.Anthropic(api_key=api_key.strip())
+            try:
+                # pyrefly: ignore [missing-import]
+                import anthropic
+                client_anthropic = anthropic.Anthropic(api_key=api_key.strip())
+                print(f"[SAM Chatbot] [IA] Cliente Anthropic Claude conectado exitosamente ({CLAUDE_MODEL}).")
+            except Exception as e:
+                print(f"[SAM Chatbot] Error inicializando Anthropic: {e}")
+                client_anthropic = None
         else:
-            # Clave no configurada: avisar y permitir fallback a lógica por reglas/palabras clave
-            print("[SAM Chatbot] Aviso: ANTHROPIC_API_KEY no configurada. Usando fallback de reglas y palabras clave.")
             return None
-    return client_ai
+    return client_anthropic
+
+def hay_proveedor_ia() -> bool:
+    """Verifica si hay al menos un proveedor de IA disponible (Gemini o Anthropic)"""
+    return bool(get_gemini_client() or get_anthropic_client())
+
+def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
+    """
+    Genera texto usando Google Gemini (prioridad) o Anthropic Claude (respaldo).
+    Si ninguno está configurado o ambos fallan, lanza excepción para que el skill active su fallback.
+    """
+    # 1. Intentar con Google Gemini (Prioridad)
+    client_g = get_gemini_client()
+    if client_g:
+        try:
+            # pyrefly: ignore [missing-import]
+            from google.genai import types
+            config = types.GenerateContentConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+            response = client_g.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config=config
+            )
+            if response and response.text:
+                return response.text.strip()
+            raise ValueError("Respuesta vacía de Google Gemini.")
+        except Exception as e_gem:
+            print(f"[SAM Chatbot] Error en llamada a Gemini: {e_gem}")
+            # Si Gemini falla pero Anthropic está configurado, continuar al fallback
+            if not get_anthropic_client():
+                raise e_gem
+
+    # 2. Intentar con Anthropic Claude (Respaldo)
+    client_a = get_anthropic_client()
+    if client_a:
+        response = client_a.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        if response and response.content:
+            return response.content[0].text.strip()
+        raise ValueError("Respuesta vacía de Anthropic.")
+
+    raise RuntimeError("No hay proveedor de IA configurado. Define GEMINI_API_KEY en tu archivo .env.")
 
 # Estructura para almacenar el historial de conversaciones por número en memoria
 # Formato: {numero: [{"role": "user"|"assistant", "content": str}]}
@@ -176,9 +253,8 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     if any(w in msg_limpio for w in ["gracias", "muchas gracias", "ya funciona", "ya vale", "perfecto", "listo gracias", "chao", "adios"]):
         return "general"
 
-    # 2. Clasificación con Claude si el cliente AI está disponible
-    client = get_anthropic_client()
-    if not client:
+    # 2. Clasificación con IA si algún proveedor está disponible
+    if not hay_proveedor_ia():
         return "general"
     
     prompt = f"""Eres un enrutador inteligente de intenciones del chatbot SAM de Opsatel.
@@ -198,13 +274,7 @@ Conversación previa para contexto:
 Tu tarea: Responde únicamente con el nombre de la intención ("registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv", "soporte_tecnico_foco_rojo" o "general"). No agregues explicaciones, puntuación ni texto adicional."""
 
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=30,
-            temperature=0.0,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        intencion = response.content[0].text.strip().lower()
+        intencion = generar_respuesta_ia(prompt, max_tokens=30, temperature=0.0).lower()
         
         valid_intents = ["registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv", "soporte_tecnico_foco_rojo", "general"]
         for intent in valid_intents:
@@ -224,8 +294,6 @@ Eres SAM, la IA encargada de recopilar los datos para registrar un nuevo cliente
 """
 
 def procesar_registro_cliente(numero: str, mensaje: str, contexto: str, db: Session) -> str:
-    client = get_anthropic_client()
-    
     # Obtener entidades de la base de datos para fuzzy mapping
     valid_nodos = [n[0] for n in db.query(models.Nodo.nombre).filter(models.Nodo.nombre != None).all()]
     valid_planes = [pl[0] for pl in db.query(models.PlanInternet.nombre).filter(models.PlanInternet.nombre != None).all()]
@@ -271,18 +339,9 @@ Formato exacto del JSON final:
 {{"nombre": "", "cedula": "", "celular": "", "direccion": "", "plan": "", "nodo": "", "parroquia": "", "latitud": 0.0, "longitud": 0.0, "comentarios": ""}}
 """
 
-    messages = [
-        {"role": "user", "content": f"{prompt_dinamico}\n\nConversación hasta ahora:\n{contexto}"}
-    ]
-    
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=600,
-            temperature=0.2,
-            messages=messages
-        )
-        res_text = response.content[0].text.strip()
+        content = f"{prompt_dinamico}\n\nConversación hasta ahora:\n{contexto}"
+        res_text = generar_respuesta_ia(content, max_tokens=600, temperature=0.2)
         
         # Verificar si la IA generó el JSON final
         json_match = re.search(r'\{.*"nombre".*\}', res_text)
@@ -473,8 +532,6 @@ def extraer_cedula(texto: str) -> str:
     return ""
 
 def procesar_consulta_pago(numero: str, mensaje: str, contexto: str, db: Session, ya_solicitado: bool = False) -> str:
-    client = get_anthropic_client()
-    
     # 1. Comprobar si el usuario desea cancelar el flujo activo
     if mensaje.strip().lower() in ["cancelar", "salir", "cancel", "no"]:
         estados_skills[numero] = None
@@ -523,13 +580,7 @@ Reglas:
 - No inventes ningún dato que no esté listado arriba.
 """
             try:
-                response_sam = client.messages.create(
-                    model=CLAUDE_MODEL,
-                    max_tokens=250,
-                    temperature=0.3,
-                    messages=[{"role": "user", "content": prompt_pago}]
-                )
-                return response_sam.content[0].text.strip()
+                return generar_respuesta_ia(prompt_pago, max_tokens=250, temperature=0.3)
             except Exception as e:
                 print(f"[SAM Chatbot] Error generando respuesta de pago: {e}")
                 return f"Hola {cliente.nombre}, tu saldo pendiente es de ${cliente.saldo or 0.00} y tu servicio se encuentra en estado: {cliente.estado}."
@@ -552,13 +603,7 @@ Respuesta:"""
     
     nombre_buscado = "auto"
     try:
-        response_ext = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=30,
-            temperature=0.0,
-            messages=[{"role": "user", "content": prompt_extract}]
-        )
-        nombre_buscado = response_ext.content[0].text.strip().lower()
+        nombre_buscado = generar_respuesta_ia(prompt_extract, max_tokens=30, temperature=0.0).lower()
     except Exception as e:
         print(f"[SAM Chatbot] Error al extraer nombre: {e}")
         
@@ -627,13 +672,7 @@ Reglas:
 - No inventes ningún dato que no esté listado arriba.
 """
     try:
-        response_sam = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=250,
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt_pago}]
-        )
-        return response_sam.content[0].text.strip()
+        return generar_respuesta_ia(prompt_pago, max_tokens=250, temperature=0.3)
     except Exception as e:
         print(f"[SAM Chatbot] Error generando respuesta de pago: {e}")
         return f"Hola {cliente.nombre}, tu saldo pendiente es de ${cliente.saldo or 0.00} y tu servicio se encuentra en estado: {cliente.estado}."
@@ -682,15 +721,9 @@ Formato para cada recomendación:
 """
 
 def procesar_recomendacion_peliculas(numero: str, mensaje: str, contexto: str) -> str:
-    client = get_anthropic_client()
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=500,
-            temperature=0.9,
-            messages=[{"role": "user", "content": f"{PROMPT_PELICULAS}\n\nConversación con el usuario:\n{contexto}\n\nMensaje actual del usuario: {mensaje}\n\nResponde directamente con las recomendaciones, sin preámbulos ni encabezados adicionales."}]
-        )
-        return response.content[0].text.strip()
+        content = f"{PROMPT_PELICULAS}\n\nConversación con el usuario:\n{contexto}\n\nMensaje actual del usuario: {mensaje}\n\nResponde directamente con las recomendaciones, sin preámbulos ni encabezados adicionales."
+        return generar_respuesta_ia(content, max_tokens=500, temperature=0.9)
     except Exception as e:
         print(f"[SAM Chatbot] Error recomendando películas: {e}")
         return (
@@ -745,8 +778,6 @@ Comprendes perfectamente lo molesto que es quedarse sin internet y tu objetivo e
 """
 
 def procesar_soporte_tecnico(numero: str, mensaje: str, contexto: str, db: Session) -> str:
-    client = get_anthropic_client()
-    
     # Detectar si el cliente indica que la falla persiste o requiere visita técnica
     msg_lower = mensaje.lower()
     palabras_persistencia = [
@@ -826,13 +857,7 @@ Conversación actual:
 """
 
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=450,
-            temperature=0.4,
-            messages=[{"role": "user", "content": prompt_con_datos}]
-        )
-        return response.content[0].text.strip()
+        return generar_respuesta_ia(prompt_con_datos, max_tokens=450, temperature=0.4)
     except Exception as e:
         print(f"[SAM Chatbot] Error en soporte técnico: {e}")
         return (
@@ -856,15 +881,8 @@ PERSONALIDAD Y TONO:
 - NUNCA respondas con mensajes fríos de error o disculpas robóticas. Sé conversacional, resolutivo, positivo y cercano en todo momento."""
 
 def procesar_chat_general(numero: str, mensaje: str, contexto: str) -> str:
-    client = get_anthropic_client()
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=350,
-            temperature=0.5,
-            messages=[{"role": "user", "content": f"{PROMPT_GENERAL}\n\nConversación:\n{contexto}"}]
-        )
-        return response.content[0].text.strip()
+        return generar_respuesta_ia(f"{PROMPT_GENERAL}\n\nConversación:\n{contexto}", max_tokens=350, temperature=0.5)
     except Exception as e:
         print(f"[SAM Chatbot] Error en chat general: {e}")
         return "Hola soy Sam de Opsatel, espero estés teniendo un excelente día 😊 ¿En qué te puedo ayudar hoy?"
@@ -1007,8 +1025,6 @@ def procesar_registro_cliente_admin_directo(numero: str, mensaje: str, contexto:
     Procesa un mensaje de instalación enviado por un Administrador:
     Extrae los datos en 1 solo paso, crea el Cliente y crea la orden de trabajo en HojaRuta en 1 segundo.
     """
-    client = get_anthropic_client()
-    
     valid_nodos = [n[0] for n in db.query(models.Nodo.nombre).filter(models.Nodo.nombre != None).all()]
     valid_planes = [pl[0] for pl in db.query(models.PlanInternet.nombre).filter(models.PlanInternet.nombre != None).all()]
 
@@ -1037,13 +1053,8 @@ Responde ÚNICAMENTE con el JSON final en este formato exacto:
 """
 
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=600,
-            temperature=0.1,
-            messages=[{"role": "user", "content": f"{prompt_admin}\n\nMensaje enviado por el Administrador:\n{mensaje}"}]
-        )
-        res_text = response.content[0].text.strip()
+        content = f"{prompt_admin}\n\nMensaje enviado por el Administrador:\n{mensaje}"
+        res_text = generar_respuesta_ia(content, max_tokens=600, temperature=0.1)
         
         json_match = re.search(r'\{.*"nombre".*\}', res_text)
         if json_match:

@@ -11,6 +11,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from database import engine, Base
 import models
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import sys
 import time
 import threading

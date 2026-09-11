@@ -3,7 +3,7 @@ import re
 import json
 import logging
 from typing import Dict, Any, List
-from sam_bot_service import get_anthropic_client, CLAUDE_MODEL
+from sam_bot_service import generar_respuesta_ia, hay_proveedor_ia
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ def parse_unstructured_client_data(
     valid_planes: List[str]
 ) -> Dict[str, Any]:
     """
-    Usa Claude (Anthropic API) para analizar texto libre, estructurar
+    Usa la IA (Google Gemini / Anthropic) para analizar texto libre, estructurar
     los datos y mapearlos inteligentemente al modelo de Cliente de Opsatel.
     
     Args:
@@ -26,9 +26,8 @@ def parse_unstructured_client_data(
     Returns:
         Diccionario con los campos extraídos listos para mapear a Cliente.
     """
-    client = get_anthropic_client()
-    if not client:
-        logger.error("No se pudo inicializar el cliente de Anthropic. Verifica ANTHROPIC_API_KEY.")
+    if not hay_proveedor_ia():
+        logger.error("No hay proveedor de IA configurado. Verifica GEMINI_API_KEY en tu .env.")
         raise ValueError("Servicio de Inteligencia Artificial no configurado en el backend.")
 
     prompt = f"""Eres el extractor de datos inteligente de OPSATEL. 
@@ -77,29 +76,21 @@ No incluyas explicaciones, preámbulos, ni bloques de código de markdown como `
 """
 
     try:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=1000,
-            temperature=0.0,  # Determinista
-            messages=[{"role": "user", "content": prompt}]
-        )
+        raw_content = generar_respuesta_ia(prompt, max_tokens=1000, temperature=0.0)
         
-        raw_content = response.content[0].text.strip()
-        
-        # Intentar limpiar en caso de que Claude ignore la regla de no markdown
+        # Intentar limpiar en caso de que la IA incluya bloques de markdown
         if raw_content.startswith("```"):
-            # Quitar triple acento y posible especificación de lenguaje
             raw_content = re.sub(r'^```[a-zA-Z]*\n', '', raw_content)
             raw_content = re.sub(r'\n```$', '', raw_content)
             raw_content = raw_content.strip()
             
         parsed_data = json.loads(raw_content)
-        logger.info(f"Datos parseados exitosamente por Claude para el texto: {text[:50]}...")
+        logger.info(f"Datos parseados exitosamente por IA para el texto: {text[:50]}...")
         return parsed_data
         
     except json.JSONDecodeError as je:
-        logger.error(f"Error parseando respuesta JSON de Claude: {je}. Respuesta cruda: {raw_content}")
+        logger.error(f"Error parseando respuesta JSON de IA: {je}. Respuesta cruda: {raw_content}")
         raise ValueError(f"La IA no retornó un formato JSON válido: {raw_content}")
     except Exception as e:
-        logger.error(f"Error llamando a Anthropic en parse_unstructured_client_data: {e}")
+        logger.error(f"Error llamando a la IA en parse_unstructured_client_data: {e}")
         raise ValueError(f"Error procesando la solicitud de IA: {str(e)}")

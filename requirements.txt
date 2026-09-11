@@ -23,4 +23,4 @@ paramiko>=3.0.0
 routeros-api>=0.21.0
 httpx>=0.24.0
 requests
-
+google-genai
