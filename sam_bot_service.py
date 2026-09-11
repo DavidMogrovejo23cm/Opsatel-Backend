@@ -1023,9 +1023,51 @@ PERSONALIDAD Y TONO:
 - Si te realizan una consulta sobre la que no tengas datos exactos en el sistema, responde siempre con amabilidad humana.
 - NUNCA respondas con mensajes fríos de error o disculpas robóticas. Sé conversacional, resolutivo, positivo y cercano en todo momento."""
 
-def procesar_chat_general(numero: str, mensaje: str, contexto: str) -> str:
+def procesar_chat_general(numero: str, mensaje: str, contexto: str, db: Session = None) -> str:
+    info_bd = []
+    if db:
+        try:
+            # 1. Obtener Planes de Internet reales de la base de datos
+            planes = db.query(models.PlanInternet).all()
+            if planes:
+                lista_planes = []
+                for p in planes:
+                    linea = f"- {p.nombre}: {p.megas} Megas por ${float(p.precio):.2f}/mes"
+                    if p.pantallas:
+                        linea += f" (incluye {p.pantallas} pantalla(s) de TV/IPTV)"
+                    lista_planes.append(linea)
+                info_bd.append("PLANES DE INTERNET VIGENTES EN OPSATEL (Datos reales de la base de datos):\n" + "\n".join(lista_planes))
+
+            # 2. Obtener Bancos / Medios de pago registrados
+            bancos = db.query(models.Banco).all()
+            if bancos:
+                nombres_bancos = [b.nombre for b in bancos if b.nombre]
+                if nombres_bancos:
+                    info_bd.append("BANCOS / MEDIOS DE PAGO REGISTRADOS EN OPSATEL:\n" + ", ".join(nombres_bancos))
+
+            # 3. Verificar si el usuario que escribe ya es un cliente registrado
+            cliente = buscar_cliente_por_telefono(numero, db)
+            if cliente:
+                info_bd.append(
+                    f"DATOS DEL CLIENTE REMITENTE (Identificado en el sistema):\n"
+                    f"- Nombre: {cliente.nombre}\n"
+                    f"- Plan actual: {cliente.plan or 'No definido'}\n"
+                    f"- Saldo pendiente: ${cliente.saldo or 0.00}\n"
+                    f"- Estado del servicio: {cliente.estado}"
+                )
+        except Exception as e_bd:
+            print(f"[SAM Chatbot] Error cargando contexto de BD para chat general: {e_bd}")
+
+    bloque_bd = ("\n\nDATOS DEL SISTEMA OPSATEL (Usa estos datos reales para responder preguntas sobre planes, precios o clientes):\n" + "\n\n".join(info_bd)) if info_bd else ""
+
+    prompt_completo = f"""{PROMPT_GENERAL}
+{bloque_bd}
+
+Conversación actual:
+{contexto}
+"""
     try:
-        return generar_respuesta_ia(f"{PROMPT_GENERAL}\n\nConversación:\n{contexto}", max_tokens=350, temperature=0.5)
+        return generar_respuesta_ia(prompt_completo, max_tokens=350, temperature=0.5)
     except Exception as e:
         print(f"[SAM Chatbot] Error en chat general: {e}")
         return "Hola soy Sam de Opsatel, espero estés teniendo un excelente día 😊 ¿En qué te puedo ayudar hoy?"
@@ -1484,7 +1526,7 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
         response_text = procesar_comando_administrador(numero, mensaje, contexto, db, admin_obj)
     else:
         estados_skills[numero] = None
-        response_text = procesar_chat_general(numero, mensaje, contexto)
+        response_text = procesar_chat_general(numero, mensaje, contexto, db)
 
     # 8. Guardar la respuesta generada en el historial
     guardar_mensaje_historial(numero, "assistant", response_text)
