@@ -69,16 +69,42 @@ def llamar_groq_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5
         "Authorization": f"Bearer {groq_key.strip()}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": max_tokens,
-        "temperature": temperature
-    }
-    resp = requests.post(url, headers=headers, json=payload, timeout=25)
-    resp.raise_for_status()
-    data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+    
+    candidate_models = [
+        os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        "llama-3.1-8b-instant",
+        "llama3-70b-8192",
+        "llama3-8b-8192"
+    ]
+    seen = set()
+    models = [m for m in candidate_models if not (m in seen or seen.add(m))]
+    
+    last_err = None
+    for model in models:
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": temperature
+        }
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=25)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data["choices"][0]["message"]["content"].strip()
+            else:
+                last_err = f"HTTP {resp.status_code}: {resp.text}"
+                print(f"[SAM Chatbot] [Groq] Error probando {model}: {last_err}")
+                if resp.status_code == 404 and "model" in resp.text.lower():
+                    continue
+                break
+        except Exception as e_req:
+            last_err = str(e_req)
+            break
+            
+    if last_err:
+        print(f"[SAM Chatbot] Error en llamada a Groq: {last_err}")
+    return ""
 
 def llamar_openai_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
     """Llama a la API de OpenAI (GPT-4o mini)"""
