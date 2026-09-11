@@ -16,6 +16,8 @@ import whatsapp_service
 # Configuración de Modelos de Inteligencia Artificial
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 client_gemini = None
 client_anthropic = None
@@ -56,17 +58,79 @@ def get_anthropic_client():
             return None
     return client_anthropic
 
+def llamar_groq_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
+    """Llama a la API de Groq (Llama-3.3 70B gratis y sin bloqueos de VPS)"""
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key or not groq_key.strip():
+        return ""
+    import requests
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {groq_key.strip()}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": temperature
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=25)
+    resp.raise_for_status()
+    data = resp.json()
+    return data["choices"][0]["message"]["content"].strip()
+
+def llamar_openai_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
+    """Llama a la API de OpenAI (GPT-4o mini)"""
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key or not openai_key.strip():
+        return ""
+    import requests
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {openai_key.strip()}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": OPENAI_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": temperature
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=25)
+    resp.raise_for_status()
+    data = resp.json()
+    return data["choices"][0]["message"]["content"].strip()
+
 def hay_proveedor_ia() -> bool:
-    """Verifica si hay al menos un proveedor de IA disponible (Gemini o Anthropic)"""
-    return bool(get_gemini_client() or get_anthropic_client())
+    """Verifica si hay al menos un proveedor de IA disponible"""
+    return bool(
+        get_gemini_client() or
+        os.getenv("GROQ_API_KEY") or
+        os.getenv("OPENAI_API_KEY") or
+        get_anthropic_client()
+    )
 
 def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
     """
-    Genera texto usando Google Gemini (prioridad) o Anthropic Claude (respaldo).
-    Si el modelo específico de Gemini no está disponible o fue deprecado (404), prueba automáticamente variantes.
+    Genera texto usando los proveedores disponibles en orden de prioridad:
+    1. Groq (Ultra-rápido, gratuito, ideal para VPS)
+    2. Google Gemini
+    3. OpenAI
+    4. Anthropic Claude
     """
     global GEMINI_MODEL
-    # 1. Intentar con Google Gemini (Prioridad)
+
+    # Si hay GROQ configurado, es la opción más rápida y sin bloqueos de IP
+    if os.getenv("GROQ_API_KEY"):
+        try:
+            res = llamar_groq_api(prompt, max_tokens, temperature)
+            if res:
+                return res
+        except Exception as e_groq:
+            print(f"[SAM Chatbot] Error en llamada a Groq: {e_groq}")
+
+    # 2. Intentar con Google Gemini
     client_g = get_gemini_client()
     if client_g:
         # pyrefly: ignore [missing-import]
@@ -86,7 +150,6 @@ def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float 
         seen = set()
         model_list = [m for m in model_candidates if not (m in seen or seen.add(m))]
 
-        last_gem_err = None
         for model_name in model_list:
             try:
                 response = client_g.models.generate_content(
@@ -100,7 +163,6 @@ def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float 
                         GEMINI_MODEL = model_name
                     return response.text.strip()
             except Exception as e_gem:
-                last_gem_err = e_gem
                 err_str = str(e_gem)
                 if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
                     print(f"[SAM Chatbot] [IA] Modelo '{model_name}' no disponible, probando siguiente variante...")
@@ -109,24 +171,31 @@ def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float 
                     print(f"[SAM Chatbot] Error en llamada a Gemini ({model_name}): {e_gem}")
                     break
 
-        # Si Gemini no pudo responder pero Anthropic está configurado, continuar al fallback
-        if not get_anthropic_client():
-            raise last_gem_err or RuntimeError("No se pudo obtener respuesta de Google Gemini.")
+    # 3. Intentar con OpenAI si está configurado
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            res = llamar_openai_api(prompt, max_tokens, temperature)
+            if res:
+                return res
+        except Exception as e_oai:
+            print(f"[SAM Chatbot] Error en llamada a OpenAI: {e_oai}")
 
-    # 2. Intentar con Anthropic Claude (Respaldo)
+    # 4. Intentar con Anthropic Claude (Respaldo)
     client_a = get_anthropic_client()
     if client_a:
-        response = client_a.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        if response and response.content:
-            return response.content[0].text.strip()
-        raise ValueError("Respuesta vacía de Anthropic.")
+        try:
+            response = client_a.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            if response and response.content:
+                return response.content[0].text.strip()
+        except Exception as e_ant:
+            print(f"[SAM Chatbot] Error en llamada a Anthropic: {e_ant}")
 
-    raise RuntimeError("No hay proveedor de IA configurado. Define GEMINI_API_KEY en tu archivo .env.")
+    raise RuntimeError("No se pudo obtener respuesta de ningún proveedor de IA configurado.")
 
 # Estructura para almacenar el historial de conversaciones por número en memoria
 # Formato: {numero: [{"role": "user"|"assistant", "content": str}]}
