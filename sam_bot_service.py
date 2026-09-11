@@ -58,29 +58,53 @@ def get_anthropic_client():
             return None
     return client_anthropic
 
+active_groq_model = None
+
 def llamar_groq_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
-    """Llama a la API de Groq (Llama-3.3 70B gratis y sin bloqueos de VPS)"""
+    """Llama a la API de Groq consultando dinámicamente los modelos activos disponibles"""
+    global active_groq_model
     groq_key = os.getenv("GROQ_API_KEY")
     if not groq_key or not groq_key.strip():
         return ""
     import requests
-    url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {groq_key.strip()}",
         "Content-Type": "application/json"
     }
-    
-    candidate_models = [
-        os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-        "llama-3.1-8b-instant",
-        "llama3-70b-8192",
-        "llama3-8b-8192"
-    ]
-    seen = set()
-    models = [m for m in candidate_models if not (m in seen or seen.add(m))]
-    
+
+    # Si ya tenemos un modelo activo que funcionó antes, intentarlo primero
+    candidate_models = []
+    if active_groq_model:
+        candidate_models.append(active_groq_model)
+    if os.getenv("GROQ_MODEL"):
+        candidate_models.append(os.getenv("GROQ_MODEL"))
+
+    # Consultar dinámicamente la lista de modelos activos en Groq
+    try:
+        models_resp = requests.get("https://api.groq.com/openai/v1/models", headers=headers, timeout=10)
+        if models_resp.status_code == 200:
+            data = models_resp.json().get("data", [])
+            live_ids = [m.get("id") for m in data if m.get("id")]
+            print(f"[SAM Chatbot] [Groq] Modelos activos reportados por Groq: {live_ids}")
+            # Filtrar solo modelos conversacionales de texto
+            chat_models = [
+                m for m in live_ids
+                if not any(x in m.lower() for x in ["whisper", "guard", "safeguard", "embed", "tts", "audio", "vision-preview"])
+            ]
+            for m in chat_models:
+                if m not in candidate_models:
+                    candidate_models.append(m)
+    except Exception as e_mod:
+        print(f"[SAM Chatbot] [Groq] Advertencia consultando modelos activos: {e_mod}")
+
+    # Fallback predeterminado por si falla la consulta
+    for fb in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen-2.5-32b", "mixtral-8x7b-32768"]:
+        if fb not in candidate_models:
+            candidate_models.append(fb)
+
+    chat_url = "https://api.groq.com/openai/v1/chat/completions"
     last_err = None
-    for model in models:
+    for model in candidate_models:
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -88,22 +112,22 @@ def llamar_groq_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5
             "temperature": temperature
         }
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=25)
+            resp = requests.post(chat_url, headers=headers, json=payload, timeout=25)
             if resp.status_code == 200:
                 data = resp.json()
+                active_groq_model = model
+                print(f"[SAM Chatbot] [Groq] [OK] Respuesta generada exitosamente con modelo: {model}")
                 return data["choices"][0]["message"]["content"].strip()
             else:
                 last_err = f"HTTP {resp.status_code}: {resp.text}"
                 print(f"[SAM Chatbot] [Groq] Error probando {model}: {last_err}")
-                if resp.status_code == 404 and "model" in resp.text.lower():
-                    continue
-                break
+                continue
         except Exception as e_req:
             last_err = str(e_req)
-            break
-            
+            continue
+
     if last_err:
-        print(f"[SAM Chatbot] Error en llamada a Groq: {last_err}")
+        print(f"[SAM Chatbot] Error final en llamada a Groq: {last_err}")
     return ""
 
 def llamar_openai_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
