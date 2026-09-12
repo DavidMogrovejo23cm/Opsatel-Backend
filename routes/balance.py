@@ -51,6 +51,8 @@ class ProyectoCreate(BaseModel):
     estado: str = "En progreso"
     fecha_inicio: str
     fecha_fin: Optional[str] = None
+    ganancia: Optional[float] = 0.0
+    banco_ganancia: Optional[str] = "Pichincha"
 
 class ProyectoUpdate(BaseModel):
     nombre: Optional[str] = None
@@ -60,6 +62,8 @@ class ProyectoUpdate(BaseModel):
     estado: Optional[str] = None
     fecha_inicio: Optional[str] = None
     fecha_fin: Optional[str] = None
+    ganancia: Optional[float] = None
+    banco_ganancia: Optional[str] = None
 
 class ProyectoPagoCreate(BaseModel):
     item: int = 1
@@ -476,29 +480,74 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
                 else:                   extras_ef  += pago
 
     total_extras   = extras_ef + extras_pich + extras_jep
-    total_ingresos = total_internet + total_plus + adicional_total + total_extras
+
+    # Separación contable: Recuento Normal (Operacional) excluye IPTV Plus y Clientes Extras
+    total_ingresos = round(total_internet + adicional_total, 2)
 
     egresos_mes = db.query(models.Egreso).filter(models.Egreso.mes == mes).all()
     egresos_por_cat = {}
-    total_egresos = 0.0
-    for eg in egresos_mes:
-        egresos_por_cat.setdefault(eg.categoria, 0.0)
-        egresos_por_cat[eg.categoria] += float(eg.monto)
-        total_egresos += float(eg.monto)
+    total_egresos_global = 0.0
 
-    # Gastos fijos activos: se suman siempre en cada mes
+    egresos_op_ef = egresos_op_pich = egresos_op_jep = 0.0
+    egresos_iptv_ef = egresos_iptv_pich = egresos_iptv_jep = 0.0
+    egresos_pr_ef = egresos_pr_pich = egresos_pr_jep = 0.0
+    total_egresos_op = 0.0
+    total_egresos_iptv = 0.0
+    total_egresos_pr = 0.0
+
+    for eg in egresos_mes:
+        m_val = float(eg.monto or 0)
+        total_egresos_global += m_val
+        egresos_por_cat.setdefault(eg.categoria, 0.0)
+        egresos_por_cat[eg.categoria] += m_val
+
+        metodo = (eg.metodo_pago or "").upper().strip()
+        if "IPTV" in metodo:
+            total_egresos_iptv += m_val
+            if "PICHINCHA" in metodo:
+                egresos_iptv_pich += m_val
+            elif "JEP" in metodo or "GUAYAQUIL" in metodo:
+                egresos_iptv_jep += m_val
+            else:
+                egresos_iptv_ef += m_val
+        elif "PR" in metodo or "PROYECTO" in metodo:
+            total_egresos_pr += m_val
+            if "PICHINCHA" in metodo:
+                egresos_pr_pich += m_val
+            elif "JEP" in metodo or "GUAYAQUIL" in metodo:
+                egresos_pr_jep += m_val
+            else:
+                egresos_pr_ef += m_val
+        else:
+            total_egresos_op += m_val
+            if "PICHINCHA" in metodo:
+                egresos_op_pich += m_val
+            elif "JEP" in metodo or "GUAYAQUIL" in metodo:
+                egresos_op_jep += m_val
+            else:
+                egresos_op_ef += m_val
+
+    # Gastos fijos activos: se suman siempre en cada mes (Operacionales)
     gastos_fijos = db.query(models.GastoFijo).filter(models.GastoFijo.activo == True).all()
     total_gastos_fijos = 0.0
     gastos_fijos_lista = []
     for gf in gastos_fijos:
         monto_gf = float(gf.monto or 0)
         total_gastos_fijos += monto_gf
-        total_egresos += monto_gf
+        total_egresos_global += monto_gf
+        total_egresos_op += monto_gf
         egresos_por_cat[gf.categoria] = egresos_por_cat.get(gf.categoria, 0.0) + monto_gf
         gastos_fijos_lista.append({
             "id": gf.id, "descripcion": gf.descripcion, "monto": monto_gf,
             "categoria": gf.categoria, "metodo_pago": gf.metodo_pago, "notas": gf.notas
         })
+        metodo_gf = (gf.metodo_pago or "").upper().strip()
+        if "PICHINCHA" in metodo_gf:
+            egresos_op_pich += monto_gf
+        elif "JEP" in metodo_gf or "GUAYAQUIL" in metodo_gf:
+            egresos_op_jep += monto_gf
+        else:
+            egresos_op_ef += monto_gf
 
     proyectos = db.query(models.Proyecto).all()
     proyectos_activos = [p for p in proyectos if p.fecha_inicio[:7] <= mes and (not p.fecha_fin or p.fecha_fin[:7] >= mes)]
@@ -508,18 +557,89 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
     colchones = db.query(models.Colchon).all()
     total_colchon = sum(float(c.monto or 0) for c in colchones)
 
-    balance_neto = total_ingresos - total_egresos - total_proyectos
+    # Balance Neto Operacional (Recuento Normal)
+    balance_neto = round(total_ingresos - total_egresos_op, 2)
 
-    # Consolidado de Bancos (Adicionales se suman directamente al banco correspondiente)
+    # Consolidado de Bancos Operacionales (exclusivo para Internet y Adicional Normal)
     bancos_resumen = {
-        "efectivo": round(internet_ef + plus_ef + adicional_ef + extras_ef, 2),
-        "pichincha": round(internet_pich + plus_pich + adicional_pich + extras_pich, 2),
-        "jep": round(internet_jep + plus_jep + adicional_jep + extras_jep, 2),
+        "efectivo": round(internet_ef + adicional_ef, 2),
+        "pichincha": round(internet_pich + adicional_pich, 2),
+        "jep": round(internet_jep + adicional_jep, 2),
         "otros": 0.0
     }
 
-    # Consolidado PLATAFORMA (Adicionales de Clientes + Extras General)
-    total_plataforma = round(adicional_total + total_extras, 2)
+    # Consolidado PLATAFORMA (IPTV Plus + Clientes Extras)
+    total_ingresos_iptv = round(total_plus + total_extras, 2)
+    ingresos_iptv_ef = round(plus_ef + extras_ef, 2)
+    ingresos_iptv_pich = round(plus_pich + extras_pich, 2)
+    ingresos_iptv_jep = round(plus_jep + extras_jep, 2)
+
+    egresos_iptv_ef = round(egresos_iptv_ef, 2)
+    egresos_iptv_pich = round(egresos_iptv_pich, 2)
+    egresos_iptv_jep = round(egresos_iptv_jep, 2)
+    total_egresos_iptv = round(total_egresos_iptv, 2)
+
+    balance_neto_iptv = round(total_ingresos_iptv - total_egresos_iptv, 2)
+    iptv_resumen = {
+        "ingresos": {
+            "total": total_ingresos_iptv,
+            "efectivo": ingresos_iptv_ef,
+            "pichincha": ingresos_iptv_pich,
+            "jep": ingresos_iptv_jep
+        },
+        "egresos": {
+            "total": total_egresos_iptv,
+            "efectivo": egresos_iptv_ef,
+            "pichincha": egresos_iptv_pich,
+            "jep": egresos_iptv_jep
+        },
+        "balance_neto": {
+            "total": balance_neto_iptv,
+            "efectivo": round(ingresos_iptv_ef - egresos_iptv_ef, 2),
+            "pichincha": round(ingresos_iptv_pich - egresos_iptv_pich, 2),
+            "jep": round(ingresos_iptv_jep - egresos_iptv_jep, 2)
+        }
+    }
+
+    # Proyectos: Ganancias vs Gastos / Inversión
+    proy_ganancia_ef = proy_ganancia_pich = proy_ganancia_jep = 0.0
+    for p in proyectos_activos:
+        g_val = float(getattr(p, 'ganancia', 0) or 0)
+        b_g = (getattr(p, 'banco_ganancia', '') or 'PICHINCHA').upper().strip()
+        if "JEP" in b_g or "GUAYAQUIL" in b_g:
+            proy_ganancia_jep += g_val
+        elif "EFECTIVO" in b_g:
+            proy_ganancia_ef += g_val
+        else:
+            proy_ganancia_pich += g_val
+
+    total_ganancia_proyectos = round(proy_ganancia_ef + proy_ganancia_pich + proy_ganancia_jep, 2)
+    gastos_pr_ef = round(egresos_pr_ef, 2)
+    gastos_pr_pich = round(egresos_pr_pich + total_proyectos, 2)
+    gastos_pr_jep = round(egresos_pr_jep, 2)
+    total_gastos_proyectos = round(gastos_pr_ef + gastos_pr_pich + gastos_pr_jep, 2)
+    balance_neto_proyectos = round(total_ganancia_proyectos - total_gastos_proyectos, 2)
+
+    proyectos_resumen = {
+        "ingresos": {
+            "total": total_ganancia_proyectos,
+            "efectivo": proy_ganancia_ef,
+            "pichincha": proy_ganancia_pich,
+            "jep": proy_ganancia_jep
+        },
+        "egresos": {
+            "total": total_gastos_proyectos,
+            "efectivo": gastos_pr_ef,
+            "pichincha": gastos_pr_pich,
+            "jep": gastos_pr_jep
+        },
+        "balance_neto": {
+            "total": balance_neto_proyectos,
+            "efectivo": round(proy_ganancia_ef - gastos_pr_ef, 2),
+            "pichincha": round(proy_ganancia_pich - gastos_pr_pich, 2),
+            "jep": round(proy_ganancia_jep - gastos_pr_jep, 2)
+        }
+    }
 
     # Cartera pendiente de clientes (Total Pendiente Morosos)
     clientes_db = db.query(models.Cliente).all()
@@ -560,7 +680,7 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
             "iptv":     {"total": total_plus,     "efectivo": plus_ef,    "pichincha": plus_pich, "jep": plus_jep},
             "adicional": adicional_total,
             "extras":   {"total": total_extras,   "efectivo": extras_ef,  "pichincha": extras_pich, "jep": extras_jep},
-            "plataforma": {"total": total_plataforma, "adicional": adicional_total, "extras": total_extras},
+            "plataforma": {"total": total_ingresos_iptv, "adicional": adicional_total, "extras": total_extras},
             "bancos": bancos_resumen,
             "total": total_ingresos,
         },
@@ -574,17 +694,28 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
             ],
             "gastos_fijos": gastos_fijos_lista,
             "total_gastos_fijos": total_gastos_fijos,
-            "total": total_egresos,
+            "total": total_egresos_op,
+            "total_global": total_egresos_global,
+            "bancos": {
+                "efectivo": round(egresos_op_ef, 2),
+                "pichincha": round(egresos_op_pich, 2),
+                "jep": round(egresos_op_jep, 2)
+            }
         },
         "proyectos": {
             "lista": [
                 {"id": p.id, "nombre": p.nombre, "descripcion": p.descripcion,
                  "monto_total": float(p.monto_total), "monto_invertido": float(p.monto_invertido or 0),
+                 "ganancia": float(getattr(p, 'ganancia', 0) or 0),
+                 "banco_ganancia": getattr(p, 'banco_ganancia', 'Pichincha') or 'Pichincha',
                  "estado": p.estado, "fecha_inicio": p.fecha_inicio, "fecha_fin": p.fecha_fin}
                 for p in proyectos_activos
             ],
             "total": total_proyectos,
+            "resumen": proyectos_resumen
         },
+        "iptv_resumen": iptv_resumen,
+        "proyectos_resumen": proyectos_resumen,
         "colchon": {
             "lista": [{"id": c.id, "descripcion": c.descripcion, "monto": float(c.monto), "fecha": c.fecha} for c in colchones],
             "total": total_colchon

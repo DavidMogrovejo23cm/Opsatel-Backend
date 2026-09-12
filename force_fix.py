@@ -76,12 +76,20 @@ def force_fix_columns():
         ("acceso_general_sin_clave", "BOOLEAN DEFAULT FALSE")
     ]
 
+    # 7. Tabla proyectos_balance
+    table_proyectos = "proyectos_balance"
+    columns_proyectos = [
+        ("ganancia", "DECIMAL(10,2) DEFAULT 0.00"),
+        ("banco_ganancia", "VARCHAR(50) DEFAULT 'Pichincha'")
+    ]
+
     process_table(table_clientes, columns_clientes)
     process_table(table_pagos, columns_pagos)
     process_table(table_asistencias, columns_asistencias)
     process_table(table_olt_tasks, columns_olt_tasks)
     process_table(table_eliminados, columns_eliminados)
     process_table(table_usuarios, columns_usuarios)
+    process_table(table_proyectos, columns_proyectos)
     
     print("Reparación terminada.")
 

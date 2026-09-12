@@ -576,6 +576,8 @@ class Proyecto(Base):
     estado = Column(String(50), default="En progreso")  # En progreso, Completado, Pausado
     fecha_inicio = Column(String(50))
     fecha_fin = Column(String(50))
+    ganancia = Column(Numeric(precision=10, scale=2), default=0.00)
+    banco_ganancia = Column(String(50), default="Pichincha")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class ProyectoPago(Base):
