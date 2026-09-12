@@ -528,6 +528,10 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
     for c in clientes_db:
         if getattr(c, 'cortesia_total', False):
             continue
+        est = str(getattr(c, 'estado', '') or '').strip().upper()
+        est = est.replace("Í", "I").replace("Ó", "O").replace("Á", "A").replace("É", "E").replace("Ú", "U")
+        if est not in ["ACTIVO", "ACTIVOS", "JURIDICO", "PROCESO", "EN PROCESO"]:
+            continue
         s_val = float(c.saldo or 0)
         p_val = 0.0
         try:
