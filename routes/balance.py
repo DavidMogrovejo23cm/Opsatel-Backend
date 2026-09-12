@@ -521,8 +521,36 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
     # Consolidado PLATAFORMA (Adicionales de Clientes + Extras General)
     total_plataforma = round(adicional_total + total_extras, 2)
 
+    # Cartera pendiente de clientes (Total Pendiente Morosos)
+    clientes_db = db.query(models.Cliente).all()
+    total_morosos_val = 0.0
+    cant_morosos = 0
+    for c in clientes_db:
+        if getattr(c, 'cortesia_total', False):
+            continue
+        s_val = float(c.saldo or 0)
+        p_val = 0.0
+        try:
+            p_val = float(str(c.plus or 0).replace("$", "").replace(",", ".").strip())
+        except:
+            pass
+        a_val = 0.0
+        try:
+            a_val = float(str(c.adicional or 0).replace("$", "").replace(",", ".").strip())
+        except:
+            pass
+        tot_c = float(c.total_pago or 0)
+        deuda_c = tot_c if tot_c > 0 else max(0.0, s_val + p_val + a_val)
+        if deuda_c > 0:
+            total_morosos_val += deuda_c
+            cant_morosos += 1
+
+    total_morosos_val = round(total_morosos_val, 2)
+
     return {
         "mes": mes,
+        "total_pendiente_morosos": total_morosos_val,
+        "cantidad_morosos": cant_morosos,
         "ingresos": {
             "internet": {"total": total_internet, "efectivo": internet_ef, "pichincha": internet_pich, "jep": internet_jep},
             "iptv":     {"total": total_plus,     "efectivo": plus_ef,    "pichincha": plus_pich, "jep": plus_jep},
