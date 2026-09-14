@@ -75,20 +75,32 @@ def enviar_whatsapp_programado():
                 
             print(f"[WhatsApp] Iniciando envío automático para config ID {config.id} a las {hora_actual}")
             
-            # Obtener clientes activos con celular registrado
-            from sqlalchemy import func
+            # Obtener clientes activos con celular registrado según el filtro configurado
+            from sqlalchemy import func, or_
             import time
             import random
             from routes.whatsapp import personalizar_mensaje_cliente
 
-            clientes = db.query(models.Cliente).filter(
+            filtro = getattr(config, 'filtro_clientes', 'todos') or 'todos'
+            query_clientes = db.query(models.Cliente).filter(
                 func.upper(models.Cliente.estado).in_(["ACTIVO", "ACTIVA"]),
                 models.Cliente.celular != None,
                 models.Cliente.celular != ""
-            ).all()
+            )
+
+            if filtro == "deuda":
+                # Solo clientes con deuda pendiente (saldo > 0)
+                query_clientes = query_clientes.filter(models.Cliente.saldo > 0)
+            elif filtro in ["al_dia", "pago", "sin_deuda"]:
+                # Solo clientes al día (saldo <= 0 o None)
+                query_clientes = query_clientes.filter(
+                    or_(models.Cliente.saldo == None, models.Cliente.saldo <= 0)
+                )
+
+            clientes = query_clientes.all()
             
             if not clientes:
-                print(f"[WhatsApp] No hay clientes activos con celular registrado para config ID {config.id}")
+                print(f"[WhatsApp] No hay clientes activos para el filtro '{filtro}' con celular registrado para config ID {config.id}")
                 if es_envio_unico:
                     config.activo = False
                     db.commit()
@@ -166,9 +178,16 @@ def enviar_whatsapp_programado():
             # Registrar resumen de envío programado en historial de difusiones
             try:
                 rec_tag = "Mensual" if rec == 'mensual' else ("Diario" if rec == 'diario' else "Único")
+                if filtro == "deuda":
+                    alcance_desc = "Clientes activos con DEUDA"
+                elif filtro in ["al_dia", "pago", "sin_deuda"]:
+                    alcance_desc = "Clientes activos AL DÍA (Sin deuda)"
+                else:
+                    alcance_desc = "TODOS los clientes activos"
+
                 difusion_prog = models.WhatsAppDifusionHistorial(
                     tipo="envio_programado",
-                    alcance=f"TODOS los clientes activos (Recurrencia {rec_tag})",
+                    alcance=f"{alcance_desc} (Recurrencia {rec_tag})",
                     mensaje=config.mensaje_programado,
                     total_destinatarios=len(clientes),
                     total_exitosos=enviados,

@@ -83,6 +83,12 @@ def force_fix_columns():
         ("banco_ganancia", "VARCHAR(50) DEFAULT 'Pichincha'")
     ]
 
+    # 8. Tabla whatsapp_configuracion
+    table_whatsapp_config = "whatsapp_configuracion"
+    columns_whatsapp_config = [
+        ("filtro_clientes", "VARCHAR(50) DEFAULT 'todos'")
+    ]
+
     process_table(table_clientes, columns_clientes)
     process_table(table_pagos, columns_pagos)
     process_table(table_asistencias, columns_asistencias)
@@ -90,6 +96,7 @@ def force_fix_columns():
     process_table(table_eliminados, columns_eliminados)
     process_table(table_usuarios, columns_usuarios)
     process_table(table_proyectos, columns_proyectos)
+    process_table(table_whatsapp_config, columns_whatsapp_config)
     
     print("Reparación terminada.")
 

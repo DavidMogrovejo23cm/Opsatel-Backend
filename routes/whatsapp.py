@@ -432,11 +432,13 @@ def programar_whatsapp(
                 fecha_obj = ahora_ec.replace(day=28, hour=0, minute=0, second=0, microsecond=0)
         
         # Guardar configuración programada
+        filtro_clientes = payload.filtro_clientes or "todos"
         config = models.WhatsAppConfiguracion(
             hora_programada=hora,
             mensaje_programado=mensaje,
             activo=True,
-            enviar_a_todos=enviar_a_todos,
+            enviar_a_todos=(filtro_clientes == "todos"),
+            filtro_clientes=filtro_clientes,
             fecha_programada=fecha_obj,
             recurrencia=recurrencia,
             fecha_creacion=datetime.now(ECUADOR_TZ)
@@ -518,6 +520,7 @@ def listar_configuraciones(db: Session = Depends(get_db)):
                 "mensaje": c.mensaje_programado,
                 "activo": c.activo,
                 "enviar_a_todos": c.enviar_a_todos,
+                "filtro_clientes": getattr(c, 'filtro_clientes', 'todos') or 'todos',
                 "recurrencia": getattr(c, 'recurrencia', 'diario') or 'diario',
                 "dia_mes": dia_m,
                 "fecha": fecha_str,
@@ -546,6 +549,7 @@ def obtener_configuracion(db: Session = Depends(get_db)):
             "hora": config.hora_programada,
             "mensaje": config.mensaje_programado,
             "enviar_a_todos": config.enviar_a_todos,
+            "filtro_clientes": getattr(config, 'filtro_clientes', 'todos') or 'todos',
             "fecha": fecha_str,
             "dia_mes": dia_m,
             "recurrencia": getattr(config, 'recurrencia', 'diario') or 'diario',
@@ -604,7 +608,10 @@ def actualizar_configuracion(
         if payload.activo is not None:
             config.activo = payload.activo
             
-        if payload.enviar_a_todos is not None:
+        if payload.filtro_clientes is not None:
+            config.filtro_clientes = payload.filtro_clientes
+            config.enviar_a_todos = (payload.filtro_clientes == "todos")
+        elif payload.enviar_a_todos is not None:
             config.enviar_a_todos = payload.enviar_a_todos
             
         if payload.fecha is not None:
