@@ -727,22 +727,65 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
         }
     }
 
-    # Proyectos: Ganancias vs Gastos / Inversión
+    # Proyectos: Ingresos vs Gastos / Inversión por mes
     proy_ganancia_ef = proy_ganancia_pich = proy_ganancia_jep = 0.0
-    for p in proyectos_activos:
-        g_val = float(getattr(p, 'ganancia', 0) or 0)
-        b_g = (getattr(p, 'banco_ganancia', '') or 'PICHINCHA').upper().strip()
-        if "JEP" in b_g or "GUAYAQUIL" in b_g:
-            proy_ganancia_jep += g_val
-        elif "EFECTIVO" in b_g:
-            proy_ganancia_ef += g_val
+
+    # 1. Pagos/cuotas de proyectos registrados en este mes específico
+    pagos_proy_mes = db.query(models.ProyectoPago).filter(
+        models.ProyectoPago.fecha.like(f"{mes}%")
+    ).all()
+    for pago in pagos_proy_mes:
+        p_val = float(pago.valor or 0)
+        tp = (pago.tipo_pago or 'PICHINCHA').upper().strip()
+        if "JEP" in tp or "GUAYAQUIL" in tp:
+            proy_ganancia_jep += p_val
+        elif "EFECTIVO" in tp:
+            proy_ganancia_ef += p_val
         else:
-            proy_ganancia_pich += g_val
+            proy_ganancia_pich += p_val
+
+    # 2. Proyectos cuya fecha de inicio corresponde estrictamente a este mes
+    proyectos_mes_inicio = [p for p in proyectos if (p.fecha_inicio or "")[:7] == mes]
+    for p in proyectos_mes_inicio:
+        g_val = float(getattr(p, 'ganancia', 0) or 0)
+        if g_val > 0:
+            b_g = (getattr(p, 'banco_ganancia', '') or 'PICHINCHA').upper().strip()
+            if "JEP" in b_g or "GUAYAQUIL" in b_g:
+                proy_ganancia_jep += g_val
+            elif "EFECTIVO" in b_g:
+                proy_ganancia_ef += g_val
+            else:
+                proy_ganancia_pich += g_val
 
     total_ganancia_proyectos = round(proy_ganancia_ef + proy_ganancia_pich + proy_ganancia_jep, 2)
+
+    # 3. Gastos de proyectos para este mes específico
     gastos_pr_ef = round(egresos_pr_ef, 2)
-    gastos_pr_pich = round(egresos_pr_pich + total_proyectos, 2)
+    gastos_pr_pich = round(egresos_pr_pich, 2)
     gastos_pr_jep = round(egresos_pr_jep, 2)
+
+    gastos_proy_mes = db.query(models.GastoProyecto).filter(
+        models.GastoProyecto.fecha.like(f"{mes}%"),
+        models.GastoProyecto.pendiente == False
+    ).all()
+    for gp in gastos_proy_mes:
+        gp_val = float(gp.valor or 0)
+        tp = (gp.tipo_pago or 'PICHINCHA').upper().strip()
+        if "JEP" in tp or "GUAYAQUIL" in tp:
+            gastos_pr_jep += gp_val
+        elif "EFECTIVO" in tp:
+            gastos_pr_ef += gp_val
+        else:
+            gastos_pr_pich += gp_val
+
+    for p in proyectos_mes_inicio:
+        inv_val = float(p.monto_invertido or 0)
+        if inv_val > 0:
+            gastos_pr_pich += inv_val
+
+    gastos_pr_ef = round(gastos_pr_ef, 2)
+    gastos_pr_pich = round(gastos_pr_pich, 2)
+    gastos_pr_jep = round(gastos_pr_jep, 2)
     total_gastos_proyectos = round(gastos_pr_ef + gastos_pr_pich + gastos_pr_jep, 2)
     balance_neto_proyectos = round(total_ganancia_proyectos - total_gastos_proyectos, 2)
 
