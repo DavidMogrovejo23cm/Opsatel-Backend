@@ -1058,7 +1058,12 @@ def obtener_cliente(id: int, db: Session = Depends(get_db)):
     return cliente
 
 @router.patch("/{id}", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
-def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: Session = Depends(get_db)):
+def actualizar_cliente_general(
+    id: int, 
+    data: schemas.ClienteUpdateGeneral, 
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_user)
+):
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -1094,6 +1099,56 @@ def actualizar_cliente_general(id: int, data: schemas.ClienteUpdateGeneral, db: 
     estado_prev = cliente.estado
     ip_prev = cliente.ip
     plan_prev = cliente.plan
+
+    # Detectar cambio a estado Finiquito (Fantasma histórico)
+    es_finiquito = data.estado and str(data.estado).strip().lower() == "finiquito"
+    if es_finiquito and str(estado_prev or "").strip().lower() != "finiquito":
+        from decimal import Decimal
+        from datetime import datetime as dt_class, date as d_class
+        snapshot = {}
+        for col in models.Cliente.__table__.columns:
+            val = None
+            if hasattr(cliente, col.key):
+                val = getattr(cliente, col.key)
+            elif col.key == "NUMERO" and hasattr(cliente, "id"):
+                val = getattr(cliente, "id")
+            else:
+                val = getattr(cliente, col.name, None)
+
+            if isinstance(val, (dt_class, d_class)):
+                val = val.strftime("%Y-%m-%d %H:%M:%S") if hasattr(val, "strftime") else str(val)
+            elif isinstance(val, Decimal):
+                val = float(val)
+            snapshot[col.name] = val
+
+        # Sobrescribir estado a Finiquito en el snapshot para total coherencia
+        snapshot["ESTADO"] = "Finiquito"
+
+        username_act = getattr(current_user, "username", "admin") if current_user else "admin"
+        backup_rec = models.ClienteEliminado(
+            cliente_id=id,
+            nombre=cliente.nombre,
+            cedula=cliente.cedula,
+            plan=cliente.plan,
+            ip=cliente.ip,
+            mac=cliente.mac,
+            deleted_by=username_act,
+            estado_olt="OMITIDO",
+            estado_mikrotik="OMITIDO",
+            estado_xui="OMITIDO",
+            estado_libreqos="OMITIDO",
+            estado_db="FINIQUITO",
+            datos_cliente=snapshot,
+            detalles_error="Cliente pasado a estado FINIQUITO (fantasma histórico) desde la vista General."
+        )
+        db.add(backup_rec)
+
+        try:
+            from services.libreqos_manager import LibreQoSManager
+            correlation_id = f"finiquito_{id}_{int(datetime.now().timestamp())}"
+            LibreQoSManager.enqueue_job("REMOVE", id, db, correlation_id, "CLIENT_FINIQUITO_API")
+        except Exception as lq_err:
+            print(f"Aviso LibreQoS en finiquito: {lq_err}")
 
     for var, value in vars(data).items():
         if value is not None:
@@ -1564,10 +1619,10 @@ def anular_pago(
 
 def procesar_facturacion_global(db: Session):
     clientes = db.query(models.Cliente).all()
-    # Congelar cuentas en PROCESO y JURIDICO (omitir de la facturación mensual masiva)
+    # Congelar cuentas en PROCESO, JURIDICO, INACTIVO y FINIQUITO (omitir de la facturación mensual masiva)
     clientes_facturables = [
         c for c in clientes 
-        if c.estado and c.estado.strip().upper() not in ["PROCESO", "EN PROCESO", "JURIDICO", "INACTIVO"]
+        if c.estado and c.estado.strip().upper() not in ["PROCESO", "EN PROCESO", "JURIDICO", "INACTIVO", "FINIQUITO"]
     ]
     
     count = 0
@@ -1679,6 +1734,8 @@ def ejecutar_cierre_mensual(db: Session = Depends(get_db)):
     clientes = db.query(models.Cliente).all()
     count = 0
     for cliente in clientes:
+        if cliente.estado and cliente.estado.strip().upper() == "FINIQUITO":
+            continue
         # En el cierre de mes se resetean los marcadores de pagos del mes anterior
         # para empezar en blanco el nuevo mes. El 'saldo' histórico de deudas se mantiene.
         cliente.pago_mensual = 0.00
