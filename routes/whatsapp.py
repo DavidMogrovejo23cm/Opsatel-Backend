@@ -61,7 +61,24 @@ def personalizar_mensaje_cliente(mensaje_base: str, cliente) -> str:
         nombre_limpio = "Estimado/a cliente"
         nombre_corto = "estimado/a cliente"
 
-    saldo_val = getattr(cliente, "saldo", 0.0) or 0.0
+    def _parse_val(v):
+        if v is None or v == "": return 0.0
+        try:
+            return float(str(v).replace("$", "").replace(",", ".").strip())
+        except (ValueError, TypeError):
+            return 0.0
+
+    total_guardado = _parse_val(getattr(cliente, "total_pago", None))
+    s_val = _parse_val(getattr(cliente, "saldo", 0.0))
+    p_val = _parse_val(getattr(cliente, "plus", 0.0))
+    a_val = _parse_val(getattr(cliente, "adicional", 0.0))
+    calc_total = max(0.0, s_val + p_val + a_val)
+
+    if total_guardado > 0 and total_guardado >= calc_total:
+        saldo_val = total_guardado
+    else:
+        saldo_val = calc_total
+
     saldo_str = f"${float(saldo_val):.2f}"
     plan_str = str(getattr(cliente, "plan", "") or "No especificado").strip()
     cedula_str = str(getattr(cliente, "cedula", "") or "").strip()

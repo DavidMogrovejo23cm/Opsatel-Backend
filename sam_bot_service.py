@@ -837,8 +837,62 @@ def extraer_cedula(texto: str) -> str:
         return match.group(0)
     return ""
 
+def obtener_deuda_total_cliente(cliente) -> dict:
+    """
+    Obtiene los valores oficiales y consolidados de deuda del cliente directamente del sistema:
+    - total: suma total pendiente (Internet + IPTV Plus + Adicional) o total_pago consolidado
+    - internet: saldo base del servicio de internet
+    - iptv: valor extra por IPTV (plus)
+    - adicional: valor de cargos adicionales
+    - desglose: texto explicativo corto para el cliente (ej: " ($17.50 internet + $4.00 IPTV + $5.00 adicional)")
+    """
+    if not cliente:
+        return {"total": 0.0, "internet": 0.0, "iptv": 0.0, "adicional": 0.0, "desglose": ""}
+
+    def _to_float(val):
+        if val is None or val == "":
+            return 0.0
+        try:
+            s = str(val).replace("$", "").replace(",", ".").strip()
+            return float(s) if s else 0.0
+        except (ValueError, TypeError):
+            return 0.0
+
+    saldo_internet = _to_float(getattr(cliente, "saldo", 0.0))
+    iptv_val = _to_float(getattr(cliente, "plus", 0.0))
+    adicional_val = _to_float(getattr(cliente, "adicional", 0.0))
+
+    # El sistema consolida en total_pago la deuda total real:
+    total_guardado = _to_float(getattr(cliente, "total_pago", None))
+    total_calculado = max(0.0, saldo_internet + iptv_val + adicional_val)
+
+    if total_guardado > 0 and total_guardado >= total_calculado:
+        total_real = total_guardado
+    else:
+        total_real = total_calculado
+
+    desglose_items = []
+    if saldo_internet > 0:
+        desglose_items.append(f"${saldo_internet:.2f} internet")
+    if iptv_val > 0:
+        desglose_items.append(f"${iptv_val:.2f} IPTV")
+    if adicional_val > 0:
+        desglose_items.append(f"${adicional_val:.2f} adicional")
+
+    desglose_str = ""
+    if len(desglose_items) > 1:
+        desglose_str = f" ({' + '.join(desglose_items)})"
+
+    return {
+        "total": total_real,
+        "internet": saldo_internet,
+        "iptv": iptv_val,
+        "adicional": adicional_val,
+        "desglose": desglose_str
+    }
+
 def procesar_consulta_pago(numero: str, mensaje: str, contexto: str, db: Session, ya_solicitado: bool = False) -> str:
-    """Procesa consultas de saldo y pagos usando datos 100% reales de MySQL de forma natural"""
+    """Procesa consultas de saldo y pagos usando datos 100% reales de MySQL de forma natural, concisa y humana"""
     # 1. Cancelar flujo si el usuario lo pide
     if mensaje.strip().lower() in ["cancelar", "salir", "cancel", "no", "menu", "menú"]:
         estados_skills[numero] = None
@@ -856,7 +910,7 @@ def procesar_consulta_pago(numero: str, mensaje: str, contexto: str, db: Session
 
         if not cliente:
             estados_skills[numero] = None
-            return f"No encontré ningún contrato registrado con la cédula **{cedula_extraida}** en nuestra base de datos. Por favor verifica el número o escríbeme para ayudarte 😊"
+            return f"No encontré ningún contrato con la cédula **{cedula_extraida}** en el sistema. Por favor confírmame tu número para ayudarte 😊"
 
     # 3. Si no hay cédula, verificar si el número telefónico de quien escribe pertenece a un cliente registrado
     if not cliente:
@@ -869,39 +923,38 @@ def procesar_consulta_pago(numero: str, mensaje: str, contexto: str, db: Session
     # 4. Si el cliente fue identificado (por cédula o por su número telefónico registrado)
     if cliente:
         estados_skills[numero] = None
-        pagos = db.query(models.Pago).filter(models.Pago.cliente_id == cliente.id).order_by(models.Pago.fecha_pago.desc()).limit(3).all()
-        historial_pagos_text = ""
-        if pagos:
-            for p in pagos:
-                fecha_str = p.fecha_pago.strftime("%d/%m/%Y") if p.fecha_pago else "N/A"
-                historial_pagos_text += f"- {fecha_str}: ${p.monto} ({p.metodo_pago or 'No especificado'})\n"
-        else:
-            historial_pagos_text = "No registra pagos previos en el sistema.\n"
+        deuda = obtener_deuda_total_cliente(cliente)
+        total_pendiente = deuda["total"]
+        desglose = deuda["desglose"]
+
+        nombre_limpio = " ".join((cliente.nombre or "").strip().split())
+        primer_nombre = nombre_limpio.split()[0].capitalize() if nombre_limpio else "estimado/a cliente"
 
         prompt_pago = f"""Eres SAM, el asesor virtual oficial de OPSATEL.
-Un cliente ha consultado sobre su estado de cuenta / saldo.
-Genera una respuesta muy amable, concisa y profesional con estos datos reales de la base de datos:
+Un cliente consulta su saldo pendiente por WhatsApp.
+Genera una respuesta HUMANA, AMABLE Y MUY CORTA (máximo 2 a 3 líneas directas, sin rodeos ni discursos largos).
 
-Datos del cliente:
+Datos oficiales del cliente en el sistema:
 - Nombre: {cliente.nombre}
-- Cédula: {cliente.cedula or 'No registrada'}
-- Plan contratado: {cliente.plan or 'No definido'}
-- Mensualidad contratada: ${cliente.pago_mensual or 0.00}
-- Saldo pendiente (Deuda actual): ${cliente.saldo or 0.00}
+- Total a pagar hoy: ${total_pendiente:.2f}{desglose}
+- Plan contratado: {cliente.plan or 'Internet'}
 - Estado del servicio: {cliente.estado}
-- Últimos pagos registrados:
-{historial_pagos_text}
 
-Instrucciones:
-- Si el saldo es 0 o menor, felicítalo calurosamente por estar al día con sus pagos en Opsatel.
-- Si tiene saldo pendiente, indícale el valor exacto de forma respetuosa y clara.
-- Mantén un tono natural, empático y humano para WhatsApp (evita sonar a robot)."""
+Directrices estrictas:
+1. Saluda cordialmente por su primer nombre (*{primer_nombre}*).
+2. Si el total a pagar es mayor a 0: Indica directamente el valor total de *${total_pendiente:.2f}*{desglose}. Pregúntale amablemente si desea las cuentas bancarias para realizar su pago.
+3. Si el total es 0 o menor: Dile en una sola frase cálida que se encuentra al día con sus pagos en OPSATEL.
+4. NUNCA inventes valores. Usa exactamente ${total_pendiente:.2f}.
+5. Mantén un tono natural, empático y breve (máximo 2 a 3 líneas en WhatsApp)."""
 
         try:
-            return generar_respuesta_ia(prompt_pago, max_tokens=250, temperature=0.3)
+            return generar_respuesta_ia(prompt_pago, max_tokens=180, temperature=0.3)
         except Exception as e:
             print(f"[SAM Chatbot] Error generando respuesta de pago: {e}")
-            return f"Hola {cliente.nombre}, tu saldo pendiente es de ${cliente.saldo or 0.00} y tu servicio se encuentra en estado: {cliente.estado}."
+            if total_pendiente > 0:
+                return f"¡Hola *{primer_nombre}*! Tu valor total pendiente es de *${total_pendiente:.2f}*{desglose}. ¿Deseas que te comparta nuestras cuentas bancarias para realizar tu pago? 😊"
+            else:
+                return f"¡Hola *{primer_nombre}*! Te comento que te encuentras al día con tus pagos en OPSATEL 🎉 ¡Muchas gracias por tu puntualidad!"
 
     # 5. Si no se identificó por teléfono ni por cédula, verificar si preguntó por el nombre de otra persona (ej: "saldo de Juan Pérez")
     match_nombre = re.search(r'(?:saldo|deuda|cuenta)\s+de\s+([a-záéíóúñA-ZÁÉÍÓÚÑ\s]{3,35})', mensaje, re.IGNORECASE)
@@ -912,14 +965,17 @@ Instrucciones:
             cliente_nom, _ = buscar_cliente_por_nombre(posible_nombre, db)
             if cliente_nom:
                 estados_skills[numero] = None
-                pagos = db.query(models.Pago).filter(models.Pago.cliente_id == cliente_nom.id).order_by(models.Pago.fecha_pago.desc()).limit(3).all()
-                historial_pagos_text = "\n".join([f"- {p.fecha_pago.strftime('%d/%m/%Y') if p.fecha_pago else 'N/A'}: ${p.monto}" for p in pagos]) if pagos else "No registra pagos previos."
-                prompt_pago = f"""Eres SAM de OPSATEL. Informa de manera cortés el estado de cuenta de {cliente_nom.nombre}:
-- Plan: {cliente_nom.plan}
-- Saldo pendiente: ${cliente_nom.saldo or 0.00}
-- Estado: {cliente_nom.estado}
-- Últimos pagos: {historial_pagos_text}"""
-                return generar_respuesta_ia(prompt_pago, max_tokens=250, temperature=0.3)
+                deuda_nom = obtener_deuda_total_cliente(cliente_nom)
+                total_nom = deuda_nom["total"]
+                desglose_nom = deuda_nom["desglose"]
+                prompt_pago = f"""Eres SAM de OPSATEL. Informa de forma cortés, breve y humana (máximo 2 líneas) el saldo de {cliente_nom.nombre}:
+- Total a pagar hoy: ${total_nom:.2f}{desglose_nom}
+- Plan: {cliente_nom.plan or 'Internet'}
+- Estado: {cliente_nom.estado}"""
+                try:
+                    return generar_respuesta_ia(prompt_pago, max_tokens=150, temperature=0.3)
+                except Exception:
+                    return f"El valor total pendiente de *{cliente_nom.nombre}* es de *${total_nom:.2f}*{desglose_nom} (Estado: {cliente_nom.estado})."
 
     # 6. Si no hay datos suficientes, pedir la cédula amablemente
     estados_skills[numero] = "consultar_pagos_y_saldos"
@@ -973,12 +1029,14 @@ def procesar_cuentas_pago(numero: str, mensaje: str, contexto: str, db: Session)
     if cliente and cliente.nombre:
         partes = [p.capitalize() for p in cliente.nombre.strip().split() if p]
         primer_nombre = partes[0] if partes else "Cliente"
-        saldo_val = float(cliente.saldo or 0.0)
+        deuda = obtener_deuda_total_cliente(cliente)
+        total_val = deuda["total"]
+        desglose = deuda["desglose"]
 
-        if saldo_val > 0:
+        if total_val > 0:
             saludo = (
                 f"¡Hola *{primer_nombre}*! Con mucho gusto te ayudo 😊\n"
-                f"Te informo que tu saldo pendiente actual es de *${saldo_val:.2f}* (Plan: *{cliente.plan or 'Contratado'}*).\n\n"
+                f"Tu valor total pendiente actual es de *${total_val:.2f}*{desglose} (Plan: *{cliente.plan or 'Contratado'}*).\n\n"
                 f"Aquí tienes la imagen y los datos de nuestras cuentas bancarias oficiales de *OPSATEL* para que puedas realizar tu pago o transferencia:"
             )
         else:
@@ -1232,6 +1290,10 @@ DIRECTRICES DE ATENCIÓN (SÉ 100% NATURAL, CÁLIDO, EMPÁTICO Y HUMANO):
    - Infórmale las entidades bancarias oficiales registradas para depósitos o transferencias.
 8. ACTITUD SIEMPRE POSITIVA Y RESOLUTIVA:
    - NUNCA respondas negativamente. Sé siempre servicial, proactivo y cercano.
+9. BREVEDAD Y RESPUESTAS HUMANAS (MUY IMPORTANTE):
+   - Genera respuestas CORTAS, ágiles, cálidas y humanas (máximo 3 a 5 líneas por respuesta usualmente).
+   - NUNCA generes muros de texto ni párrafos gigantescos.
+   - Habla como una persona real en WhatsApp: cercana, rápida y directa al grano.
 """
 
 def procesar_chat_general(numero: str, mensaje: str, contexto: str, db: Session = None) -> str:
@@ -1248,11 +1310,12 @@ def procesar_chat_general(numero: str, mensaje: str, contexto: str, db: Session 
 
             if cliente and cliente.nombre:
                 nombre_cliente = cliente.nombre
+                deuda = obtener_deuda_total_cliente(cliente)
                 info_bd.append(
                     f"DATOS DEL CLIENTE REGISTRADO QUE TE ESCRIBE:\n"
                     f"- Nombre del cliente: {cliente.nombre}\n"
                     f"- Plan actual contratado: {cliente.plan or 'No definido'}\n"
-                    f"- Saldo pendiente: ${cliente.saldo or 0.00}\n"
+                    f"- Valor total pendiente a pagar: ${deuda['total']:.2f}{deuda['desglose']}\n"
                     f"- Estado actual del servicio: {cliente.estado}"
                 )
             else:
@@ -1288,7 +1351,7 @@ Conversación actual con el usuario:
 {contexto}
 """
     try:
-        return generar_respuesta_ia(prompt_completo, max_tokens=800, temperature=0.5)
+        return generar_respuesta_ia(prompt_completo, max_tokens=350, temperature=0.5)
     except Exception as e:
         print(f"[SAM Chatbot] Error en chat general: {e}")
         if nombre_cliente:
