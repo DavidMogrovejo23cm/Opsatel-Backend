@@ -1351,15 +1351,35 @@ def normalizar_parroquia(parr: str) -> str:
         return "RICAURTE"
     if "TARQUI" in p:
         return "TARQUI"
+    return p if p else "BANOS"
+
+def try_float_val(val, default=0.0):
+    try:
+        if val is None:
+            return default
+        s = str(val).replace("$", "").replace(",", ".").strip()
+        return float(s) if s else default
+    except Exception:
+        return default
+
+def try_int_val(val, default=0):
+    try:
+        if val is None:
+            return default
+        m = re.search(r'(\d+)', str(val))
+        return int(m.group(1)) if m else default
+    except Exception:
+        return default
+
 def construir_datos_arcotel(mes: str, db: Session):
     parts = mes.split("-")
     clientes = db.query(models.Cliente).all()
     planes = db.query(models.PlanInternet).all()
-    planes_precios = {p.nombre: float(p.precio) for p in planes if p.nombre}
+    planes_precios = {p.nombre: try_float_val(p.precio) for p in planes if p.nombre}
     planes_megas = {}
     for p in planes:
         if p.nombre:
-            planes_megas[p.nombre.strip().upper()] = int(p.megas or 0)
+            planes_megas[p.nombre.strip().upper()] = try_int_val(p.megas)
     
     month_num = parts[1] if len(parts) == 2 else "01"
     month_name_en = {
@@ -1393,16 +1413,14 @@ def construir_datos_arcotel(mes: str, db: Session):
     data_clientes = []
     for c in clientes_con_factura:
         id_str = f"C{c.id:02d}" if c.id is not None else ""
-        pago_mensual = float(c.pago_mensual or 0.00)
+        pago_mensual = try_float_val(c.pago_mensual)
         is_cortesia = bool(getattr(c, 'cortesia_total', False))
         confirmar = True if (pago_mensual > 0 or is_cortesia) else False
 
         plan_clean = str(c.plan or "").strip().upper()
         megas_num = planes_megas.get(plan_clean, 0)
         if megas_num == 0 and plan_clean:
-            m = re.search(r'(\d+)', plan_clean)
-            if m:
-                megas_num = int(m.group(1))
+            megas_num = try_int_val(plan_clean)
 
         plan_val = f"{megas_num}MB" if megas_num > 0 else ""
         cod_val = str(c.cod or "").strip() or id_str
@@ -1422,7 +1440,7 @@ def construir_datos_arcotel(mes: str, db: Session):
             "es_cortesia": is_cortesia,
             "pago_mensual": pago_mensual
         })
-    data_clientes.sort(key=lambda x: (x.get("ESTADO", ""), x.get("NAME", "")))
+    data_clientes.sort(key=lambda x: (str(x.get("ESTADO") or ""), str(x.get("NAME") or "")))
 
     # 2. Cuentas Alta Velocidad
     mes_nombre_upper = month_name_es.upper()
@@ -1431,14 +1449,12 @@ def construir_datos_arcotel(mes: str, db: Session):
         plan_clean = str(c.plan or "").strip().upper()
         megas_num = planes_megas.get(plan_clean, 0)
         if megas_num == 0 and plan_clean:
-            m = re.search(r'(\d+)', plan_clean)
-            if m:
-                megas_num = int(m.group(1))
+            megas_num = try_int_val(plan_clean)
         if megas_num <= 0:
             megas_num = 100
             
         kbps_val = int(megas_num * 1000)
-        parroquia_val = normalizar_parroquia(c.parroquia)
+        parroquia_val = normalizar_parroquia(c.parroquia) or "BANOS"
         
         plan_str = str(c.plan or "").upper()
         nom_str = str(c.nombre or "").upper()
@@ -1469,23 +1485,23 @@ def construir_datos_arcotel(mes: str, db: Session):
             "Tipo de Cliente (Residencial, Corporativo, Cibercafé)": tipo_cli,
             "Nivel de Compartición": "8 : 1"
         })
-    data_alta_vel.sort(key=lambda x: (x.get("Parroquia", ""), x.get("Nombre del Usuario", "")))
+    data_alta_vel.sort(key=lambda x: (str(x.get("Parroquia") or ""), str(x.get("Nombre del Usuario") or "")))
 
     # 3. Resumen por Plan
     pagos_todos = db.query(models.Pago).all()
     pagos_mes = [
         p for p in pagos_todos 
-        if str(p.fecha_pago)[:7] == mes 
+        if str(p.fecha_pago or "")[:7] == mes 
         and p.cliente_id in clientes_con_factura_ids 
         and not getattr(p, 'anulado', False)
     ]
     pago_por_cliente_metodo = {}
     for p in pagos_mes:
         if p.cliente_id:
-            m_total = float(p.monto or 0)
-            m_parts = float(p.monto_internet or 0) + float(p.monto_plus or 0) + float(p.monto_adicional or 0)
+            m_total = try_float_val(p.monto)
+            m_parts = try_float_val(p.monto_internet) + try_float_val(p.monto_plus) + try_float_val(p.monto_adicional)
             monto_total_pago = m_total if m_total > 0 else m_parts
-            metodo = (p.metodo_pago or "Efectivo").upper()
+            metodo = str(p.metodo_pago or "Efectivo").upper()
             key = (p.cliente_id, metodo)
             pago_por_cliente_metodo[key] = pago_por_cliente_metodo.get(key, 0.0) + monto_total_pago
 
@@ -1502,7 +1518,7 @@ def construir_datos_arcotel(mes: str, db: Session):
     gran_total_reunido = 0.0
 
     for plan_nombre in planes_nombres:
-        clientes_en_plan = [c for c in clientes_con_factura if c.plan and c.plan.strip() == plan_nombre.strip() and (c.estado and c.estado.strip().upper() == "ACTIVO")]
+        clientes_en_plan = [c for c in clientes_con_factura if c.plan and c.plan.strip() == plan_nombre.strip() and (str(c.estado or "").strip().upper() == "ACTIVO")]
         cant_clientes = len(clientes_en_plan)
         precio_plan = planes_precios.get(plan_nombre, 0.0)
         megas_plan = planes_megas.get(plan_nombre.strip().upper(), 0)
@@ -1556,7 +1572,7 @@ def construir_datos_arcotel(mes: str, db: Session):
         "% CUMPLIMIENTO": round((gran_total_reunido / gran_total_estimado * 100) if gran_total_estimado > 0 else 0.0, 1)
     })
 
-    parroquias_set = sorted(list(set(x["Parroquia"] for x in data_alta_vel)))
+    parroquias_set = sorted(list(set(str(x.get("Parroquia") or "") for x in data_alta_vel if x.get("Parroquia"))))
 
     kpis = {
         "total_cuentas": len(data_alta_vel),
@@ -1580,7 +1596,12 @@ def construir_datos_arcotel(mes: str, db: Session):
 
 @router.get("/reporte-arcotel-preview")
 def preview_reporte_arcotel(mes: str, db: Session = Depends(get_db)):
-    return construir_datos_arcotel(mes, db)
+    try:
+        return construir_datos_arcotel(mes, db)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error al generar preview ARCOTEL: {str(e)}")
 
 @router.get("/reporte-excel")
 def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
