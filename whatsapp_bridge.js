@@ -221,12 +221,16 @@ client.on('message', async (msg) => {
 
     console.log(`[WhatsApp Bridge] Mensaje entrante de ${idDestino} (LID original: ${msg.from}, nombre: "${pushname}"): "${msg.body ? msg.body.substring(0, 40) : '[Sin texto]'}"`);
 
-    // Manejar mensajes de texto
+    // Manejar mensajes entrantes: solo procesar texto o multimedia real enviada por personas
+    const userMediaTypes = ['image', 'video', 'audio', 'ptt', 'sticker', 'document'];
     if (msg.type === 'chat' && msg.body) {
         sendWebhook(idDestino, msg.body, pushname, msg.from);
-    } else if (msg.type && msg.type !== 'chat') {
-        // Notificar a SAM sobre mensaje no-texto (audio, imagen, video, documento)
+    } else if (userMediaTypes.includes(msg.type)) {
+        // Notificar a SAM sobre contenido multimedia real enviado por el usuario
         sendWebhook(idDestino, `[NON_TEXT_MSG] ${msg.type}`, pushname, msg.from);
+    } else {
+        // Ignorar eventos o notificaciones del protocolo interno de WhatsApp (e2e_notification, notification_template, protocol, etc.)
+        console.log(`[WhatsApp Bridge] Evento/protocolo interno de WhatsApp ignorado (${msg.type}) de ${idDestino}`);
     }
 });
 

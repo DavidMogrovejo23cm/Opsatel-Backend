@@ -1696,6 +1696,17 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
     # 0. Limpiar sesión si expiró el tiempo de inactividad (TTL)
     limpiar_sesion_si_expirada(numero)
 
+    # 0.0 Descartar en silencio eventos o notificaciones internas del protocolo de WhatsApp (e2e_notification, notification_template, etc.)
+    if mensaje.startswith("[NON_TEXT_MSG]"):
+        tipo_recibido = mensaje.replace("[NON_TEXT_MSG]", "").strip().lower()
+        tipos_ignorar = {
+            "e2e_notification", "notification_template", "protocol", "ciphertext",
+            "broadcast_notification", "call_log", "gp2", "notification", "revoked", "status"
+        }
+        if tipo_recibido in tipos_ignorar or any(t in tipo_recibido for t in ["notification", "protocol", "cipher"]):
+            print(f"[SAM Chatbot] [SILENCIO] Evento/protocolo interno de WhatsApp descartado ({tipo_recibido}) de {numero}")
+            return ""
+
     # 0.1 Registrar mensaje del cliente en historial de chat persistente (máximo 100 mensajes)
     try:
         from routes.whatsapp import registrar_mensaje_chat
