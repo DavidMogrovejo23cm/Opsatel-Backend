@@ -1331,6 +1331,28 @@ def historial_clientes(db: Session = Depends(get_db)):
     res.sort(key=lambda x: x["saldo_total"], reverse=True)
     return res
 
+def normalizar_parroquia(parr: str) -> str:
+    if not parr or not str(parr).strip():
+        return "BANOS"
+    p = str(parr).strip().upper()
+    p = p.replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U")
+    p = p.replace("Ñ", "N")
+    if "BANO" in p:
+        return "BANOS"
+    if "SAYAUS" in p:
+        return "SAYAUSI"
+    if "YANUN" in p:
+        return "YANUNCAY"
+    if "JOAQUIN" in p:
+        return "SAN JOAQUIN"
+    if "VALLE" in p:
+        return "EL VALLE"
+    if "RICAURT" in p:
+        return "RICAURTE"
+    if "TARQUI" in p:
+        return "TARQUI"
+    return p
+
 @router.get("/reporte-excel")
 def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     parts = mes.split("-")
@@ -1424,6 +1446,66 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     df_clientes = pd.DataFrame(data_clientes)
     if not df_clientes.empty:
         df_clientes = df_clientes.sort_values(by=["ESTADO", "NAME"])
+
+    # ── NUEVA HOJA: CUENTAS ALTA VELOCIDAD (FORMATO ARCOTEL - LÍNEAS DEDICADAS) ──
+    mes_nombre_upper = month_name_es.upper()
+    data_alta_vel = []
+    for c in clientes_con_factura:
+        plan_clean = str(c.plan or "").strip().upper()
+        megas_num = planes_megas.get(plan_clean, 0)
+        if megas_num == 0 and plan_clean:
+            m = re.search(r'(\d+)', plan_clean)
+            if m:
+                megas_num = int(m.group(1))
+        if megas_num <= 0:
+            megas_num = 100
+            
+        kbps_val = int(megas_num * 1000)
+        parroquia_val = normalizar_parroquia(c.parroquia)
+        
+        plan_str = str(c.plan or "").upper()
+        nom_str = str(c.nombre or "").upper()
+        if "CORP" in plan_str or "EMPRES" in plan_str or "CORP" in nom_str:
+            tipo_cli = "Corporativo"
+        elif "CIBER" in plan_str or "CYBER" in plan_str:
+            tipo_cli = "Cibercafé"
+        else:
+            tipo_cli = "Residencial"
+            
+        tel_val = str(c.celular or "").strip()
+        if tel_val.endswith(".0"):
+            tel_val = tel_val[:-2]
+
+        data_alta_vel.append({
+            "MES": mes_nombre_upper,
+            "Provincia": "AZUAY",
+            "Cantón": "CUENCA",
+            "Parroquia": parroquia_val,
+            "Nombre del Usuario": str(c.nombre or "").strip().upper(),
+            "Dirección": str(c.direccion or "").strip().upper(),
+            "Teléfono": tel_val,
+            "Número estimado de usuarios por cuenta": 4,
+            "Empresa proveedora del canal (Portador)": "NEDETEL",
+            "Tipo de enlace: Cobre, Cable Coaxial, Fibra Óptica, Medio Inalámbrico": "Fibra Óptica",
+            "Ancho de banda Up Link (Kbps)": kbps_val,
+            "Ancho de banda Down Link (Kbps)": kbps_val,
+            "Tipo de Cliente (Residencial, Corporativo, Cibercafé)": tipo_cli,
+            "Nivel de Compartición": "8 : 1"
+        })
+
+    df_alta_vel = pd.DataFrame(data_alta_vel)
+    if not df_alta_vel.empty:
+        df_alta_vel = df_alta_vel.sort_values(by=["Parroquia", "Nombre del Usuario"])
+    else:
+        df_alta_vel = pd.DataFrame(columns=[
+            "MES", "Provincia", "Cantón", "Parroquia", "Nombre del Usuario", "Dirección",
+            "Teléfono", "Número estimado de usuarios por cuenta",
+            "Empresa proveedora del canal (Portador)",
+            "Tipo de enlace: Cobre, Cable Coaxial, Fibra Óptica, Medio Inalámbrico",
+            "Ancho de banda Up Link (Kbps)", "Ancho de banda Down Link (Kbps)",
+            "Tipo de Cliente (Residencial, Corporativo, Cibercafé)",
+            "Nivel de Compartición"
+        ])
 
     # ── HOJA 2: RESUMEN POR PLAN (SOLO CLIENTES CON FACTURA) ──
     pagos_todos = db.query(models.Pago).all()
@@ -1673,6 +1755,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     
     with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
         df_clientes.to_excel(writer, sheet_name="Facturación Clientes", startrow=4, index=False)
+        df_alta_vel.to_excel(writer, sheet_name="Cuentas Alta Velocidad", startrow=2, index=False)
         df_resumen.to_excel(writer, sheet_name="Resumen por Plan", startrow=4, index=False)
         df_desglose.to_excel(writer, sheet_name="Ingresos por Banco", startrow=4, index=False)
         df_egresos.to_excel(writer, sheet_name="Egresos", startrow=4, index=False)
@@ -1836,7 +1919,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     ws_res.column_dimensions["D"].width = 18
 
     for sheet_name in wb.sheetnames:
-        if sheet_name == "Resumen Ejecutivo":
+        if sheet_name in ["Resumen Ejecutivo", "Cuentas Alta Velocidad"]:
             continue
         ws = wb[sheet_name]
         ws.views.sheetView[0].showGridLines = True
@@ -1936,6 +2019,90 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
                 if len(val_str) > max_len:
                     max_len = len(val_str)
             ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+    # ── ESTILO OFICIAL PARA HOJA: CUENTAS ALTA VELOCIDAD (ARCOTEL) ──
+    if "Cuentas Alta Velocidad" in wb.sheetnames:
+        ws_av = wb["Cuentas Alta Velocidad"]
+        ws_av.views.sheetView[0].showGridLines = True
+
+        fill_arcotel_header = PatternFill(start_color="C5C6E8", end_color="C5C6E8", fill_type="solid")
+        fill_arcotel_title = PatternFill(start_color="D9D9F3", end_color="D9D9F3", fill_type="solid")
+        font_arcotel_title1 = Font(name="Calibri", size=11, bold=True, color="000000")
+        font_arcotel_title2 = Font(name="Calibri", size=10, bold=True, color="000000")
+        font_arcotel_col = Font(name="Calibri", size=9, bold=True, color="000000")
+        font_arcotel_data = Font(name="Calibri", size=9, color="000000")
+        thin_dark_side = Side(border_style="thin", color="808080")
+        border_arcotel = Border(left=thin_dark_side, right=thin_dark_side, top=thin_dark_side, bottom=thin_dark_side)
+
+        # Fila 1: Título Principal
+        ws_av.row_dimensions[1].height = 22
+        ws_av.merge_cells("A1:N1")
+        cell_t1 = ws_av["A1"]
+        cell_t1.value = "REPORTE DE SERVICIO CUENTAS ALTA VELOCIDAD"
+        cell_t1.font = font_arcotel_title1
+        cell_t1.alignment = align_center
+
+        # Fila 2: Subtítulo
+        ws_av.row_dimensions[2].height = 20
+        ws_av.merge_cells("A2:N2")
+        cell_t2 = ws_av["A2"]
+        cell_t2.value = "ACCESO NO CONMUTADO - LÍNEAS DEDICADAS"
+        cell_t2.font = font_arcotel_title2
+        cell_t2.alignment = align_center
+
+        for col_idx in range(1, 15):
+            c1 = ws_av.cell(row=1, column=col_idx)
+            c1.fill = fill_arcotel_title
+            c1.border = border_arcotel
+
+            c2 = ws_av.cell(row=2, column=col_idx)
+            c2.fill = fill_arcotel_title
+            c2.border = border_arcotel
+
+        # Fila 3: Cabeceras de columnas oficiales
+        ws_av.row_dimensions[3].height = 36
+        for col_idx in range(1, 15):
+            c3 = ws_av.cell(row=3, column=col_idx)
+            c3.fill = fill_arcotel_header
+            c3.font = font_arcotel_col
+            c3.alignment = align_center
+            c3.border = border_arcotel
+
+        # Filas de datos (fila 4 en adelante)
+        for row_idx in range(4, ws_av.max_row + 1):
+            ws_av.row_dimensions[row_idx].height = 19
+            for col_idx in range(1, 15):
+                c = ws_av.cell(row=row_idx, column=col_idx)
+                c.font = font_arcotel_data
+                c.border = border_arcotel
+
+                if col_idx in [1, 2, 3, 4, 8, 9, 10, 13, 14]:
+                    c.alignment = align_center
+                elif col_idx in [5, 6]:
+                    c.alignment = align_left
+                elif col_idx == 7:
+                    val_str = str(c.value or "").strip()
+                    if val_str.endswith(".0"):
+                        val_str = val_str[:-2]
+                    c.value = val_str
+                    c.number_format = '@'
+                    c.alignment = align_center
+                elif col_idx in [11, 12]:
+                    try:
+                        c.value = int(float(c.value or 0))
+                    except:
+                        pass
+                    c.number_format = '0'
+                    c.alignment = align_right
+
+        # Ancho de columnas óptimo
+        col_widths = {
+            "A": 12, "B": 12, "C": 12, "D": 16, "E": 36, "F": 45,
+            "G": 14, "H": 15, "I": 16, "J": 20, "K": 18, "L": 18,
+            "M": 16, "N": 15
+        }
+        for col_letter, width in col_widths.items():
+            ws_av.column_dimensions[col_letter].width = width
 
     wb.save(file_path)
 

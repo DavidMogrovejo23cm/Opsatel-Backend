@@ -13,6 +13,7 @@ from database import get_db
 from datetime import datetime
 from .auth import get_current_user, require_role
 from services.smart_parser import parse_unstructured_client_data
+from .balance import normalizar_parroquia
 
 import logging
 logger = logging.getLogger("opsatel.routes.clientes")
@@ -1847,6 +1848,71 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
         })
         
     df_clientes = pd.DataFrame(data)
+
+    # ── NUEVA HOJA: CUENTAS ALTA VELOCIDAD (FORMATO ARCOTEL - LÍNEAS DEDICADAS) ──
+    month_name_es = {
+        "01": "ENERO", "02": "FEBRERO", "03": "MARZO", "04": "ABRIL",
+        "05": "MAYO", "06": "JUNIO", "07": "JULIO", "08": "AGOSTO",
+        "09": "SEPTIEMBRE", "10": "OCTUBRE", "11": "NOVIEMBRE", "12": "DICIEMBRE"
+    }.get(month_num, "MES")
+
+    data_alta_vel = []
+    for c in clientes_con_factura:
+        plan_clean = str(c.plan or "").strip().upper()
+        megas_num = planes_megas.get(plan_clean, 0)
+        if megas_num == 0 and plan_clean:
+            m = re.search(r'(\d+)', plan_clean)
+            if m:
+                megas_num = int(m.group(1))
+        if megas_num <= 0:
+            megas_num = 100
+            
+        kbps_val = int(megas_num * 1000)
+        parroquia_val = normalizar_parroquia(c.parroquia)
+        
+        plan_str = str(c.plan or "").upper()
+        nom_str = str(c.nombre or "").upper()
+        if "CORP" in plan_str or "EMPRES" in plan_str or "CORP" in nom_str:
+            tipo_cli = "Corporativo"
+        elif "CIBER" in plan_str or "CYBER" in plan_str:
+            tipo_cli = "Cibercafé"
+        else:
+            tipo_cli = "Residencial"
+            
+        tel_val = str(c.celular or "").strip()
+        if tel_val.endswith(".0"):
+            tel_val = tel_val[:-2]
+
+        data_alta_vel.append({
+            "MES": month_name_es,
+            "Provincia": "AZUAY",
+            "Cantón": "CUENCA",
+            "Parroquia": parroquia_val,
+            "Nombre del Usuario": str(c.nombre or "").strip().upper(),
+            "Dirección": str(c.direccion or "").strip().upper(),
+            "Teléfono": tel_val,
+            "Número estimado de usuarios por cuenta": 4,
+            "Empresa proveedora del canal (Portador)": "NEDETEL",
+            "Tipo de enlace: Cobre, Cable Coaxial, Fibra Óptica, Medio Inalámbrico": "Fibra Óptica",
+            "Ancho de banda Up Link (Kbps)": kbps_val,
+            "Ancho de banda Down Link (Kbps)": kbps_val,
+            "Tipo de Cliente (Residencial, Corporativo, Cibercafé)": tipo_cli,
+            "Nivel de Compartición": "8 : 1"
+        })
+
+    df_alta_vel = pd.DataFrame(data_alta_vel)
+    if not df_alta_vel.empty:
+        df_alta_vel = df_alta_vel.sort_values(by=["Parroquia", "Nombre del Usuario"])
+    else:
+        df_alta_vel = pd.DataFrame(columns=[
+            "MES", "Provincia", "Cantón", "Parroquia", "Nombre del Usuario", "Dirección",
+            "Teléfono", "Número estimado de usuarios por cuenta",
+            "Empresa proveedora del canal (Portador)",
+            "Tipo de enlace: Cobre, Cable Coaxial, Fibra Óptica, Medio Inalámbrico",
+            "Ancho de banda Up Link (Kbps)", "Ancho de banda Down Link (Kbps)",
+            "Tipo de Cliente (Residencial, Corporativo, Cibercafé)",
+            "Nivel de Compartición"
+        ])
     
     # ── HOJA 2: RESUMEN POR PLAN (SOLO CLIENTES CON FACTURA) ──
     pagos_todos = db.query(models.Pago).all()
@@ -1989,9 +2055,10 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     file_name = f"Reporte_{mes_actual}_{timestamp}.xlsx"
     file_path = os.path.join("rutas_reportes", file_name)
     
-    # Escribir a Excel con 5 hojas ordenadas
+    # Escribir a Excel con hojas ordenadas
     with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
         df_clientes.to_excel(writer, sheet_name="Facturación Clientes", index=False)
+        df_alta_vel.to_excel(writer, sheet_name="Cuentas Alta Velocidad", index=False)
         df_resumen.to_excel(writer, sheet_name="Resumen por Plan", index=False)
         df_egresos.to_excel(writer, sheet_name="Egresos", index=False)
         df_proyectos.to_excel(writer, sheet_name="Proyectos", index=False)
