@@ -1351,7 +1351,236 @@ def normalizar_parroquia(parr: str) -> str:
         return "RICAURTE"
     if "TARQUI" in p:
         return "TARQUI"
-    return p
+def construir_datos_arcotel(mes: str, db: Session):
+    parts = mes.split("-")
+    clientes = db.query(models.Cliente).all()
+    planes = db.query(models.PlanInternet).all()
+    planes_precios = {p.nombre: float(p.precio) for p in planes if p.nombre}
+    planes_megas = {}
+    for p in planes:
+        if p.nombre:
+            planes_megas[p.nombre.strip().upper()] = int(p.megas or 0)
+    
+    month_num = parts[1] if len(parts) == 2 else "01"
+    month_name_en = {
+        "01": "JANUARY", "02": "FEBRUARY", "03": "MARCH", "04": "APRIL",
+        "05": "MAY", "06": "JUNE", "07": "JULY", "08": "AUGUST",
+        "09": "SEPTEMBER", "10": "OCTOBER", "11": "NOVEMBER", "12": "DECEMBER"
+    }.get(month_num, "MONTH")
+
+    month_name_es = {
+        "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
+        "05": "Mayo", "06": "Junio", "07": "Julio", "08": "Agosto",
+        "09": "Septiembre", "10": "Octubre", "11": "Noviembre", "12": "Diciembre"
+    }.get(month_num, "Mes")
+    mes_label = f"{month_name_es} {parts[0]}" if len(parts) == 2 else mes
+
+    clientes_con_factura = []
+    clientes_con_factura_ids = set()
+    for c in clientes:
+        fact_raw = str(c.facturas or "").strip().upper()
+        cod_raw = str(c.cod or "").strip()
+        is_cortesia = bool(getattr(c, 'cortesia_total', False))
+
+        tiene_factura_normal = (fact_raw == "SI" and bool(cod_raw))
+        es_cortesia_con_factura = is_cortesia and (fact_raw == "SI" or bool(cod_raw))
+
+        if tiene_factura_normal or es_cortesia_con_factura:
+            clientes_con_factura.append(c)
+            clientes_con_factura_ids.add(c.id)
+
+    # 1. Facturación Clientes
+    data_clientes = []
+    for c in clientes_con_factura:
+        id_str = f"C{c.id:02d}" if c.id is not None else ""
+        pago_mensual = float(c.pago_mensual or 0.00)
+        is_cortesia = bool(getattr(c, 'cortesia_total', False))
+        confirmar = True if (pago_mensual > 0 or is_cortesia) else False
+
+        plan_clean = str(c.plan or "").strip().upper()
+        megas_num = planes_megas.get(plan_clean, 0)
+        if megas_num == 0 and plan_clean:
+            m = re.search(r'(\d+)', plan_clean)
+            if m:
+                megas_num = int(m.group(1))
+
+        plan_val = f"{megas_num}MB" if megas_num > 0 else ""
+        cod_val = str(c.cod or "").strip() or id_str
+
+        data_clientes.append({
+            "ID": id_str,
+            "RUC / CEDULA": str(c.cedula or "").strip(),
+            "NAME": c.nombre or "",
+            "DIRECTION": c.direccion or "",
+            "CEL": str(c.celular or "").strip(),
+            "PARISH": c.parroquia or "",
+            "PLAN": plan_val,
+            f"FACT {month_name_en}": "SI",
+            "ESTADO": c.estado or "Pendiente",
+            "CONFIRMAR": "SÍ" if confirmar else "NO",
+            "FACTURAS": cod_val,
+            "es_cortesia": is_cortesia,
+            "pago_mensual": pago_mensual
+        })
+    data_clientes.sort(key=lambda x: (x.get("ESTADO", ""), x.get("NAME", "")))
+
+    # 2. Cuentas Alta Velocidad
+    mes_nombre_upper = month_name_es.upper()
+    data_alta_vel = []
+    for c in clientes_con_factura:
+        plan_clean = str(c.plan or "").strip().upper()
+        megas_num = planes_megas.get(plan_clean, 0)
+        if megas_num == 0 and plan_clean:
+            m = re.search(r'(\d+)', plan_clean)
+            if m:
+                megas_num = int(m.group(1))
+        if megas_num <= 0:
+            megas_num = 100
+            
+        kbps_val = int(megas_num * 1000)
+        parroquia_val = normalizar_parroquia(c.parroquia)
+        
+        plan_str = str(c.plan or "").upper()
+        nom_str = str(c.nombre or "").upper()
+        if "CORP" in plan_str or "EMPRES" in plan_str or "CORP" in nom_str:
+            tipo_cli = "Corporativo"
+        elif "CIBER" in plan_str or "CYBER" in plan_str:
+            tipo_cli = "Cibercafé"
+        else:
+            tipo_cli = "Residencial"
+            
+        tel_val = str(c.celular or "").strip()
+        if tel_val.endswith(".0"):
+            tel_val = tel_val[:-2]
+
+        data_alta_vel.append({
+            "MES": mes_nombre_upper,
+            "Provincia": "AZUAY",
+            "Cantón": "CUENCA",
+            "Parroquia": parroquia_val,
+            "Nombre del Usuario": str(c.nombre or "").strip().upper(),
+            "Dirección": str(c.direccion or "").strip().upper(),
+            "Teléfono": tel_val,
+            "Número estimado de usuarios por cuenta": 4,
+            "Empresa proveedora del canal (Portador)": "NEDETEL",
+            "Tipo de enlace: Cobre, Cable Coaxial, Fibra Óptica, Medio Inalámbrico": "Fibra Óptica",
+            "Ancho de banda Up Link (Kbps)": kbps_val,
+            "Ancho de banda Down Link (Kbps)": kbps_val,
+            "Tipo de Cliente (Residencial, Corporativo, Cibercafé)": tipo_cli,
+            "Nivel de Compartición": "8 : 1"
+        })
+    data_alta_vel.sort(key=lambda x: (x.get("Parroquia", ""), x.get("Nombre del Usuario", "")))
+
+    # 3. Resumen por Plan
+    pagos_todos = db.query(models.Pago).all()
+    pagos_mes = [
+        p for p in pagos_todos 
+        if str(p.fecha_pago)[:7] == mes 
+        and p.cliente_id in clientes_con_factura_ids 
+        and not getattr(p, 'anulado', False)
+    ]
+    pago_por_cliente_metodo = {}
+    for p in pagos_mes:
+        if p.cliente_id:
+            m_total = float(p.monto or 0)
+            m_parts = float(p.monto_internet or 0) + float(p.monto_plus or 0) + float(p.monto_adicional or 0)
+            monto_total_pago = m_total if m_total > 0 else m_parts
+            metodo = (p.metodo_pago or "Efectivo").upper()
+            key = (p.cliente_id, metodo)
+            pago_por_cliente_metodo[key] = pago_por_cliente_metodo.get(key, 0.0) + monto_total_pago
+
+    planes_db_nombres = set(p.nombre for p in planes if p.nombre)
+    planes_clientes_nombres = set(c.plan for c in clientes_con_factura if c.plan)
+    planes_nombres = sorted(list(planes_db_nombres.union(planes_clientes_nombres)))
+
+    resumen_data = []
+    gran_total_clientes = 0
+    gran_total_estimado = 0.0
+    gran_total_efectivo = 0.0
+    gran_total_pichincha = 0.0
+    gran_total_jep = 0.0
+    gran_total_reunido = 0.0
+
+    for plan_nombre in planes_nombres:
+        clientes_en_plan = [c for c in clientes_con_factura if c.plan and c.plan.strip() == plan_nombre.strip() and (c.estado and c.estado.strip().upper() == "ACTIVO")]
+        cant_clientes = len(clientes_en_plan)
+        precio_plan = planes_precios.get(plan_nombre, 0.0)
+        megas_plan = planes_megas.get(plan_nombre.strip().upper(), 0)
+        generacion_estimada = cant_clientes * precio_plan
+        
+        efectivo_plan = 0.0
+        pichincha_plan = 0.0
+        jep_plan = 0.0
+        for c in clientes_en_plan:
+            for metodo_key, monto in pago_por_cliente_metodo.items():
+                cid, met = metodo_key
+                if cid == c.id:
+                    if "JEP" in met:
+                        jep_plan += monto
+                    elif "PICHINCHA" in met:
+                        pichincha_plan += monto
+                    else:
+                        efectivo_plan += monto
+        total_reunido_plan = efectivo_plan + pichincha_plan + jep_plan
+        resumen_data.append({
+            "PLAN": plan_nombre,
+            "MEGAS": f"{megas_plan}MB",
+            "CANTIDAD CLIENTES": cant_clientes,
+            "PRECIO PLAN": precio_plan,
+            "GENERACION ESTIMADA": round(generacion_estimada, 2),
+            "EFECTIVO": round(efectivo_plan, 2),
+            "PICHINCHA": round(pichincha_plan, 2),
+            "JEP": round(jep_plan, 2),
+            "TOTAL REUNIDO": round(total_reunido_plan, 2),
+            "DIFERENCIA": round(generacion_estimada - total_reunido_plan, 2),
+            "% CUMPLIMIENTO": round((total_reunido_plan / generacion_estimada * 100) if generacion_estimada > 0 else 0.0, 1)
+        })
+        gran_total_clientes += cant_clientes
+        gran_total_estimado += generacion_estimada
+        gran_total_efectivo += efectivo_plan
+        gran_total_pichincha += pichincha_plan
+        gran_total_jep += jep_plan
+        gran_total_reunido += total_reunido_plan
+
+    resumen_data.append({
+        "PLAN": "TOTAL GENERAL",
+        "MEGAS": "",
+        "CANTIDAD CLIENTES": gran_total_clientes,
+        "PRECIO PLAN": 0.0,
+        "GENERACION ESTIMADA": round(gran_total_estimado, 2),
+        "EFECTIVO": round(gran_total_efectivo, 2),
+        "PICHINCHA": round(gran_total_pichincha, 2),
+        "JEP": round(gran_total_jep, 2),
+        "TOTAL REUNIDO": round(gran_total_reunido, 2),
+        "DIFERENCIA": round(gran_total_estimado - gran_total_reunido, 2),
+        "% CUMPLIMIENTO": round((gran_total_reunido / gran_total_estimado * 100) if gran_total_estimado > 0 else 0.0, 1)
+    })
+
+    parroquias_set = sorted(list(set(x["Parroquia"] for x in data_alta_vel)))
+
+    kpis = {
+        "total_cuentas": len(data_alta_vel),
+        "total_facturacion": len(data_clientes),
+        "total_estimado": round(gran_total_estimado, 2),
+        "total_reunido": round(gran_total_reunido, 2),
+        "parroquias": parroquias_set,
+        "cant_parroquias": len(parroquias_set),
+        "mes_label": mes_label,
+        "mes_nombre_es": month_name_es
+    }
+
+    return {
+        "mes": mes,
+        "mes_label": mes_label,
+        "kpis": kpis,
+        "cuentas_alta_velocidad": data_alta_vel,
+        "facturacion_clientes": data_clientes,
+        "resumen_planes": resumen_data
+    }
+
+@router.get("/reporte-arcotel-preview")
+def preview_reporte_arcotel(mes: str, db: Session = Depends(get_db)):
+    return construir_datos_arcotel(mes, db)
 
 @router.get("/reporte-excel")
 def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
