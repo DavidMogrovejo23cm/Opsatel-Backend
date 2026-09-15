@@ -61,7 +61,49 @@ def get_anthropic_client():
 
 active_groq_model = None
 
-def llamar_groq_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
+def obtener_fecha_hora_ecuador() -> str:
+    """Retorna la fecha y hora actual en la zona horaria de Ecuador (America/Guayaquil)"""
+    import pytz
+    from datetime import datetime
+    try:
+        ec_tz = pytz.timezone('America/Guayaquil')
+        ahora_ec = datetime.now(ec_tz)
+        dias_semana = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+        dia_nom = dias_semana[ahora_ec.weekday()]
+        mes_nom = meses[ahora_ec.month - 1]
+        hora_str = ahora_ec.strftime("%I:%M %p").lstrip("0")
+        return f"{dia_nom.capitalize()} {ahora_ec.day} de {mes_nom} de {ahora_ec.year}, {hora_str} (Ecuador)"
+    except Exception:
+        return "Ecuador"
+
+def limpiar_respuesta_ia(texto: str) -> str:
+    """
+    Sanea la respuesta generada por cualquier IA para WhatsApp:
+    1. Remueve prefijos artificiales como 'assistant:', 'SAM:', 'Bot:', 'Respuesta:'
+    2. Si el modelo alucinó un guión simulado ('\nuser:', '\ncliente:', '\nusuario:'),
+       corta inmediatamente todo el texto a partir de esa línea.
+    3. Elimina espacios en blanco y saltos innecesarios.
+    """
+    if not texto:
+        return ""
+    res = str(texto).strip()
+
+    # Quitar prefijos al inicio
+    res = re.sub(r'^(?:assistant|sam|asistente|bot|respuesta)\s*:\s*', '', res, flags=re.IGNORECASE).strip()
+
+    # Cortar si la IA empezó a escribir turnos simulados del usuario o asistente
+    patron_corte = re.compile(r'\n\s*(?:user|usuario|cliente|humano|assistant|asistente)\s*:\s*', re.IGNORECASE)
+    corte = patron_corte.search(res)
+    if corte:
+        res = res[:corte.start()].strip()
+
+    # Quitar de nuevo prefijo por si quedó
+    res = re.sub(r'^(?:assistant|sam|asistente|bot|respuesta)\s*:\s*', '', res, flags=re.IGNORECASE).strip()
+
+    return res
+
+def llamar_groq_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5, system_prompt: str = "") -> str:
     """Llama a la API de Groq consultando dinámicamente los modelos activos disponibles"""
     global active_groq_model
     groq_key = os.getenv("GROQ_API_KEY")
@@ -105,10 +147,16 @@ def llamar_groq_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5
 
     chat_url = "https://api.groq.com/openai/v1/chat/completions"
     last_err = None
+
+    messages_payload = []
+    if system_prompt and system_prompt.strip():
+        messages_payload.append({"role": "system", "content": system_prompt.strip()})
+    messages_payload.append({"role": "user", "content": prompt})
+
     for model in candidate_models:
         payload = {
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages_payload,
             "max_tokens": max_tokens,
             "temperature": temperature
         }
@@ -131,7 +179,7 @@ def llamar_groq_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5
         print(f"[SAM Chatbot] Error final en llamada a Groq: {last_err}")
     return ""
 
-def llamar_openai_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
+def llamar_openai_api(prompt: str, max_tokens: int = 500, temperature: float = 0.5, system_prompt: str = "") -> str:
     """Llama a la API de OpenAI (GPT-4o mini)"""
     openai_key = os.getenv("OPENAI_API_KEY")
     if not openai_key or not openai_key.strip():
@@ -142,9 +190,14 @@ def llamar_openai_api(prompt: str, max_tokens: int = 500, temperature: float = 0
         "Authorization": f"Bearer {openai_key.strip()}",
         "Content-Type": "application/json"
     }
+    messages_payload = []
+    if system_prompt and system_prompt.strip():
+        messages_payload.append({"role": "system", "content": system_prompt.strip()})
+    messages_payload.append({"role": "user", "content": prompt})
+
     payload = {
         "model": OPENAI_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages_payload,
         "max_tokens": max_tokens,
         "temperature": temperature
     }
@@ -162,7 +215,7 @@ def hay_proveedor_ia() -> bool:
         get_anthropic_client()
     )
 
-def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float = 0.5) -> str:
+def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float = 0.5, system_prompt: str = "") -> str:
     """
     Genera texto usando los proveedores disponibles en orden de prioridad:
     1. Groq (Ultra-rápido, gratuito, ideal para VPS)
@@ -175,9 +228,9 @@ def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float 
     # Si hay GROQ configurado, es la opción más rápida y sin bloqueos de IP
     if os.getenv("GROQ_API_KEY"):
         try:
-            res = llamar_groq_api(prompt, max_tokens, temperature)
+            res = llamar_groq_api(prompt, max_tokens, temperature, system_prompt=system_prompt)
             if res:
-                return res
+                return limpiar_respuesta_ia(res)
         except Exception as e_groq:
             print(f"[SAM Chatbot] Error en llamada a Groq: {e_groq}")
 
@@ -186,10 +239,14 @@ def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float 
     if client_g:
         # pyrefly: ignore [missing-import]
         from google.genai import types
-        config = types.GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-        )
+        cfg_kwargs = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+        }
+        if system_prompt and system_prompt.strip():
+            cfg_kwargs["system_instruction"] = system_prompt.strip()
+        config = types.GenerateContentConfig(**cfg_kwargs)
+
         model_candidates = [
             GEMINI_MODEL,
             "gemini-2.5-flash",
@@ -212,7 +269,7 @@ def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float 
                     if GEMINI_MODEL != model_name:
                         print(f"[SAM Chatbot] [IA] Modelo Gemini activo verificado: {model_name}")
                         GEMINI_MODEL = model_name
-                    return response.text.strip()
+                    return limpiar_respuesta_ia(response.text.strip())
             except Exception as e_gem:
                 err_str = str(e_gem)
                 if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
@@ -225,9 +282,9 @@ def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float 
     # 3. Intentar con OpenAI si está configurado
     if os.getenv("OPENAI_API_KEY"):
         try:
-            res = llamar_openai_api(prompt, max_tokens, temperature)
+            res = llamar_openai_api(prompt, max_tokens, temperature, system_prompt=system_prompt)
             if res:
-                return res
+                return limpiar_respuesta_ia(res)
         except Exception as e_oai:
             print(f"[SAM Chatbot] Error en llamada a OpenAI: {e_oai}")
 
@@ -235,14 +292,17 @@ def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float 
     client_a = get_anthropic_client()
     if client_a:
         try:
-            response = client_a.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                messages=[{"role": "user", "content": prompt}]
-            )
+            call_kwargs = {
+                "model": CLAUDE_MODEL,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "messages": [{"role": "user", "content": prompt}]
+            }
+            if system_prompt and system_prompt.strip():
+                call_kwargs["system"] = system_prompt.strip()
+            response = client_a.messages.create(**call_kwargs)
             if response and response.content:
-                return response.content[0].text.strip()
+                return limpiar_respuesta_ia(response.content[0].text.strip())
         except Exception as e_ant:
             print(f"[SAM Chatbot] Error en llamada a Anthropic: {e_ant}")
 
@@ -340,21 +400,36 @@ def limpiar_numero_whatsapp(numero: str) -> str:
         num_str = num_str.split("@")[0]
     return re.sub(r'\D', '', num_str)
 
-def obtener_contexto_conversacion(numero: str, mensaje_actual: str) -> str:
-    """Construye un string con el historial y el mensaje actual"""
+def obtener_contexto_conversacion(numero: str, mensaje_actual: str = "") -> str:
+    """Construye un string limpio y legible con el historial de la conversación"""
     hist = historial_conversaciones.get(numero, [])
-    contexto = ""
+    lineas = []
     for msg in hist:
-        role_tag = "user" if msg["role"] == "user" else "assistant"
-        contexto += f"{role_tag}: {msg['content']}\n"
-    contexto += f"user: {mensaje_actual}"
-    return contexto
+        raw_text = (msg.get("content") or "").strip()
+        clean_text = limpiar_respuesta_ia(raw_text) if msg.get("role") == "assistant" else raw_text
+        if not clean_text:
+            continue
+        role_tag = "Cliente" if msg["role"] == "user" else "SAM"
+        lineas.append(f"{role_tag}: {clean_text}")
+
+    # Si se pasa mensaje_actual y aún no está registrado al final de hist, agregarlo
+    if mensaje_actual and mensaje_actual.strip():
+        msg_act = mensaje_actual.strip()
+        if not hist or hist[-1].get("content") != msg_act:
+            lineas.append(f"Cliente: {msg_act}")
+
+    return "\n".join(lineas)
 
 def guardar_mensaje_historial(numero: str, role: str, content: str):
-    """Guarda un mensaje en el historial y recorta si excede el límite"""
+    """Guarda un mensaje en el historial sanitizado y recorta si excede el límite"""
+    if not content or not str(content).strip():
+        return
+    clean_content = limpiar_respuesta_ia(content) if role == "assistant" else str(content).strip()
+    if not clean_content:
+        return
     if numero not in historial_conversaciones:
         historial_conversaciones[numero] = []
-    historial_conversaciones[numero].append({"role": role, "content": content})
+    historial_conversaciones[numero].append({"role": role, "content": clean_content})
     if len(historial_conversaciones[numero]) > MAX_HISTORY_LEN:
         historial_conversaciones[numero] = historial_conversaciones[numero][-MAX_HISTORY_LEN:]
 
@@ -1262,43 +1337,35 @@ Conversación actual:
 # -------------------------------------------------------------
 # CHAT GENERAL (PERSONALIDAD HUMANA E INTELIGENTE DE SAM)
 # -------------------------------------------------------------
-PROMPT_GENERAL = """Eres SAM (Sistema Autónomo Multitarea de OPSATEL), el asesor virtual oficial y humano de atención al cliente de la empresa de telecomunicaciones e internet por fibra óptica OPSATEL en Ecuador.
+PROMPT_GENERAL = """Eres SAM, el asesor virtual de atención al cliente de OPSATEL (empresa ecuatoriana de telecomunicaciones e internet de fibra óptica).
+Hablas por WhatsApp con los usuarios exactamente como una persona de atención al cliente de primer nivel: amable, natural, cálido, educado y directo.
 
-DIRECTRICES DE ATENCIÓN (SÉ 100% NATURAL, CÁLIDO, EMPÁTICO Y HUMANO):
-1. TONO: Hablas como un asesor de atención al cliente real de primer nivel: sumamente cordial, educado, claro y dispuesto a ayudar. NUNCA suenes como un robot ni uses plantillas acartonadas.
-2. TRATO AL USUARIO:
-   - NUNCA digas "cliente desconocido", "usuario no identificado", ni menciones errores de base de datos o fallos del sistema.
-   - Si el usuario es un CLIENTE REGISTRADO (aparece en DATOS DEL CLIENTE REGISTRADO):
-     Salúdalo cordialmente por su nombre (ej: "¡Hola [Nombre]! Qué gusto saludarte de nuevo en OPSATEL 😊"). Conoces su plan actual contratado y su estado.
-   - Si el usuario es un PROSPECTO O CLIENTE NUEVO (no registrado):
-     Dale una cálida bienvenida a OPSATEL (ej: "¡Hola! Bienvenido a OPSATEL 😊 Con mucho gusto te ayudo."). Si pregunta por servicios o planes, puedes preguntarle con amabilidad su nombre o de qué sector o parroquia nos escribe para verificar la cobertura de fibra óptica.
-3. PREGUNTAS SOBRE TI ("¿cómo te llamas?", "¿quién eres?"):
-   - Responde con simpatía y cercanía: "¡Hola! Me llamo SAM, soy el asesor virtual oficial de OPSATEL. Estoy aquí para ayudarte con toda la información sobre nuestros planes de internet, pagos, consultas de saldo o soporte técnico. ¿En qué te puedo colaborar hoy? 😊"
-4. PREGUNTAS SOBRE PLANES, PRECIOS O SUBIR DE NIVEL / MEJORAR PLAN:
-   - Presenta de forma clara, ordenada y atractiva los planes de internet REALES listados abajo (Megas, Precio mensual y Pantallas de televisión TV/IPTV).
-   - Si el cliente pregunta cómo subir de nivel o cambiar de plan, explícale que puede elegir cualquiera de los planes superiores y con gusto se le gestiona la actualización.
-5. FORMATO PARA WHATSAPP (OBLIGATORIO - NUNCA USES TABLAS):
-   - NUNCA utilices tablas de barras (|---|). En WhatsApp se ven rotas y desalineadas.
-   - Presenta siempre los planes usando viñetas limpias con negritas, por ejemplo:
-     • *GAMER PRO*: 800 Megas por $32.20 al mes (2 pantallas TV/IPTV)
-     • *LAG CERO*: 700 Megas por $25.00 al mes (2 pantallas TV/IPTV)
-     • *FAMILIAR +*: 650 Megas por $23.00 al mes (1 pantalla TV/IPTV)
-6. COMPLETITUD DEL MENSAJE (SIN CORTES):
-   - NUNCA dejes oraciones, listas o ideas incompletas a medias.
-   - Concluye siempre tu respuesta de forma amigable con una pregunta de cierre (ej: "¿Te gustaría que te ayudemos a cambiarte a alguno de estos planes?").
-7. PREGUNTAS SOBRE MEDIOS DE PAGO O BANCOS:
-   - Infórmale las entidades bancarias oficiales registradas para depósitos o transferencias.
-8. ACTITUD SIEMPRE POSITIVA Y RESOLUTIVA:
-   - NUNCA respondas negativamente. Sé siempre servicial, proactivo y cercano.
-9. BREVEDAD Y RESPUESTAS HUMANAS (MUY IMPORTANTE):
-   - Genera respuestas CORTAS, ágiles, cálidas y humanas (máximo 3 a 5 líneas por respuesta usualmente).
+REGLAS DE ORO (ESTRICTO CUMPLIMIENTO):
+1. RESPUESTAS CORTAS, AGRADABLES Y HUMANAS (MÁXIMO 1 A 3 LÍNEAS):
+   - En WhatsApp las respuestas deben ser rápidas, concisas y fáciles de leer.
    - NUNCA generes muros de texto ni párrafos gigantescos.
-   - Habla como una persona real en WhatsApp: cercana, rápida y directa al grano.
+2. RESPONDE DIRECTO A LO QUE TE PREGUNTAN (CERO TEXTO INNECESARIO):
+   - Responde con precisión y amabilidad exactamente a lo que el usuario consulta.
+   - Si el usuario pregunta algo cotidiano (ej: "¿qué día es hoy?", "¿cómo estás?", "hola", "buenos días"):
+     Responde amable y directamente con la fecha/saludo de hoy en Ecuador en 1 o 2 líneas.
+   - NO hagas preguntas innecesarias, insistentes ni interrogatorios al cliente.
+   - NO ofrezcas planes de internet ni servicios de IPTV a menos que el cliente te pregunte sobre ellos.
+3. TRATO Y TONO PERSONALIZADO:
+   - Si es un cliente registrado, salúdalo amablemente por su primer nombre.
+   - Mantén una actitud alegre, cercana y profesional. Usa emojis con moderación (😊, 👍, ✨).
+4. PROHIBICIÓN ABSOLUTA DE GUIONES O DIÁLOGOS FALSOS:
+   - Responde ÚNICAMENTE con tu mensaje final hacia el cliente.
+   - NUNCA escribas "user:", "assistant:", "Cliente:", "SAM:", ni simules conversaciones imaginarias.
+5. DATOS OFICIALES REALES:
+   - Toda información de planes, megas, valores o bancos proviene exclusivamente de la INFORMACIÓN OFICIAL abajo. NUNCA inventes números ni datos.
 """
 
 def procesar_chat_general(numero: str, mensaje: str, contexto: str, db: Session = None) -> str:
     info_bd = []
     nombre_cliente = None
+    primer_nombre = ""
+    fecha_hora_ec = obtener_fecha_hora_ecuador()
+
     if db:
         try:
             # 1. Verificar si el usuario que escribe ya es un cliente registrado
@@ -1310,16 +1377,18 @@ def procesar_chat_general(numero: str, mensaje: str, contexto: str, db: Session 
 
             if cliente and cliente.nombre:
                 nombre_cliente = cliente.nombre
+                partes = [p.capitalize() for p in cliente.nombre.strip().split() if p]
+                primer_nombre = partes[0] if partes else ""
                 deuda = obtener_deuda_total_cliente(cliente)
                 info_bd.append(
                     f"DATOS DEL CLIENTE REGISTRADO QUE TE ESCRIBE:\n"
-                    f"- Nombre del cliente: {cliente.nombre}\n"
+                    f"- Nombre del cliente: {cliente.nombre} (Tratarlo como: {primer_nombre})\n"
                     f"- Plan actual contratado: {cliente.plan or 'No definido'}\n"
                     f"- Valor total pendiente a pagar: ${deuda['total']:.2f}{deuda['desglose']}\n"
                     f"- Estado actual del servicio: {cliente.estado}"
                 )
             else:
-                info_bd.append("ESTADO DEL REMITENTE: Prospecto o nuevo cliente interesado (Aún no registrado en la BD). Trátalo con máxima cordialidad y dale la bienvenida a OPSATEL.")
+                info_bd.append("ESTADO DEL REMITENTE: Prospecto o nuevo cliente (Aún no registrado en la BD). Trátalo con máxima cordialidad y dale la bienvenida a OPSATEL.")
 
             # 2. Obtener Planes de Internet reales de la base de datos
             planes = db.query(models.PlanInternet).all()
@@ -1344,19 +1413,25 @@ def procesar_chat_general(numero: str, mensaje: str, contexto: str, db: Session 
 
     bloque_bd = ("\n\nINFORMACIÓN OFICIAL DE OPSATEL:\n" + "\n\n".join(info_bd)) if info_bd else ""
 
-    prompt_completo = f"""{PROMPT_GENERAL}
+    system_prompt = f"""{PROMPT_GENERAL}
+FECHA Y HORA ACTUAL EN ECUADOR: {fecha_hora_ec}
 {bloque_bd}
-
-Conversación actual con el usuario:
-{contexto}
 """
+
+    prompt_usuario = f"""Conversación previa con el cliente:
+{contexto}
+
+Mensaje actual del cliente: "{mensaje}"
+
+Instrucción: Responde al cliente de forma CORTA, HUMANA Y AGRADABLE (máximo 1 a 3 líneas). Responde con precisión a lo consultado sin textos innecesarios ni preguntas redundantes."""
+
     try:
-        return generar_respuesta_ia(prompt_completo, max_tokens=350, temperature=0.5)
+        return generar_respuesta_ia(prompt_usuario, max_tokens=220, temperature=0.3, system_prompt=system_prompt)
     except Exception as e:
         print(f"[SAM Chatbot] Error en chat general: {e}")
-        if nombre_cliente:
-            return f"¡Hola {nombre_cliente}! Espero que estés teniendo un excelente día 😊 ¿En qué te puedo ayudar hoy con tus servicios de Opsatel?"
-        return "¡Hola! Bienvenido a OPSATEL, espero estés teniendo un excelente día 😊 ¿En qué te puedo ayudar hoy?"
+        if primer_nombre:
+            return f"¡Hola {primer_nombre}! Con gusto te ayudo hoy 😊 ¿En qué te puedo colaborar con tus servicios de OPSATEL?"
+        return "¡Hola! Bienvenido a OPSATEL, con gusto te ayudo hoy 😊 ¿En qué te puedo colaborar?"
 
 
 # -------------------------------------------------------------
