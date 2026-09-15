@@ -1314,6 +1314,21 @@ def historial_clientes(db: Session = Depends(get_db)):
         adicional = try_float(c.adicional)
         tarifa_mensual = tarifa_base + plus + adicional
         saldo = try_float(c.saldo)
+
+        proporcional = tarifa_mensual
+        if c.instalation_date:
+            try:
+                date_str = str(c.instalation_date).strip()[:10]
+                dt_parts = [int(p) for p in date_str.split("-")]
+                if len(dt_parts) == 3:
+                    y, m, d = dt_parts
+                    import calendar
+                    _, total_days = calendar.monthrange(y, m)
+                    active_days = (total_days - d) + 1
+                    if total_days > 0 and 0 <= active_days <= total_days:
+                        proporcional = round((tarifa_mensual / total_days) * active_days, 2)
+            except Exception:
+                proporcional = tarifa_mensual
         
         res.append({
             "id": c.id,
@@ -1321,6 +1336,7 @@ def historial_clientes(db: Session = Depends(get_db)):
             "nodo": c.nodo,
             "plan": c.plan,
             "tarifa_mensual": tarifa_mensual,
+            "proporcional": proporcional,
             "saldo_total": saldo,
             "estado": c.estado,
             "instalation_date": c.instalation_date,
