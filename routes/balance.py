@@ -1572,6 +1572,25 @@ def construir_datos_arcotel(mes: str, db: Session):
         "% CUMPLIMIENTO": round((gran_total_reunido / gran_total_estimado * 100) if gran_total_estimado > 0 else 0.0, 1)
     })
 
+    gen_estimada_sin_iva = round(gran_total_estimado / 1.15, 2)
+    total_reunido_sin_iva = round(gran_total_reunido / 1.15, 2)
+    diferencia_sin_iva = round(gen_estimada_sin_iva - total_reunido_sin_iva, 2)
+    cumplimiento_sin_iva = round((total_reunido_sin_iva / gen_estimada_sin_iva * 100) if gen_estimada_sin_iva > 0 else 0.0, 1)
+
+    resumen_data.append({
+        "PLAN": "SIN IVA (15%)",
+        "MEGAS": "",
+        "CANTIDAD CLIENTES": "",
+        "PRECIO PLAN": "",
+        "GENERACION ESTIMADA": gen_estimada_sin_iva,
+        "EFECTIVO": "",
+        "PICHINCHA": "",
+        "JEP": "",
+        "TOTAL REUNIDO": total_reunido_sin_iva,
+        "DIFERENCIA": diferencia_sin_iva,
+        "% CUMPLIMIENTO": cumplimiento_sin_iva
+    })
+
     parroquias_set = sorted(list(set(str(x.get("Parroquia") or "") for x in data_alta_vel if x.get("Parroquia"))))
 
     kpis = {
@@ -1870,6 +1889,25 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         "TOTAL REUNIDO": round(gran_total_reunido, 2),
         "DIFERENCIA": round(gran_total_estimado - gran_total_reunido, 2),
         "% CUMPLIMIENTO": round((gran_total_reunido / gran_total_estimado * 100) if gran_total_estimado > 0 else 0.0, 1)
+    })
+
+    gen_estimada_sin_iva = round(gran_total_estimado / 1.15, 2)
+    total_reunido_sin_iva = round(gran_total_reunido / 1.15, 2)
+    diferencia_sin_iva = round(gen_estimada_sin_iva - total_reunido_sin_iva, 2)
+    cumplimiento_sin_iva = round((total_reunido_sin_iva / gen_estimada_sin_iva * 100) if gen_estimada_sin_iva > 0 else 0.0, 1)
+
+    resumen_data.append({
+        "PLAN": "SIN IVA (15%)",
+        "MEGAS": "",
+        "CANTIDAD CLIENTES": "",
+        "PRECIO PLAN": "",
+        "GENERACION ESTIMADA": gen_estimada_sin_iva,
+        "EFECTIVO": "",
+        "PICHINCHA": "",
+        "JEP": "",
+        "TOTAL REUNIDO": total_reunido_sin_iva,
+        "DIFERENCIA": diferencia_sin_iva,
+        "% CUMPLIMIENTO": cumplimiento_sin_iva
     })
     df_resumen = pd.DataFrame(resumen_data)
 
@@ -2200,7 +2238,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
             is_total_row = False
             
             first_cell_val = str(ws.cell(row=row, column=1).value or "").strip().upper()
-            if "TOTAL" in first_cell_val:
+            if "TOTAL" in first_cell_val or "SIN IVA" in first_cell_val:
                 is_total_row = True
                 
             for col in range(1, max_col + 1):
