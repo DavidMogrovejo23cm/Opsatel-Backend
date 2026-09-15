@@ -72,9 +72,9 @@ def format_whatsapp_number(number: str) -> str:
         
     return f"{cleaned}{server}"
 
-def send_whatsapp_message(numero: str, mensaje: str) -> bool:
+def send_whatsapp_message(numero: str, mensaje: str, media_path: str = None, mime_type: str = "image/png") -> bool:
     """
-    Sends a WhatsApp message using the configured provider.
+    Sends a WhatsApp message (text or media with caption) using the configured provider.
     Returns True if successful, False otherwise.
     """
     clean_num = format_whatsapp_number(numero)
@@ -87,11 +87,29 @@ def send_whatsapp_message(numero: str, mensaje: str) -> bool:
         url = f"{WHATSAPP_BRIDGE_URL.rstrip('/')}/send"
         payload = {
             "number": clean_num,
-            "message": mensaje
+            "message": mensaje,
+            "caption": mensaje
         }
+        if media_path and os.path.exists(media_path):
+            payload["mediaPath"] = os.path.abspath(media_path)
+            try:
+                import base64
+                with open(media_path, "rb") as f_media:
+                    payload["mediaBase64"] = base64.b64encode(f_media.read()).decode("utf-8")
+                payload["filename"] = os.path.basename(media_path)
+                if not mime_type:
+                    if media_path.lower().endswith(".png"):
+                        mime_type = "image/png"
+                    elif media_path.lower().endswith((".jpg", ".jpeg")):
+                        mime_type = "image/jpeg"
+                payload["mimetype"] = mime_type
+                print(f"[WhatsApp Service] Adjuntando media {os.path.basename(media_path)} ({mime_type}) para {clean_num}")
+            except Exception as e_b64:
+                print(f"[WhatsApp Service] Error codificando base64 de media: {e_b64}")
+
         try:
-            print(f"[WhatsApp Service] Enviando vía Local Bridge a {clean_num}")
-            response = requests.post(url, json=payload, timeout=15)
+            print(f"[WhatsApp Service] Enviando vía Local Bridge a {clean_num} (Media: {'Sí' if media_path else 'No'})")
+            response = requests.post(url, json=payload, timeout=25)
             if response.status_code == 200:
                 res_data = response.json()
                 if res_data.get("success"):
@@ -112,6 +130,19 @@ def send_whatsapp_message(numero: str, mensaje: str) -> bool:
         if not WHATSAPP_INSTANCE_ID or not WHATSAPP_TOKEN:
             print("[WhatsApp Service] Error: Faltan credenciales WHATSAPP_INSTANCE_ID o WHATSAPP_TOKEN para Green API.")
             return False
+
+        if media_path and os.path.exists(media_path):
+            try:
+                url_media = f"{WHATSAPP_API_URL.rstrip('/')}/waInstance{WHATSAPP_INSTANCE_ID}/sendFileByUpload/{WHATSAPP_TOKEN}"
+                with open(media_path, "rb") as f_upload:
+                    files = {"file": (os.path.basename(media_path), f_upload, mime_type)}
+                    data = {"chatId": f"{clean_num}@c.us", "caption": mensaje}
+                    res_m = requests.post(url_media, files=files, data=data, timeout=25)
+                    if res_m.status_code == 200:
+                        print(f"[WhatsApp Service] Green API envió media exitosamente a {clean_num}")
+                        return True
+            except Exception as e_gmedia:
+                print(f"[WhatsApp Service] Error enviando archivo por Green API: {e_gmedia}")
             
         url = f"{WHATSAPP_API_URL.rstrip('/')}/waInstance{WHATSAPP_INSTANCE_ID}/sendMessage/{WHATSAPP_TOKEN}"
         payload = {
@@ -144,6 +175,29 @@ def send_whatsapp_message(numero: str, mensaje: str) -> bool:
         if not WHATSAPP_INSTANCE_ID or not WHATSAPP_TOKEN:
             print("[WhatsApp Service] Error: Faltan credenciales WHATSAPP_INSTANCE_ID o WHATSAPP_TOKEN para Evolution API.")
             return False
+
+        if media_path and os.path.exists(media_path):
+            try:
+                import base64
+                with open(media_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+                url_media = f"{WHATSAPP_API_URL.rstrip('/')}/message/sendMedia/{WHATSAPP_INSTANCE_ID}"
+                payload_media = {
+                    "number": clean_num,
+                    "mediaMessage": {
+                        "mediatype": "image" if "image" in mime_type else "document",
+                        "caption": mensaje,
+                        "media": b64,
+                        "fileName": os.path.basename(media_path)
+                    }
+                }
+                headers_media = {"Content-Type": "application/json", "apikey": WHATSAPP_TOKEN}
+                res_evo = requests.post(url_media, json=payload_media, headers=headers_media, timeout=25)
+                if res_evo.status_code in [200, 201]:
+                    print(f"[WhatsApp Service] Evolution API envió media exitosamente a {clean_num}")
+                    return True
+            except Exception as e_evo:
+                print(f"[WhatsApp Service] Error enviando media por Evolution API: {e_evo}")
             
         url = f"{WHATSAPP_API_URL.rstrip('/')}/message/sendText/{WHATSAPP_INSTANCE_ID}"
         payload = {
@@ -175,8 +229,17 @@ def send_whatsapp_message(numero: str, mensaje: str) -> bool:
 
     # 4. Mock / Simulador (Modo desarrollo)
     else:
-        print(f"[WhatsApp Mock Service] Enviando mensaje a {clean_num}: {mensaje}")
+        if media_path:
+            print(f"[WhatsApp Mock Service] Enviando MEDIA ({media_path}) a {clean_num} con caption: {mensaje}")
+        else:
+            print(f"[WhatsApp Mock Service] Enviando mensaje a {clean_num}: {mensaje}")
         return True
+
+def send_whatsapp_media(numero: str, media_path: str, caption: str = "", mime_type: str = "image/png") -> bool:
+    """
+    Envía un archivo multimedia (imagen, documento, pdf) por WhatsApp con caption opcional.
+    """
+    return send_whatsapp_message(numero=numero, mensaje=caption, media_path=media_path, mime_type=mime_type)
 
 def get_whatsapp_bridge_status() -> dict:
     """

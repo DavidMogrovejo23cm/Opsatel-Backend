@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+from typing import Optional, Tuple
 from dotenv import load_dotenv
 
 # Cargar automáticamente variables de entorno desde .env
@@ -357,6 +358,64 @@ def guardar_mensaje_historial(numero: str, role: str, content: str):
     if len(historial_conversaciones[numero]) > MAX_HISTORY_LEN:
         historial_conversaciones[numero] = historial_conversaciones[numero][-MAX_HISTORY_LEN:]
 
+def es_solicitud_cuentas_pago(msg_limpio: str) -> bool:
+    """
+    Discierne de forma inteligente y contextual si el mensaje del cliente
+    es una pregunta por cuentas bancarias, números de cuenta, transferencias,
+    depósitos o medios de pago oficiales de Opsatel.
+    """
+    if not msg_limpio:
+        return False
+        
+    # Frases directas inequívocas
+    frases_directas = [
+        "a que cuenta", "a qué cuenta", "en que cuenta", "en qué cuenta",
+        "cuentas para pagar", "cuenta para pagar", "cuentas de pago", "cuenta de pago",
+        "cuentas bancarias", "cuenta bancaria", "datos bancarios", "datos de la cuenta",
+        "datos de las cuentas", "datos para transferir", "datos para el deposito",
+        "datos para depósito", "datos para pagar", "datos de pago",
+        "numero de cuenta", "número de cuenta", "numeros de cuenta", "números de cuenta",
+        "num de cuenta", "nro de cuenta", "n° de cuenta",
+        "donde pago", "dónde pago", "donde puedo pagar", "dónde puedo pagar",
+        "donde cancelo", "dónde cancelo", "donde puedo cancelar", "dónde puedo cancelar",
+        "donde se paga", "dónde se paga", "donde cancelar", "dónde cancelar",
+        "donde transferir", "dónde transferir", "donde puedo transferir", "dónde puedo transferir",
+        "donde depositar", "dónde depositar", "donde puedo depositar", "dónde puedo depositar",
+        "como transferir", "cómo transferir", "como depositar", "cómo depositar",
+        "a donde transfiero", "a dónde transfiero", "a donde deposito", "a dónde deposito",
+        "a donde pago", "a dónde pago", "a donde cancelo", "a dónde cancelo",
+        "a nombre de quien", "a nombre de quién", "banco pichincha", "cooperativa jep",
+        "cuenta pichincha", "cuenta jep", "pichincha o jep", "jep o pichincha",
+        "pasame la cuenta", "pásame la cuenta", "pasame las cuentas", "pásame las cuentas",
+        "pasar la cuenta", "pasar las cuentas", "pase la cuenta", "pase las cuentas",
+        "me pasa la cuenta", "me pasa las cuentas", "me ayuda con la cuenta", "me ayuda con las cuentas",
+        "mandame la cuenta", "mándame la cuenta", "mandame las cuentas", "mándame las cuentas",
+        "envíame la cuenta", "enviame la cuenta", "envíame las cuentas", "enviame las cuentas",
+        "enviar comprobante", "envio comprobante", "envío comprobante", "donde envio el comprobante",
+        "a donde envio el comprobante", "a dónde envío el comprobante", "donde mando el comprobante",
+        "formas de pago", "medios de pago", "metodos de pago", "métodos de pago",
+        "pagar el servicio", "cancelar el servicio", "pagar el internet", "cancelar el internet"
+    ]
+    if any(f in msg_limpio for f in frases_directas):
+        return True
+
+    # Preguntas tipo: dónde / cómo / por dónde + pagar / cancelar / transferir / depositar
+    tiene_interrogativo = any(w in msg_limpio for w in ["donde", "dónde", "como", "cómo", "a donde", "a dónde", "por donde", "por dónde"])
+    tiene_verbo_pago = any(w in msg_limpio for w in ["pago", "pagar", "cancelo", "cancelar", "transferir", "transfiero", "deposito", "depositar"])
+    if tiene_interrogativo and tiene_verbo_pago:
+        if not any(w in msg_limpio for w in ["foco rojo", "sin internet", "contratar", "nuevo contrato"]):
+            return True
+
+    # Combinaciones contextuales (ej: "cuenta" + "transferir/pagar/deposito/banco"):
+    tiene_cuenta = any(w in msg_limpio for w in ["cuenta", "cuentas", "cta", "ctas"])
+    tiene_accion_pago = any(w in msg_limpio for w in [
+        "pagar", "pago", "cancelar", "transferir", "transferencia", "deposito", "depósito", "depositar", "banco", "bancos"
+    ])
+    if tiene_cuenta and tiene_accion_pago and not any(w in msg_limpio for w in ["como te llamas", "crear cuenta"]):
+        return True
+
+    return False
+
 def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     """
     Clasifica la intención del usuario basándose prioritariamente en su ÚLTIMO mensaje,
@@ -373,11 +432,15 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
         "que haces", "qué haces", "hola", "buenos dias", "buenas tardes", "buenas noches",
         "saludos", "que tal", "sam", "ayuda"
     ]):
-        # Si no menciona deuda ni falla, es charla general
-        if not any(w in msg_limpio for w in ["debo", "saldo", "foco rojo", "sin internet"]):
+        # Si no menciona deuda, cuentas ni falla, es charla general
+        if not any(w in msg_limpio for w in ["debo", "saldo", "cuenta", "transferir", "foco rojo", "sin internet"]):
             return "general"
 
-    # 2. Intención explícita de CONTRATAR o AGENDAR INSTALACIÓN -> REGISTRAR CLIENTE
+    # 2. Solicitud explícita de Cuentas Bancarias / Medios de Pago / Datos de Transferencia
+    if es_solicitud_cuentas_pago(msg_limpio):
+        return "solicitar_cuentas_pago"
+
+    # 3. Intención explícita de CONTRATAR o AGENDAR INSTALACIÓN -> REGISTRAR CLIENTE
     if any(w in msg_limpio for w in [
         "quiero contratar", "deseo contratar", "agendar instalacion", "agendar instalación",
         "solicitar instalacion", "solicitar instalación", "quiero instalar", "deseo instalar",
@@ -387,7 +450,7 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     ]):
         return "registrar_cliente_potencial"
 
-    # 3. Consultas informativas sobre Planes, Ofertas, Precios, Megas o Servicios -> GENERAL
+    # 4. Consultas informativas sobre Planes, Ofertas, Precios, Megas o Servicios -> GENERAL
     if any(w in msg_limpio for w in [
         "plan", "planes", "precio", "precios", "oferta", "ofertas", "megas", "costo",
         "tarifa", "cuanto cuesta", "cuánto cuesta", "cuanto vale", "cuánto vale",
@@ -396,7 +459,7 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     ]):
         return "general"
 
-    # 4. Consultas explícitas de Pago / Saldo / Deuda personal
+    # 5. Consultas explícitas de Pago / Saldo / Deuda personal
     tiene_cedula = bool(re.search(r'\b\d{10}\b', msg_limpio))
     es_pregunta_deuda = any(w in msg_limpio for w in [
         "cuanto debo", "cuánto debo", "mi saldo", "saldo pendiente", "mi deuda",
@@ -406,7 +469,7 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     if tiene_cedula or es_pregunta_deuda:
         return "consultar_pagos_y_saldos"
 
-    # 5. Soporte técnico / fallas
+    # 6. Soporte técnico / fallas
     if any(w in msg_limpio for w in [
         "foco rojo", "luz roja", "sin internet", "sin servicio", "no tengo internet",
         "no hay internet", "se fue el internet", "sin señal", "sin senal", "luz los",
@@ -414,7 +477,7 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     ]):
         return "soporte_tecnico_foco_rojo"
 
-    # 6. Entretenimiento / películas
+    # 7. Entretenimiento / películas
     if any(w in msg_limpio for w in [
         "pelicula", "película", "serie", "recomendar", "recomendacion", "recomendación",
         "sugerir", "sugerencia", "qué ver", "que ver", "opsatv", "estrenos",
@@ -422,11 +485,11 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     ]):
         return "recomendacion_peliculas_opsatv"
 
-    # 7. Agradecimientos / Cierre
+    # 8. Agradecimientos / Cierre
     if any(w in msg_limpio for w in ["gracias", "muchas gracias", "ya funciona", "ya vale", "perfecto", "listo gracias", "chao", "adios"]):
         return "general"
 
-    # 8. Clasificación con IA si no coincide con las reglas anteriores
+    # 9. Clasificación con IA si no coincide con las reglas anteriores
     if not hay_proveedor_ia():
         return "general"
 
@@ -434,6 +497,7 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
 Tu objetivo es clasificar la intención del usuario basándote prioritariamente en su ÚLTIMO mensaje.
 
 Reglas:
+- Si el usuario pregunta por las cuentas bancarias, números de cuenta, transferencias, depósitos, bancos para pagar, dónde o cómo pagar, responde: "solicitar_cuentas_pago".
 - Si el usuario desea contratar, solicitar instalación, agendar cita de servicio o nuevo contrato, responde: "registrar_cliente_potencial".
 - Si el usuario pregunta por planes de internet, precios, ofertas, megas, servicios o cómo te llamas / quién eres, responde siempre: "general".
 - Si el usuario pregunta cuánto debe de su saldo personal o envía una cédula, responde: "consultar_pagos_y_saldos".
@@ -443,11 +507,11 @@ Reglas:
 
 Último mensaje del usuario: "{msg_limpio}"
 
-Responde únicamente con una de estas opciones: "general", "registrar_cliente_potencial", "consultar_pagos_y_saldos", "soporte_tecnico_foco_rojo", "recomendacion_peliculas_opsatv"."""
+Responde únicamente con una de estas opciones: "solicitar_cuentas_pago", "general", "registrar_cliente_potencial", "consultar_pagos_y_saldos", "soporte_tecnico_foco_rojo", "recomendacion_peliculas_opsatv"."""
 
     try:
         intencion = generar_respuesta_ia(prompt, max_tokens=25, temperature=0.0).lower().strip()
-        valid_intents = ["registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv", "soporte_tecnico_foco_rojo", "general"]
+        valid_intents = ["solicitar_cuentas_pago", "registrar_cliente_potencial", "consultar_pagos_y_saldos", "recomendacion_peliculas_opsatv", "soporte_tecnico_foco_rojo", "general"]
         for intent in valid_intents:
             if intent in intencion:
                 return intent
@@ -860,6 +924,92 @@ Instrucciones:
     # 6. Si no hay datos suficientes, pedir la cédula amablemente
     estados_skills[numero] = "consultar_pagos_y_saldos"
     return "Con mucho gusto te ayudo a consultar tu saldo en OPSATEL 😊 Por favor indícame tu número de cédula (10 dígitos) para buscar tu contrato en el sistema."
+
+# -------------------------------------------------------------
+# SKILL: SOLICITUD DE CUENTAS BANCARIAS Y MEDIOS DE PAGO (IMAGEN Y DATOS)
+# -------------------------------------------------------------
+def obtener_ruta_imagen_cuentas() -> Optional[str]:
+    """Obtiene la ruta absoluta verificada de la imagen oficial de cuentas de pago de Opsatel"""
+    candidatas = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "cuentas_pago.png"),
+        os.path.abspath("uploads/cuentas_pago.png"),
+        os.path.join(os.getcwd(), "uploads", "cuentas_pago.png")
+    ]
+    for c in candidatas:
+        if os.path.exists(c):
+            return c
+    return None
+
+def procesar_cuentas_pago(numero: str, mensaje: str, contexto: str, db: Session) -> Tuple[str, Optional[str]]:
+    """
+    Skill inteligente para responder de manera personalizada sobre las cuentas de pago
+    oficiales de OPSATEL, adjuntando la imagen oficial y los datos para copiar.
+    Retorna (texto_respuesta, ruta_imagen).
+    """
+    img_path = obtener_ruta_imagen_cuentas()
+
+    # 1. Identificar si quien escribe es un cliente registrado
+    cliente = None
+    if db:
+        try:
+            cedula_extraida = extraer_cedula(mensaje)
+            if cedula_extraida:
+                cliente = db.query(models.Cliente).filter(models.Cliente.cedula == cedula_extraida).first()
+                if not cliente:
+                    ced_alt = cedula_extraida[1:] if cedula_extraida.startswith("0") else ("0" + cedula_extraida)
+                    cliente = db.query(models.Cliente).filter(models.Cliente.cedula == ced_alt).first()
+
+            if not cliente:
+                cliente = buscar_cliente_por_celular(numero, db)
+                if not cliente:
+                    adm = es_numero_administrador(numero, db)
+                    if adm and adm.numero:
+                        cliente = buscar_cliente_por_celular(adm.numero, db)
+        except Exception as e_db:
+            print(f"[SAM Chatbot] Aviso buscando cliente en BD para cuentas de pago: {e_db}")
+            cliente = None
+
+    # 2. Generar saludo y contexto según el cliente
+    if cliente and cliente.nombre:
+        partes = [p.capitalize() for p in cliente.nombre.strip().split() if p]
+        primer_nombre = partes[0] if partes else "Cliente"
+        saldo_val = float(cliente.saldo or 0.0)
+
+        if saldo_val > 0:
+            saludo = (
+                f"¡Hola *{primer_nombre}*! Con mucho gusto te ayudo 😊\n"
+                f"Te informo que tu saldo pendiente actual es de *${saldo_val:.2f}* (Plan: *{cliente.plan or 'Contratado'}*).\n\n"
+                f"Aquí tienes la imagen y los datos de nuestras cuentas bancarias oficiales de *OPSATEL* para que puedas realizar tu pago o transferencia:"
+            )
+        else:
+            saludo = (
+                f"¡Hola *{primer_nombre}*! Con mucho gusto te ayudo 😊\n"
+                f"Te comento que te encuentras *al día con tus pagos* en OPSATEL 🎉\n\n"
+                f"De igual manera, aquí tienes la imagen y los datos de nuestras cuentas bancarias oficiales por si deseas realizar algún abono o guardarlas:"
+            )
+    else:
+        saludo = (
+            f"¡Hola! Bienvenido/a a *OPSATEL* 😊 Con mucho gusto te comparto la imagen y los datos de nuestras cuentas bancarias oficiales para pagos, transferencias y depósitos:"
+        )
+
+    datos_cuentas = (
+        f"{saludo}\n\n"
+        f"🟡 *BANCO PICHINCHA*\n"
+        f"• *Tipo*: Cuenta de Ahorros\n"
+        f"• *Número*: `2206388858`\n\n"
+        f"🟢 *COOPERATIVA JEP*\n"
+        f"• *Tipo*: Cuenta de Ahorros\n"
+        f"• *Número*: `406060337400`\n\n"
+        f"👤 *A nombre de*: BRYAN ANDRES SOLANO HERRERA\n"
+        f"🆔 *Cédula*: `0105905251`\n"
+        f"📧 *Correo*: `opsatel@gmail.com`\n\n"
+        f"📌 *IMPORTANTE*:\n"
+        f"Recuerda enviar tu comprobante de pago los *10 primeros días del mes* a nuestro WhatsApp de pagos:\n"
+        f"📲 *0987149097*\n\n"
+        f"_💡 Tip: Puedes presionar sobre los números de cuenta para copiarlos directamente a tu banca móvil. ¡Gracias por confiar en OPSATEL!_ ✨"
+    )
+
+    return datos_cuentas, img_path
 
 # -------------------------------------------------------------
 # SKILL: RECOMENDACIÓN DE PELÍCULAS Y SERIES OPSATV
@@ -1574,6 +1724,7 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
     
     # 7. Ejecutar la lógica según el skill y rol del usuario
     response_text = ""
+    media_a_enviar = None
 
     # Detección de comandos y permisos exclusivos para Administradores
     es_comando_admin = admin_obj and (
@@ -1588,10 +1739,16 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
 
     if es_comando_admin:
         response_text = procesar_comando_administrador(numero, mensaje, contexto, db, admin_obj)
+    elif skill_activo == "solicitar_cuentas_pago":
+        estados_skills[numero] = None
+        response_text, media_a_enviar = procesar_cuentas_pago(numero, mensaje, contexto, db)
     elif skill_activo == "registrar_cliente_potencial":
         estados_skills[numero] = "registrar_cliente_potencial"
         response_text = procesar_registro_cliente(numero, mensaje, contexto, db)
     elif skill_activo == "consultar_pagos_y_saldos":
+        # Si el usuario además pregunta por cuentas de pago o transferir, adjuntar imagen
+        if es_solicitud_cuentas_pago(mensaje):
+            media_a_enviar = obtener_ruta_imagen_cuentas()
         response_text = procesar_consulta_pago(numero, mensaje, contexto, db, ya_solicitado)
     elif skill_activo == "recomendacion_peliculas_opsatv":
         estados_skills[numero] = None
@@ -1606,18 +1763,21 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
         response_text = procesar_comando_administrador(numero, mensaje, contexto, db, admin_obj)
     else:
         estados_skills[numero] = None
+        if es_solicitud_cuentas_pago(mensaje):
+            media_a_enviar = obtener_ruta_imagen_cuentas()
         response_text = procesar_chat_general(numero, mensaje, contexto, db)
 
     # 8. Guardar la respuesta generada en el historial
     guardar_mensaje_historial(numero, "assistant", response_text)
     try:
         from routes.whatsapp import registrar_mensaje_chat
-        registrar_mensaje_chat(db, numero, "asistente", response_text)
+        tipo_msg = "multimedia" if media_a_enviar else "texto"
+        registrar_mensaje_chat(db, numero, "asistente", response_text, tipo=tipo_msg)
     except Exception as e_chat:
         print(f"[SAM Chatbot] Error registrando respuesta SAM: {e_chat}")
     
     # 9. Despachar el mensaje por WhatsApp usando el servicio unificado
-    whatsapp_service.send_whatsapp_message(numero, response_text)
+    whatsapp_service.send_whatsapp_message(numero, response_text, media_path=media_a_enviar)
     
     return response_text
 

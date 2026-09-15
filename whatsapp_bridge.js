@@ -1,4 +1,4 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcodeTerminal = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const express = require('express');
@@ -8,7 +8,8 @@ const fs = require('fs');
 const app = express();
 const port = process.env.PORT || 3001;
 
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 let clientStatus = 'INITIALIZING'; // INITIALIZING, QR_READY, CONNECTED, DISCONNECTED
 let activeQrCode = null; // Base64 Data URL for the QR code image
@@ -320,12 +321,13 @@ app.get('/qr', (req, res) => {
     });
 });
 
-// Send Message
-app.post('/send', async (req, res) => {
-    const { number, message } = req.body;
+// Send Message (Supports both plain text and media with caption)
+async function handleSendMessage(req, res) {
+    const { number, message, caption, mediaPath, mediaBase64, mimetype, filename } = req.body;
+    const finalCaption = caption !== undefined ? caption : (message || '');
 
-    if (!number || !message) {
-        return res.status(400).json({ success: false, error: 'Los campos number y message son obligatorios.' });
+    if (!number || (!message && !finalCaption && !mediaPath && !mediaBase64)) {
+        return res.status(400).json({ success: false, error: 'El campo number y al menos un mensaje o media son obligatorios.' });
     }
 
     if (clientStatus !== 'CONNECTED') {
@@ -381,14 +383,40 @@ app.post('/send', async (req, res) => {
             }
         }
 
-        // 2. Enviar mensaje con captura de advertencias de serialización (común en destinatarios @lid)
+        // Preparar Media si fue provisto
+        let mediaToSend = null;
+        if (mediaPath && fs.existsSync(mediaPath)) {
+            try {
+                mediaToSend = MessageMedia.fromFilePath(mediaPath);
+                console.log(`[WhatsApp Bridge] Cargado MessageMedia desde archivo: ${mediaPath}`);
+            } catch (eMedia) {
+                console.warn(`[WhatsApp Bridge] Error cargando MessageMedia desde archivo (${mediaPath}): ${eMedia.message}`);
+            }
+        } else if (mediaBase64) {
+            try {
+                mediaToSend = new MessageMedia(mimetype || 'image/png', mediaBase64, filename || 'archivo.png');
+                console.log(`[WhatsApp Bridge] Creado MessageMedia desde payload base64 (tipo: ${mimetype || 'image/png'})`);
+            } catch (eBase64) {
+                console.warn(`[WhatsApp Bridge] Error creando MessageMedia desde base64: ${eBase64.message}`);
+            }
+        }
+
+        // 2. Enviar mensaje o media con captura de advertencias de serialización (común en destinatarios @lid)
         let sendSuccess = false;
         let messageId = 'sent';
 
         try {
-            const sendPromise = client.sendMessage(targetChatId, message);
+            let sendPromise;
+            if (mediaToSend) {
+                const sendOpts = {};
+                if (finalCaption) sendOpts.caption = finalCaption;
+                sendPromise = client.sendMessage(targetChatId, mediaToSend, sendOpts);
+            } else {
+                sendPromise = client.sendMessage(targetChatId, finalCaption || message);
+            }
+
             const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout de 15 segundos al enviar mensaje por WhatsApp.')), 15000)
+                setTimeout(() => reject(new Error('Timeout de 20 segundos al enviar por WhatsApp.')), 20000)
             );
 
             const response = await Promise.race([sendPromise, timeoutPromise]);
@@ -425,7 +453,10 @@ app.post('/send', async (req, res) => {
             error: err.message || 'Error desconocido al enviar mensaje'
         });
     }
-});
+}
+
+app.post('/send', handleSendMessage);
+app.post('/send-media', handleSendMessage);
 
 // Limpiar archivos de bloqueo residuales de Chromium en el volumen montado
 const path = require('path');
