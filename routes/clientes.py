@@ -3,6 +3,7 @@ from database import engine
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 import os
 import shutil
+import re
 # pyrefly: ignore [missing-import]
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -1792,16 +1793,24 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
 
     # Obtener planes y precios
     planes = db.query(models.PlanInternet).all()
-    planes_precios = {p.nombre: float(p.precio) for p in planes}
-    planes_megas = {p.nombre: int(p.megas or 0) for p in planes}
+    planes_precios = {p.nombre: float(p.precio) for p in planes if p.nombre}
+    planes_megas = {}
+    for p in planes:
+        if p.nombre:
+            planes_megas[p.nombre.strip().upper()] = int(p.megas or 0)
     
-    # ── FILTRAR SOLO CLIENTES CON FACTURA Y CÓDIGO VÁLIDO ──
+    # ── FILTRAR SOLO CLIENTES CON FACTURA Y CÓDIGO VÁLIDO (INCLUYE CORTESÍA TOTAL CON FACTURA) ──
     clientes_con_factura = []
     clientes_con_factura_ids = set()
     for c in clientes:
         fact_raw = str(c.facturas or "").strip().upper()
         cod_raw = str(c.cod or "").strip()
-        if fact_raw == "SI" and cod_raw:
+        is_cortesia = bool(getattr(c, 'cortesia_total', False))
+
+        tiene_factura_normal = (fact_raw == "SI" and bool(cod_raw))
+        es_cortesia_con_factura = is_cortesia and (fact_raw == "SI" or bool(cod_raw))
+
+        if tiene_factura_normal or es_cortesia_con_factura:
             clientes_con_factura.append(c)
             clientes_con_factura_ids.add(c.id)
 
@@ -1810,8 +1819,18 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     for c in clientes_con_factura:
         id_str = f"C{c.id:02d}" if c.id is not None else ""
         pago_mensual = float(c.pago_mensual or 0.00)
-        confirmar = True if pago_mensual > 0 else False
-        megas_val = f"{planes_megas.get(c.plan, 0)}MB" if (confirmar and c.plan and c.plan in planes_megas) else "FALSE"
+        is_cortesia = bool(getattr(c, 'cortesia_total', False))
+        confirmar = True if (pago_mensual > 0 or is_cortesia) else False
+
+        plan_clean = str(c.plan or "").strip().upper()
+        megas_num = planes_megas.get(plan_clean, 0)
+        if megas_num == 0 and plan_clean:
+            m = re.search(r'(\d+)', plan_clean)
+            if m:
+                megas_num = int(m.group(1))
+
+        plan_val = f"{megas_num}MB" if megas_num > 0 else ""
+        cod_val = str(c.cod or "").strip() or id_str
 
         data.append({
             "ID": id_str,
@@ -1820,12 +1839,11 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
             "DIRECTION": c.direccion or "",
             "CEL": str(c.celular or "").strip(),
             "PARISH": c.parroquia or "",
-            "PLAN": c.plan or "",
+            "PLAN": plan_val,
             f"FACT {month_name_en}": "SI",
             "ESTADO": c.estado or "Pendiente",
             "CONFIRMAR": confirmar,
-            f"MEGAS {month_name_en}": megas_val,
-            "FACTURAS": str(c.cod or "").strip(),
+            "FACTURAS": cod_val,
         })
         
     df_clientes = pd.DataFrame(data)

@@ -15,6 +15,7 @@ import datetime
 import pandas as pd
 import tempfile
 import os
+import re
 
 router = APIRouter(prefix="/balance", tags=["balance"])
 
@@ -1352,8 +1353,11 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     # Si no existe reporte cerrado o es el mes actual en curso, lo generamos dinámicamente:
     clientes = db.query(models.Cliente).all()
     planes = db.query(models.PlanInternet).all()
-    planes_precios = {p.nombre: float(p.precio) for p in planes}
-    planes_megas = {p.nombre: int(p.megas or 0) for p in planes}
+    planes_precios = {p.nombre: float(p.precio) for p in planes if p.nombre}
+    planes_megas = {}
+    for p in planes:
+        if p.nombre:
+            planes_megas[p.nombre.strip().upper()] = int(p.megas or 0)
     
     # ── NOMBRES DE MES EN ESPAÑOL Y INGLÉS ──
     month_num = parts[1] if len(parts) == 2 else "01"
@@ -1370,13 +1374,18 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     }.get(month_num, "Mes")
     mes_label = f"{month_name_es} {parts[0]}" if len(parts) == 2 else mes
 
-    # ── FILTRAR SOLO CLIENTES CON FACTURA Y CÓDIGO VÁLIDO ──
+    # ── FILTRAR SOLO CLIENTES CON FACTURA Y CÓDIGO VÁLIDO (INCLUYE CORTESÍA TOTAL CON FACTURA) ──
     clientes_con_factura = []
     clientes_con_factura_ids = set()
     for c in clientes:
         fact_raw = str(c.facturas or "").strip().upper()
         cod_raw = str(c.cod or "").strip()
-        if fact_raw == "SI" and cod_raw:
+        is_cortesia = bool(getattr(c, 'cortesia_total', False))
+
+        tiene_factura_normal = (fact_raw == "SI" and bool(cod_raw))
+        es_cortesia_con_factura = is_cortesia and (fact_raw == "SI" or bool(cod_raw))
+
+        if tiene_factura_normal or es_cortesia_con_factura:
             clientes_con_factura.append(c)
             clientes_con_factura_ids.add(c.id)
 
@@ -1385,9 +1394,20 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     for c in clientes_con_factura:
         id_str = f"C{c.id:02d}" if c.id is not None else ""
         pago_mensual = float(c.pago_mensual or 0.00)
-        confirmar = True if pago_mensual > 0 else False
-        megas_val = f"{planes_megas.get(c.plan, 0)}MB" if (confirmar and c.plan and c.plan in planes_megas) else "FALSE"
-        
+        is_cortesia = bool(getattr(c, 'cortesia_total', False))
+        confirmar = True if (pago_mensual > 0 or is_cortesia) else False
+
+        # Extraer megas del plan (en lugar de poner el nombre comercial del plan como 'LAG CERO')
+        plan_clean = str(c.plan or "").strip().upper()
+        megas_num = planes_megas.get(plan_clean, 0)
+        if megas_num == 0 and plan_clean:
+            m = re.search(r'(\d+)', plan_clean)
+            if m:
+                megas_num = int(m.group(1))
+
+        plan_val = f"{megas_num}MB" if megas_num > 0 else ""
+        cod_val = str(c.cod or "").strip() or id_str
+
         data_clientes.append({
             "ID": id_str,
             "RUC / CEDULA": str(c.cedula or "").strip(),
@@ -1395,12 +1415,11 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
             "DIRECTION": c.direccion or "",
             "CEL": str(c.celular or "").strip(),
             "PARISH": c.parroquia or "",
-            "PLAN": c.plan or "",
+            "PLAN": plan_val,
             f"FACT {month_name_en}": "SI",
             "ESTADO": c.estado or "Pendiente",
             "CONFIRMAR": confirmar,
-            f"MEGAS {month_name_en}": megas_val,
-            "FACTURAS": str(c.cod or "").strip()
+            "FACTURAS": cod_val
         })
     df_clientes = pd.DataFrame(data_clientes)
     if not df_clientes.empty:
@@ -1895,7 +1914,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
                     elif any(kw in col_name for kw in ["PRECIO", "MONTO", "VALOR", "SALDO", "REUNIDO", "PICHINCHA", "EFECTIVO", "JEP", "DIFERENCIA", "GENERACION", "TOTAL"]):
                         cell.number_format = '$#,##0.00'
                 else:
-                    if any(kw in col_name for kw in ["ID", "FECHA", "ESTADO", "CELULAR", "CONFIRMAR", "MEGAS", "RUC", "CEDULA"]):
+                    if any(kw in col_name for kw in ["ID", "FECHA", "ESTADO", "CELULAR", "CONFIRMAR", "MEGAS", "RUC", "CEDULA"]) or (col_name == "PLAN" and ws.title == "Facturación Clientes"):
                         cell.alignment = align_center
                     else:
                         cell.alignment = align_left
