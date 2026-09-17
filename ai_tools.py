@@ -120,24 +120,52 @@ def consultar_estado_cliente(telefono: str, db: Session) -> Dict[str, Any]:
         }
 
     try:
-        # Búsqueda por coincidencia en celulares (exacta o sufijo de 9 dígitos)
-        cliente = None
-        if len(tel_limpio) >= 9:
-            sufijo = tel_limpio[-9:]
-            cliente = db.query(models.Cliente).filter(
-                models.Cliente.celular.like(f"%{sufijo}%")
-            ).first()
+        from sqlalchemy import func, or_
+        digits = re.sub(r'\D', '', str(telefono or ""))
+        if not digits or len(digits) < 6:
+            return {
+                "success": True,
+                "encontrado": False,
+                "mensaje": f"El número '{telefono}' es demasiado corto o inválido para buscar en la base de datos."
+            }
 
+        ultimos_8 = digits[-8:] if len(digits) >= 8 else digits
+        ultimos_9 = digits[-9:] if len(digits) >= 9 else digits
+
+        # 1. Búsqueda SQL directa limpiando espacios, guiones y puntos en models.Cliente.celular
+        col_clean = func.replace(func.replace(func.replace(models.Cliente.celular, ' ', ''), '-', ''), '.', '')
+        cliente = db.query(models.Cliente).filter(
+            or_(
+                col_clean.like(f"%{ultimos_8}%"),
+                col_clean.like(f"%{ultimos_9}%"),
+                col_clean == digits,
+                models.Cliente.celular.like(f"%{ultimos_8}%"),
+                models.Cliente.celular.like(f"%{ultimos_9}%")
+            )
+        ).first()
+
+        # 2. Si no se encontró por celular y tiene 10 dígitos, intentar por cédula
+        if not cliente and len(digits) == 10:
+            cliente = db.query(models.Cliente).filter(models.Cliente.cedula == digits).first()
+
+        # 3. Búsqueda exhaustiva en memoria eliminando caracteres especiales de cada celular en la BD
         if not cliente:
-            cliente = db.query(models.Cliente).filter(
-                models.Cliente.celular == tel_limpio
-            ).first()
+            todos_clientes = db.query(models.Cliente).all()
+            for c in todos_clientes:
+                if c.celular:
+                    c_digits = re.sub(r'\D', '', str(c.celular))
+                    if c_digits and (c_digits == digits or (len(c_digits) >= 8 and c_digits[-8:] == ultimos_8)):
+                        cliente = c
+                        break
 
         if not cliente:
             return {
                 "success": True,
                 "encontrado": False,
-                "mensaje": f"No se encontró ningún cliente registrado con el número {telefono}."
+                "mensaje": (
+                    f"No se encontró ningún cliente registrado en la base de datos con el celular o cédula '{telefono}'. "
+                    f"Por favor solicite al usuario que proporcione el número celular registrado o el número de cédula del titular del servicio."
+                )
             }
 
         # Determinación del estado financiero

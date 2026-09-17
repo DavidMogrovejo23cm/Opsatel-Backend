@@ -70,7 +70,11 @@ def procesar_mensaje_con_herramientas(
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "system",
-            "content": f"[METADATA DEL REMITENTE]: El cliente está escribiendo desde el número de WhatsApp '{numero}'. Usa este número si necesitas consultar sus datos."
+            "content": (
+                f"[METADATA DEL REMITENTE]: El cliente está enviando un mensaje desde el número '{numero}'. "
+                "La identidad, titularidad y estado del cliente se determinan exclusivamente por su registro en la BASE DE DATOS "
+                "usando la herramienta 'consultar_estado_cliente'. NO te fíes de nombres de perfiles o contactos de WhatsApp."
+            )
         }
     ]
 
