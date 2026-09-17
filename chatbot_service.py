@@ -17,13 +17,52 @@ from system_prompt import SYSTEM_PROMPT
 logger = logging.getLogger("opsatel.chatbot_service")
 
 # Modelos recomendados de Groq compatibles con Tool Calling nativo
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
 FALLBACK_MODELS = [
     DEFAULT_MODEL,
-    "llama3-70b-8192",
     "llama-3.1-70b-versatile",
-    "llama-3.1-8b-instant"
+    "llama-3.1-8b-instant",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "openai/gpt-oss-20b",
+    "groq/compound-mini"
 ]
+
+_active_groq_model = None
+
+
+def resolver_modelo_groq(client: Groq) -> str:
+    """
+    Resuelve dinámicamente un modelo de Groq activo y disponible en la cuenta.
+    Evita caídas por Error 404 (modelo inexistente o sin permisos).
+    """
+    global _active_groq_model
+    if _active_groq_model:
+        return _active_groq_model
+
+    # Si el usuario configuró GROQ_MODEL explícitamente en el entorno
+    env_model = os.getenv("GROQ_MODEL")
+    if env_model and env_model.strip():
+        _active_groq_model = env_model.strip()
+        return _active_groq_model
+
+    try:
+        models_resp = client.models.list()
+        live_ids = [m.id for m in models_resp.data if m.id]
+        logger.info(f"[Chatbot SAM] Modelos reportados en cuenta Groq: {live_ids}")
+        for pref in FALLBACK_MODELS:
+            if pref in live_ids:
+                _active_groq_model = pref
+                logger.info(f"[Chatbot SAM] Modelo activo resuelto: {_active_groq_model}")
+                return _active_groq_model
+        if live_ids:
+            _active_groq_model = live_ids[0]
+            return _active_groq_model
+    except Exception as e_list:
+        logger.warning(f"[Chatbot SAM] No se pudo listar modelos ({e_list}). Usando {DEFAULT_MODEL}")
+
+    _active_groq_model = DEFAULT_MODEL
+    return _active_groq_model
 
 
 def obtener_cliente_groq() -> Groq:
@@ -154,22 +193,37 @@ def procesar_mensaje_con_herramientas(
     # Agregar el mensaje actual del cliente
     messages.append({"role": "user", "content": mensaje})
 
-    # Modelo a utilizar
-    model_to_use = DEFAULT_MODEL
+    # Resolver modelo dinámicamente según permisos de la cuenta
+    model_to_use = resolver_modelo_groq(client)
+    candidatos_modelos = [model_to_use] + [m for m in FALLBACK_MODELS if m != model_to_use]
 
     # Ciclo de ejecución de herramientas (Soporta múltiples pasos: ej. consultar cliente -> consultar saturación -> responder)
     for iteracion in range(max_tool_iterations):
         try:
-            logger.info(f"[Chatbot SAM] [Pase {iteracion + 1}] Enviando solicitud a Groq (Modelo: {model_to_use})...")
-            
-            chat_completion = client.chat.completions.create(
-                model=model_to_use,
-                messages=messages,
-                tools=TOOLS_SCHEMA,
-                tool_choice="auto",
-                temperature=0.4,
-                max_tokens=600
-            )
+            chat_completion = None
+            for cand in candidatos_modelos:
+                try:
+                    logger.info(f"[Chatbot SAM] [Pase {iteracion + 1}] Enviando solicitud a Groq (Modelo: {cand})...")
+                    chat_completion = client.chat.completions.create(
+                        model=cand,
+                        messages=messages,
+                        tools=TOOLS_SCHEMA,
+                        tool_choice="auto",
+                        temperature=0.4,
+                        max_tokens=600
+                    )
+                    model_to_use = cand
+                    break
+                except Exception as e_cand:
+                    err_msg = str(e_cand).lower()
+                    if "404" in err_msg or "does not exist" in err_msg or "access" in err_msg:
+                        logger.warning(f"[Chatbot SAM] Modelo '{cand}' no disponible (404/permisos). Probando alternativo...")
+                        continue
+                    else:
+                        raise e_cand
+
+            if not chat_completion:
+                raise RuntimeError("Ninguno de los modelos candidatos de Groq estuvo disponible en su cuenta.")
 
             response_message = chat_completion.choices[0].message
             tool_calls = response_message.tool_calls
@@ -177,7 +231,7 @@ def procesar_mensaje_con_herramientas(
             # CASO A: Groq no solicitó herramientas o ya terminó de recopilar datos -> Retornar respuesta
             if not tool_calls:
                 texto_respuesta = response_message.content or ""
-                logger.info("[Chatbot SAM] Respuesta final de texto generada con éxito.")
+                logger.info(f"[Chatbot SAM] Respuesta final generada exitosamente con modelo: {model_to_use}")
                 return texto_respuesta.strip()
 
             # CASO B: Groq solicitó la ejecución de una o más herramientas
@@ -227,11 +281,11 @@ def procesar_mensaje_con_herramientas(
 
         except Exception as e:
             logger.error(f"[Chatbot SAM] Error durante ciclo de Groq con herramientas: {e}")
-            # Si el modelo principal falla (por rate limit o deprecación), probar fallback básico
             return (
                 "Estimado cliente, en este momento estoy verificando su línea con el área técnica. "
                 "Por favor permítame un momento mientras procesamos su solicitud."
             )
+
 
     # Si se alcanzó el límite de iteraciones, solicitar la respuesta final de texto forzada
     try:
