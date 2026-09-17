@@ -17,15 +17,16 @@ from system_prompt import SYSTEM_PROMPT
 logger = logging.getLogger("opsatel.chatbot_service")
 
 # Modelos recomendados de Groq compatibles con Tool Calling nativo
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "groq/compound-mini")
 FALLBACK_MODELS = [
     DEFAULT_MODEL,
-    "llama-3.1-70b-versatile",
-    "llama-3.1-8b-instant",
-    "llama3-70b-8192",
-    "llama3-8b-8192",
+    "groq/compound-mini",
+    "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
-    "groq/compound-mini"
+    "groq/compound",
+    "qwen/qwen3.8-27b",
+    "llama-3.1-70b-versatile",
+    "llama-3.1-8b-instant"
 ]
 
 _active_groq_model = None
@@ -66,14 +67,15 @@ def resolver_modelo_groq(client: Groq) -> str:
 
 
 def obtener_cliente_groq() -> Groq:
-    """Instancia el cliente oficial de Groq con la API Key configurada."""
+    """Instancia el cliente oficial de Groq con timeout estricto para evitar retrasos hacia WhatsApp Bridge."""
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
         raise ValueError(
             "GROQ_API_KEY no configurada en las variables de entorno (.env). "
             "Por favor, configure GROQ_API_KEY para habilitar el chatbot."
         )
-    return Groq(api_key=api_key)
+    return Groq(api_key=api_key, max_retries=1, timeout=18.0)
+
 
 
 def resolver_identidad_whatsapp(numero_raw: str, jid_original: str = "") -> Dict[str, Any]:
@@ -190,8 +192,9 @@ def procesar_mensaje_con_herramientas(
             if rol in ["user", "assistant"] and contenido:
                 messages.append({"role": rol, "content": contenido})
 
-    # Agregar el mensaje actual del cliente
-    messages.append({"role": "user", "content": mensaje})
+    # Agregar el mensaje actual del cliente solo si no fue ya incluido
+    if not messages or messages[-1].get("content") != mensaje:
+        messages.append({"role": "user", "content": mensaje})
 
     # Resolver modelo dinámicamente según permisos de la cuenta
     model_to_use = resolver_modelo_groq(client)

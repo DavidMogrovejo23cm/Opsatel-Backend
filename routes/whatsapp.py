@@ -925,7 +925,10 @@ def webhook_mensaje_whatsapp(
             registrar_mensaje_chat(db, jid_destino, "cliente", mensaje, nombre_remitente=payload.nombre or "")
             return {"success": True, "response": "", "pausado": True}
 
-        # 4. Registrar mensaje del cliente en el historial persistente de chat
+        # 4. Obtener historial previo de conversación (antes de registrar el mensaje entrante actual)
+        historial_previo = list(sam_bot_service.historial_conversaciones.get(jid_destino, []))
+
+        # Registrar mensaje del cliente en el historial persistente de chat
         registrar_mensaje_chat(db, jid_destino, "cliente", mensaje, nombre_remitente=payload.nombre or "")
         sam_bot_service.guardar_mensaje_historial(jid_destino, "user", mensaje)
 
@@ -959,13 +962,11 @@ def webhook_mensaje_whatsapp(
         # 7. ORQUESTACIÓN PRINCIPAL CON IA (GROQ TOOL CALLING)
         # Bypasea el viejo "Skill Router" para que Groq identifique al cliente en MySQL
         # antes de ejecutar cualquier reinicio o generación de ticket
-        historial_reciente = sam_bot_service.historial_conversaciones.get(jid_destino, [])
-
         response_text = procesar_mensaje_con_herramientas(
             mensaje=mensaje,
             numero=tel_real,
             db=db,
-            historial_mensajes=historial_reciente,
+            historial_mensajes=historial_previo,
             metadata_identidad=identidad["metadata_ia"]
         )
 
