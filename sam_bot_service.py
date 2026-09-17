@@ -544,11 +544,14 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     if tiene_cedula or es_pregunta_deuda:
         return "consultar_pagos_y_saldos"
 
-    # 6. Soporte técnico / fallas
+    # 6. Soporte técnico / fallas / lentitud / mal internet
     if any(w in msg_limpio for w in [
         "foco rojo", "luz roja", "sin internet", "sin servicio", "no tengo internet",
         "no hay internet", "se fue el internet", "sin señal", "sin senal", "luz los",
-        "los rojo", "parpadea", "modem", "módem", "router", "falla", "fallando", "desconectado", "cable roto"
+        "los rojo", "parpadea", "modem", "módem", "router", "falla", "fallando", "desconectado", "cable roto",
+        "lento", "lentitud", "internet lento", "muy lento", "mal internet", "pésimo internet", "pesimo internet",
+        "se corta", "intermitente", "no carga", "baja velocidad", "cae el internet", "problema con el internet",
+        "servicio lento", "no me carga", "no navega", "intermitencia"
     ]):
         return "soporte_tecnico_foco_rojo"
 
@@ -1205,134 +1208,316 @@ def procesar_recomendacion_peliculas(numero: str, mensaje: str, contexto: str) -
         )
 
 # -------------------------------------------------------------
-# SKILL: SOPORTE TÉCNICO E INSPECCIÓN DE FOCO ROJO / SIN SERVICIO
+# SKILL: SOPORTE TÉCNICO INTELIGENTE (DIAGNÓSTICO INTERNO Y ATENCIÓN HUMANA)
 # -------------------------------------------------------------
-PROMPT_SOPORTE_TECNICO = """# Skill: Soporte Técnico Inteligente — Diagnóstico de Servicio y Foco Rojo
+NUMERO_TECNICO_GUARDIA = "593988804142"
 
-Eres SAM, el especialista de soporte técnico virtual de OPSATEL.
-Tu personalidad es extremadamente amable, empática, paciente, clara y 100% humana.
-Comprendes perfectamente lo molesto que es quedarse sin internet y tu objetivo es guiar al usuario paso a paso con calidez y tranquilidad para diagnosticar y solucionar el problema.
+def analizar_potencia_optica(potencia_str: str) -> dict:
+    """
+    Analiza la potencia óptica (dBm) según estándares de Opsatel:
+    - Rango Óptimo: -16.0 a -25.0 dBm (Excelente señal de fibra)
+    - Rango Límite: -25.01 a -27.0 dBm (Señal levemente atenuada)
+    - Rango Crítico: peor a -27.0 dBm (< -27.0) o nula/desconectada
+    """
+    if not potencia_str:
+        return {
+            "valor": None,
+            "estado": "critica",
+            "descripcion": "Sin lectura de potencia registrada en el sistema",
+            "es_optima": False,
+            "es_critica": True
+        }
+    clean = re.sub(r'[^\d.-]', '', str(potencia_str).replace(',', '.')).strip()
+    try:
+        val = float(clean)
+    except ValueError:
+        return {
+            "valor": None,
+            "estado": "desconocida",
+            "descripcion": f"Valor no numérico ({potencia_str})",
+            "es_optima": False,
+            "es_critica": False
+        }
 
-## GUÍA DE DIAGNÓSTICO ESTRUCTURADA:
+    if -25.0 <= val <= -16.0:
+        return {
+            "valor": val,
+            "estado": "optima",
+            "descripcion": f"{val:.2f} dBm (Señal óptica excelente y óptima)",
+            "es_optima": True,
+            "es_critica": False
+        }
+    elif -27.0 <= val < -25.0:
+        return {
+            "valor": val,
+            "estado": "al_limite",
+            "descripcion": f"{val:.2f} dBm (Señal en el límite permisible)",
+            "es_optima": False,
+            "es_critica": False
+        }
+    elif val < -27.0:
+        return {
+            "valor": val,
+            "estado": "critica",
+            "descripcion": f"{val:.2f} dBm (Potencia crítica fuera de rango)",
+            "es_optima": False,
+            "es_critica": True
+        }
+    else:  # val > -16.0
+        return {
+            "valor": val,
+            "estado": "alta",
+            "descripcion": f"{val:.2f} dBm (Potencia muy alta)",
+            "es_optima": True,
+            "es_critica": False
+        }
 
-1. **Empatía y Calidez Inicial**:
-   - Muestra comprensión sincera por la molestia (ej: "Entiendo perfectamente lo frustrante que es quedarse sin internet, no te preocupes, vamos a revisarlo juntos paso a paso para ayudarte 😊").
+def ejecutar_diagnostico_cliente(cliente, db: Session) -> dict:
+    """
+    Ejecuta el diagnóstico interno completo del cliente:
+    1. Verificación de corte por falta de pago (BD y MikroTik Address List).
+    2. Verificación de Potencia Óptica (-16 a -25 dBm óptima; peor a -27 dBm crítica).
+    3. Prueba de Ping a través de MikroTik / red hacia cliente.ip.
+    4. Determinación de gravedad (es_grave: True si potencia < -27 dBm o sin respuesta de ping).
+    """
+    resultado = {
+        "cortado_por_pago": False,
+        "motivo_corte": "",
+        "potencia": {"valor": None, "estado": "desconocida", "es_optima": False, "es_critica": False, "descripcion": "Sin datos"},
+        "ping": {"online": False, "packet_loss": 100, "avg_rtt": None, "detail": "Sin IP asignada"},
+        "es_grave": False
+    }
+    if not cliente:
+        return resultado
 
-2. **Diferenciación de Equipos (1 o 2 equipos)**:
-   - Pregunta o identifica si en el domicilio tienen **1 solo equipo** (la caja/ONT donde entra el cable delgado de fibra óptica directamente) o **2 equipos** (la ONT principal conectada por cable de red a un Router Wi-Fi secundario como TP-Link, Mercusys o Tenda).
+    # 1. Chequeo de corte por falta de pago en BD
+    total_deuda = 0.0
+    try:
+        deuda_info = obtener_deuda_total_cliente(cliente)
+        total_deuda = deuda_info.get("total", 0.0)
+    except Exception:
+        pass
 
-3. **Diagnóstico de Luces / Foco Rojo (`LOS` vs Router)**:
-   - Explica de forma clara y humana qué significa la luz roja:
-     * Si la luz roja dice **`LOS`** (o tiene el ícono de una antena/mundo) en la ONT principal de fibra: Significa que hay una interrupción o pérdida de señal en el cable de fibra óptica.
-     * Si la luz roja o sin internet ocurre en el Router secundario: Puede ser un falso contacto en el cable ethernet (UTP) entre ambos equipos.
+    estado_cli = str(cliente.estado or "").strip().lower()
+    if estado_cli in ["moroso", "suspendido"]:
+        resultado["cortado_por_pago"] = True
+        resultado["motivo_corte"] = f"Estado: {cliente.estado} (Saldo: ${total_deuda:.2f})"
 
-4. **Comprobación Física de Cables**:
-   - Pide revisar suavemente que el cable delgado de fibra (generalmente con conector amarillo o verde) esté firme y sin doblarse o estar aplastado en la ONT.
-   - Si tienen 2 equipos, pedir verificar que el cable de red (ethernet) que conecta la ONT con el Router secundario esté bien conectado en ambas entradas.
+    # 2. Chequeo de Potencia Óptica
+    potencia_res = analizar_potencia_optica(getattr(cliente, "potencia", None))
+    resultado["potencia"] = potencia_res
 
-5. **Reinicio Eléctrico de 30 Segundos (Power Cycle)**:
-   - Explica cómo desconectar la fuente de poder/tomacorriente de los equipos durante 30 segundos exactos y volver a conectar.
-   - Pide esperar entre 2 y 3 minutos a que las luces se estabilicen (las luces `PON` o `Power` deben quedar en verde fijo).
+    # 3. Conexión a MikroTik del nodo del cliente para corte y Ping
+    olt_cfg = None
+    if getattr(cliente, "nodo", None):
+        is_sayausi = "SAYAUS" in str(cliente.nodo).upper()
+        olt_cfg = db.query(models.OLTConfig).filter(
+            models.OLTConfig.nodo_asociado == cliente.nodo,
+            models.OLTConfig.active == True
+        ).first()
+        if not olt_cfg:
+            olt_cfg = db.query(models.OLTConfig).filter(
+                models.OLTConfig.active == True
+            ).first()
 
-6. **Cierre Empático y Derivación Humana (SIN creación automática de tickets)**:
-   - Si el usuario indica que probó los pasos y el foco rojo o la falla persiste, dile de forma muy cálida y atenta que se comunique con nuestro equipo de soporte técnico o que un asesor técnico humano lo asistirá para coordinar la revisión del enlace.
+    ip_cliente = getattr(cliente, "ip", None)
+    if ip_cliente and olt_cfg and olt_cfg.mikrotik_host:
+        from network.adapters.mikrotik import MikroTikAdapter
+        try:
+            with MikroTikAdapter(
+                host=olt_cfg.mikrotik_host,
+                username=olt_cfg.mikrotik_username,
+                password=olt_cfg.mikrotik_password,
+                port=olt_cfg.mikrotik_port or 8728,
+                timeout=3,
+                max_retries=1
+            ) as mt:
+                if mt.is_ip_in_suspended_list(ip_cliente):
+                    resultado["cortado_por_pago"] = True
+                    resultado["motivo_corte"] = f"IP activa en Address List de corte en MikroTik ({ip_cliente})"
+                
+                ping_res = mt.ping(ip_cliente, count=3)
+                resultado["ping"] = ping_res
+        except Exception as e_mt:
+            print(f"[SAM Chatbot] Advertencia consultando MikroTik para IP {ip_cliente}: {e_mt}")
+            from network.adapters.mikrotik import MikroTikAdapter
+            resultado["ping"] = MikroTikAdapter._fallback_os_ping(ip_cliente, count=2)
+    elif ip_cliente:
+        from network.adapters.mikrotik import MikroTikAdapter
+        resultado["ping"] = MikroTikAdapter._fallback_os_ping(ip_cliente, count=2)
 
-## REGLAS DE ORO:
-- Responde de forma muy fluida y natural adaptándote a lo que el usuario te vaya respondiendo en el chat.
-- Usa lenguaje sencillo sin tecnicismos complejos.
-- Usa emoticonos amigables apropiados para WhatsApp (🌐, 🔌, 💡, 🔴, 🟢, ✨, 😊).
-- Evita párrafos gigantescos; da instrucciones claras, amables y por pasos.
+    # 4. Determinar si es algo grave
+    # Falla grave = Potencia crítica (< -27 dBm) O Ping sin respuesta (100% pérdida)
+    # (Excluyendo si es un corte comercial por pago)
+    if not resultado["cortado_por_pago"]:
+        if potencia_res["es_critica"] or not resultado["ping"]["online"]:
+            resultado["es_grave"] = True
+
+    return resultado
+
+def notificar_alerta_tecnico_guardia(cliente, diagnostico: dict, mensaje_cliente: str, db: Session):
+    """
+    Envía reporte detallado de falla grave al WhatsApp del departamento técnico (098 880 4142)
+    y crea la orden de trabajo en models.HojaRuta.
+    SOLO se invoca si el caso es catalogado como GRAVE.
+    """
+    try:
+        import pytz
+        from datetime import datetime
+        EC_TZ = pytz.timezone('America/Guayaquil')
+        ahora = datetime.now(EC_TZ)
+        fecha_hoy = ahora.strftime("%Y-%m-%d")
+        hora_actual = ahora.strftime("%H:%M")
+
+        nombre_c = cliente.nombre if cliente else "Cliente no registrado"
+        ip_c = cliente.ip if cliente and cliente.ip else "N/A"
+        nodo_c = cliente.nodo if cliente and cliente.nodo else "N/A"
+        dir_c = cliente.direccion if cliente and cliente.direccion else "N/A"
+        parroquia_c = cliente.parroquia if cliente and cliente.parroquia else "N/A"
+        cel_c = cliente.celular if cliente and cliente.celular else "N/A"
+        pot_desc = diagnostico.get("potencia", {}).get("descripcion", "N/A")
+        ping_desc = diagnostico.get("ping", {}).get("detail", "N/A")
+
+        # 1. Crear Orden en Hoja de Ruta
+        ticket = models.HojaRuta(
+            fecha=fecha_hoy,
+            tecnico="Por Asignar",
+            hora=hora_actual,
+            cliente_id=cliente.id if cliente else None,
+            nombre_cliente=nombre_c,
+            ubicacion_cliente=f"{dir_c} (Sector/Nodo: {nodo_c})".strip(),
+            celular_cliente=cel_c,
+            actividad="SOPORTE TÉCNICO - FALLA CRÍTICA DETECTADA POR SAM",
+            observacion=f"Potencia: {pot_desc} | Ping: {ping_desc} | Mensaje cliente: {mensaje_cliente}",
+            parroquia=parroquia_c,
+            estado="Pendiente"
+        )
+        db.add(ticket)
+        db.commit()
+        print(f"[SAM Chatbot] [OK] Creada orden HojaRuta #{ticket.id} para falla grave de {nombre_c}")
+
+        # 2. Enviar WhatsApp a número técnico de guardia 098 880 4142
+        alerta_tecnico = (
+            f"🚨 *[ALERTA TÉCNICA CRÍTICA — OPSATEL]*\n\n"
+            f"⚠️ *Se detectó una falla grave en el servicio de un cliente:*\n\n"
+            f"👤 *Cliente*: {nombre_c}\n"
+            f"📱 *Teléfono*: {cel_c}\n"
+            f"📍 *Nodo / Sector*: {nodo_c} / {parroquia_c}\n"
+            f"🏠 *Dirección*: {dir_c}\n"
+            f"🌐 *IP*: `{ip_c}`\n\n"
+            f"📊 *DIAGNÓSTICO EN TIEMPO REAL:*\n"
+            f"• *Potencia Óptica*: {pot_desc}\n"
+            f"• *Prueba de Ping*: {ping_desc}\n\n"
+            f"💬 *Falla reportada*: \"{mensaje_cliente}\"\n"
+            f"🎫 *Ticket Hoja de Ruta*: #{ticket.id}\n"
+            f"⏰ *Hora*: {ahora.strftime('%d/%m/%Y %I:%M %p')}\n\n"
+            f"_Por favor gestionar la revisión técnica de este enlace con prioridad._"
+        )
+        whatsapp_service.send_whatsapp_message(NUMERO_TECNICO_GUARDIA, alerta_tecnico)
+        print(f"[SAM Chatbot] [OK] Alerta técnica enviada exitosamente a guardia ({NUMERO_TECNICO_GUARDIA}) para cliente {nombre_c}")
+    except Exception as e_notif:
+        print(f"[SAM Chatbot] Error notificando al técnico de guardia: {e_notif}")
+        db.rollback()
+
+PROMPT_SOPORTE_TECNICO = """Eres SAM, el asesor de soporte técnico virtual de OPSATEL (empresa de telecomunicaciones e internet por fibra óptica en Ecuador).
+Tu personalidad es extraordinariamente amable, empática, tranquila, educada y 100% humana.
+Tu objetivo es escuchar al cliente con paciencia, indagar paso a paso y darle la mejor orientación.
+
+DIRECTRICES DE ATENCIÓN TÉCNICA (SÉ PRECISO, CÁLIDO Y HUMANO):
+1. REGLA DE ORO - CERO TECNICISMOS AL CLIENTE:
+   - NUNCA menciones al cliente valores numéricos de potencia óptica (no digas "dBm", "-22", "-27", etc.).
+   - NUNCA menciones términos de ingeniería de redes (no digas "ping", "latencia", "packet loss", "MikroTik", "address list").
+   - Habla siempre en lenguaje claro, sencillo y tranquilizador de persona a persona.
+
+2. INDAGACIÓN PASO A PASO (UNA SOLA PREGUNTA A LA VEZ):
+   - Al inicio cuando el cliente reporta lentitud o mal servicio:
+     Dile con calma: "Deme un momento y reviso su servicio..."
+     Hazle UNA SOLA pregunta amable para indagar el problema específico (ej: preguntarle desde hace cuánto tiempo nota el inconveniente y si se le corta la señal o si son videos/páginas específicas que no cargan).
+     NUNCA hagas múltiples preguntas juntas ni interrogatorios largos.
+
+3. CASO NO GRAVE (POTENCIA Y SEÑAL ÓPTIMAS):
+   - Cuando el diagnóstico interno muestra que la señal y el router están óptimos:
+     Concluye con calidez y tranquilidad:
+     "Luego de revisar su servicio en nuestra central, concluimos que la señal de fibra óptica llega de forma estable y óptima a su hogar."
+   - Indícale con amabilidad que realice una prueba rápida en casa:
+     1) Desconectar el router de la corriente eléctrica durante 30 segundos y volverlo a conectar.
+     2) Reiniciar también el Wi-Fi o reiniciar los dispositivos celulares y computadoras conectados.
+   - Pídele amablemente que lo pruebe y te confirme si nota la mejoría para seguir al tanto.
+   - ¡NO avises al departamento técnico en este caso! Es solo una optimización en el domicilio.
+
+4. CASO GRAVE (POTENCIA CRÍTICA O EQUIPO SIN RESPUESTA / SEÑAL CORTADA):
+   - Calma al cliente con suma empatía:
+     "Luego de revisar su servicio concluimos que se detectó una interrupción o anomalía en la señal hacia su domicilio. Ya informé directamente a nuestro departamento técnico con su reporte para que lo atiendan con prioridad."
+   - Bríndale tranquilidad de que su caso ya está siendo gestionado.
+
+5. CASO SUSPENSIÓN POR PAGO PENDIENTE:
+   - Si el diagnóstico indica corte por saldo pendiente:
+     Infórmale con respeto y cortesía que su servicio presenta una suspensión temporal por un valor pendiente, y pregúntale amablemente si desea las cuentas bancarias para su reactivación. NUNCA lo hagas reiniciar equipos si la causa es administrativa de pago.
+
+6. FORMATO PARA WHATSAPP:
+   - Mensajes breves (máximo 2 a 4 líneas), cálidos, agradables y sin muros de texto.
+   - Usa emojis amigables con moderación (😊, 🔌, 👍, ✨).
 """
 
 def procesar_soporte_tecnico(numero: str, mensaje: str, contexto: str, db: Session) -> str:
-    # Detectar si el cliente indica que la falla persiste o requiere visita técnica
+    # 1. Buscar cliente por número de celular
+    cliente = buscar_cliente_por_celular(numero, db)
+
+    # 2. Ejecutar diagnóstico interno en tiempo real (MikroTik, Potencia Óptica y Cortes)
+    diag = ejecutar_diagnostico_cliente(cliente, db)
+
+    # 3. Detectar persistencia de falla tras pruebas
     msg_lower = mensaje.lower()
     palabras_persistencia = [
         "sigue", "persiste", "no vale", "no funciona", "no sirvió", "no sirvio",
-        "continúa", "continua", "sigue el foco rojo", "sigue la luz roja", "sigue igual",
-        "no tengo internet", "no hay internet", "ayuda", "técnico", "tecnico", "visita"
+        "continúa", "continua", "sigue igual", "sigue lento", "sigue la falla",
+        "ya reinicié", "ya reinicie", "sigue sin valer"
     ]
-    falla_persistente = any(p in msg_lower for p in palabras_persistencia) and len(contexto.split("\n")) > 2
+    falla_persiste_tras_prueba = any(p in msg_lower for p in palabras_persistencia) and len(contexto.split("\n")) >= 3
 
-    # Intentar obtener datos del cliente si existe en BD
-    cliente = buscar_cliente_por_celular(numero, db)
-    
-    if falla_persistente:
-        # 1. Crear Orden de Trabajo en Hoja de Ruta automáticamente
-        try:
-            import pytz
-            from datetime import datetime
-            ECUADOR_TZ = pytz.timezone('America/Guayaquil')
-            fecha_hoy = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d")
-            hora_actual = datetime.now(ECUADOR_TZ).strftime("%H:%M")
+    # 4. Si es caso grave confirmado O si el cliente indica que la falla persiste tras reiniciar equipos:
+    # Alertar automáticamente al departamento técnico (098 880 4142)
+    if diag["es_grave"] or falla_persiste_tras_prueba:
+        notificar_alerta_tecnico_guardia(cliente, diag, mensaje, db)
 
-            cliente_id = cliente.id if cliente else None
-            nombre_c = cliente.nombre if cliente else f"Cliente WhatsApp ({numero})"
-            ubicacion_c = f"{cliente.direccion or ''} (Sector: {cliente.nodo or 'N/A'})".strip() if cliente else "Por definir"
-            parroquia_c = cliente.parroquia if cliente else "N/A"
-            celular_c = cliente.celular if cliente else numero
+    # 5. Formular contexto para la IA
+    nombre_limpio = " ".join((cliente.nombre or "").strip().split()) if cliente else ""
+    primer_nombre = nombre_limpio.split()[0].capitalize() if nombre_limpio else "estimado cliente"
 
-            ticket = models.HojaRuta(
-                fecha=fecha_hoy,
-                tecnico="Por Asignar",
-                hora=hora_actual,
-                cliente_id=cliente_id,
-                nombre_cliente=nombre_c,
-                ubicacion_cliente=ubicacion_c,
-                celular_cliente=celular_c,
-                actividad="SOPORTE TÉCNICO - FOCO ROJO / SIN SERVICIO",
-                observacion=f"Reporte de Falla de Red vía WhatsApp. Mensaje cliente: {mensaje}",
-                parroquia=parroquia_c,
-                estado="Pendiente"
-            )
-            db.add(ticket)
-            db.commit()
-            print(f"[SAM Chatbot] 🛠️ Creada orden de trabajo HojaRuta #{ticket.id} para {nombre_c}")
+    info_diagnostico_ia = f"""
+DATOS CONFIDENCIALES DEL CLIENTE (SOLO PARA TU ANÁLISIS INTERNO):
+- Cliente identificado: {"Sí (" + cliente.nombre + ")" if cliente else "No identificado (pedir nombre o cédula si se requiere)"}
+- Primer nombre: {primer_nombre}
+- Sector/Nodo: {cliente.nodo if cliente else 'N/A'}
+- ¿Presenta corte por pago pendiente?: {"SÍ (" + diag["motivo_corte"] + ")" if diag["cortado_por_pago"] else "NO"}
+- Estado de fibra óptica: {"ÓPTIMA (Potencia excelente entre -16 y -25 dBm)" if diag["potencia"]["es_optima"] else ("CRÍTICA (Potencia peor a -27 dBm o sin señal)" if diag["potencia"]["es_critica"] else "Aceptable")}
+- Estado del equipo en red: {"EN LÍNEA Y RESPONDE" if diag["ping"]["online"] else "NO RESPONDE PING (Apagado o desconectado)"}
+- Nivel de gravedad: {"GRAVE (Ya se alertó a técnicos de guardia)" if (diag["es_grave"] or falla_persiste_tras_prueba) else "NO GRAVE / NORMAL (Manejar con calma, indagación y reinicio de router y celulares)"}
+- Falla persiste tras prueba: {"Sí, cliente indica que sigue igual" if falla_persiste_tras_prueba else "En proceso de indagación/prueba inicial"}
 
-            # 2. Notificar ÚNICAMENTE a Administradores con rol 'admin_total' por WhatsApp
-            admins = db.query(models.WhatsAppAdministrador).filter(
-                models.WhatsAppAdministrador.activo == True,
-                (models.WhatsAppAdministrador.permisos == "admin_total") | (models.WhatsAppAdministrador.permisos == None)
-            ).all()
-            alerta_msg = (
-                f"🚨 *[ALERTA TÉCNICA — FOCO ROJO / SIN SERVICIO]*\n\n"
-                f"👤 *Cliente*: {nombre_c}\n"
-                f"📱 *Teléfono*: {celular_c}\n"
-                f"📍 *Nodo/Parroquia*: {cliente.nodo if cliente else 'N/A'} / {parroquia_c}\n"
-                f"🔴 *Falla Reportada*: El cliente indica que la luz roja/falla persiste tras reinicio.\n"
-                f"🛠️ *Acción*: Se ha registrado automáticamente la orden en la *Hoja de Ruta*."
-            )
-            for admin in admins:
-                if admin.numero:
-                    try:
-                        whatsapp_service.send_whatsapp_message(admin.numero, alerta_msg)
-                    except Exception as err_send:
-                        print(f"[SAM Chatbot] Error notificando admin {admin.numero}: {err_send}")
+Conversación actual con el cliente:
+{contexto}
 
-        except Exception as ticket_err:
-            print(f"[SAM Chatbot] Error registrando ticket de soporte: {ticket_err}")
-            db.rollback()
+Mensaje actual del cliente: "{mensaje}"
+"""
 
     prompt_con_datos = f"""{PROMPT_SOPORTE_TECNICO}
-
-Información del Cliente en Sistema:
-- Cliente identificado: {"Sí (" + cliente.nombre + ")" if cliente else "No"}
-- Falla persistente detectada: {"Sí (Orden agendada en Hoja de Ruta y notificada a técnicos)" if falla_persistente else "En etapa de diagnóstico"}
-
-Conversación actual:
-{contexto}
+{info_diagnostico_ia}
 """
 
     try:
-        return generar_respuesta_ia(prompt_con_datos, max_tokens=450, temperature=0.4)
+        return generar_respuesta_ia(prompt_con_datos, max_tokens=220, temperature=0.3)
     except Exception as e:
         print(f"[SAM Chatbot] Error en soporte técnico: {e}")
-        return (
-            "🌐 Entiendo perfectamente lo frustrante que es quedarse sin internet. Vamos a solucionarlo juntos paso a paso 😊\n\n"
-            "1️⃣ Primero, cuéntame si en tu domicilio tienes **1 solo equipo** (la cajita principal donde entra la fibra) o **2 equipos** (la cajita principal + un router Wi-Fi secundario como TP-Link o Mercusys).\n\n"
-            "2️⃣ Revisa si en la cajita principal ves una luz roja encendida que diga **LOS**.\n\n"
-            "🔌 **Prueba rápida**: Desconecta los equipos del tomacorriente durante 30 segundos, vuelve a conectarlos y espera 3 minutos a que se estabilicen las luces."
-        )
+        if diag["cortado_por_pago"]:
+            return f"¡Hola *{primer_nombre}*! Al revisar su servicio observo que presenta una suspensión temporal por un valor pendiente. ¿Desea que le comparta nuestras cuentas bancarias para ayudarle con su reactivación? 😊"
+        elif diag["es_grave"]:
+            return f"¡Hola *{primer_nombre}*! Luego de revisar su servicio concluimos que se detectó una interrupción en la señal hacia su domicilio. Ya informé directamente a nuestro departamento técnico para su revisión prioritaria."
+        else:
+            return (
+                f"¡Hola *{primer_nombre}*! Luego de revisar su servicio en nuestra central, concluimos que la señal de fibra óptica llega de forma estable a su hogar 😊\n"
+                f"Para mejorar la velocidad, por favor desconecte el router de la corriente 30 segundos, vuelva a conectarlo y reinicie también el Wi-Fi de sus celulares. Pruébelo y me comenta si nota la mejoría."
+            )
 
 # -------------------------------------------------------------
 # CHAT GENERAL (PERSONALIDAD HUMANA E INTELIGENTE DE SAM)

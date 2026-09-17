@@ -300,4 +300,104 @@ class MikroTikAdapter:
             logger.warning(f"Error removiendo IP {address} de address-list '{list_name}': {e}")
             return False
 
+    def is_ip_in_suspended_list(self, address: str) -> bool:
+        """Verifica si una IP se encuentra en alguna lista de corte o suspensión de MikroTik"""
+        try:
+            resource = self._get_resource('/ip/firewall/address-list')
+            items = resource.get(address=address)
+            for item in items:
+                nombre_lista = str(item.get('list', '')).upper()
+                if any(k in nombre_lista for k in ['SUSPEND', 'CORTE', 'MOROSO', 'PAGO']):
+                    return True
+            return False
+        except Exception as e:
+            logger.warning(f"Error verificando si IP {address} está en lista de suspensión: {e}")
+            return False
+
+    def ping(self, address: str, count: int = 3) -> Dict[str, Any]:
+        """
+        Ejecuta ping hacia una IP a través de MikroTik RouterOS API.
+        Retorna diccionario con: online (bool), received (int), sent (int), packet_loss (int), avg_rtt (ms o None), detail (str).
+        """
+        try:
+            if not self.is_connected or not self.api:
+                self.connect()
+
+            # Intentar comando ping a través del API de RouterOS
+            try:
+                res = self.api.get_binary_resource('/').call('ping', {
+                    'address': str(address),
+                    'count': str(count),
+                    'interval': '1'
+                })
+            except Exception:
+                # Variante alternativa de recurso ping en RouterOS API
+                ping_resource = self._get_resource('/ping')
+                res = ping_resource.call('ping', {'address': str(address), 'count': str(count)})
+
+            if not res:
+                return self._fallback_os_ping(address, count)
+
+            received = 0
+            times = []
+            for item in res:
+                time_val = item.get(b'time') or item.get('time')
+                status_val = item.get(b'status') or item.get('status')
+                status_str = str(status_val).lower() if status_val else ""
+                if time_val is not None or "echo" in status_str:
+                    received += 1
+                    if time_val is not None:
+                        t_clean = re.sub(r'[^\d.]', '', str(time_val))
+                        try:
+                            times.append(float(t_clean))
+                        except ValueError:
+                            pass
+
+            loss = int(((count - received) / count) * 100) if count > 0 else 100
+            avg_rtt = round(sum(times) / len(times), 1) if times else None
+            is_online = received > 0
+
+            return {
+                "online": is_online,
+                "sent": count,
+                "received": received,
+                "packet_loss": loss,
+                "avg_rtt": avg_rtt,
+                "detail": f"{received}/{count} paquetes recibidos ({loss}% pérdida)"
+            }
+        except Exception as e:
+            logger.warning(f"Ping MikroTik falló para {address}: {e}. Intentando ping de red local...")
+            return self._fallback_os_ping(address, count)
+
+    @staticmethod
+    def _fallback_os_ping(address: str, count: int = 2) -> Dict[str, Any]:
+        """Ping del sistema operativo como fallback seguro cuando MikroTik no responde"""
+        import platform
+        import subprocess
+        try:
+            param = '-n' if platform.system().lower() == 'windows' else '-c'
+            timeout_param = '-w' if platform.system().lower() == 'windows' else '-W'
+            cmd = ['ping', param, str(count), timeout_param, '1000', str(address)]
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors='replace', timeout=4)
+            output = proc.stdout.lower()
+            online = proc.returncode == 0 and ("ttl=" in output or "bytes from" in output)
+            return {
+                "online": online,
+                "sent": count,
+                "received": count if online else 0,
+                "packet_loss": 0 if online else 100,
+                "avg_rtt": None,
+                "detail": "Responde ping en red" if online else "Sin respuesta de ping"
+            }
+        except Exception:
+            return {
+                "online": False,
+                "sent": count,
+                "received": 0,
+                "packet_loss": 100,
+                "avg_rtt": None,
+                "detail": "Sin respuesta de ping"
+            }
+
+
 
