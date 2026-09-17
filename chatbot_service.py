@@ -1,0 +1,173 @@
+"""
+Servicio Central de Chatbot SAM con Groq API y Function Calling nativo.
+Orquesta el ciclo multi-turno de mensajes, ejecución de herramientas y
+respuestas contextuales sin alucinaciones para WhatsApp.
+"""
+
+import os
+import json
+import logging
+from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
+from groq import Groq
+
+from ai_tools import TOOLS_SCHEMA, ejecutar_herramienta
+from system_prompt import SYSTEM_PROMPT
+
+logger = logging.getLogger("opsatel.chatbot_service")
+
+# Modelos recomendados de Groq compatibles con Tool Calling nativo
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+FALLBACK_MODELS = [
+    DEFAULT_MODEL,
+    "llama3-70b-8192",
+    "llama-3.1-70b-versatile",
+    "llama-3.1-8b-instant"
+]
+
+
+def obtener_cliente_groq() -> Groq:
+    """Instancia el cliente oficial de Groq con la API Key configurada."""
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError(
+            "GROQ_API_KEY no configurada en las variables de entorno (.env). "
+            "Por favor, configure GROQ_API_KEY para habilitar el chatbot."
+        )
+    return Groq(api_key=api_key)
+
+
+def procesar_mensaje_con_herramientas(
+    mensaje: str,
+    numero: str,
+    db: Session,
+    historial_mensajes: Optional[List[Dict[str, Any]]] = None,
+    max_tool_iterations: int = 3
+) -> str:
+    """
+    Función controladora del ciclo de vida del LLM con Function Calling.
+    
+    1. Prepara el historial con el system_prompt y contexto del cliente.
+    2. Envía la solicitud a Groq incluyendo el esquema de tools.
+    3. Si Groq responde con 'tool_calls', ejecuta el dispatcher contra el backend.
+    4. Inyecta el resultado con rol 'tool' y realiza el segundo pase a Groq.
+    5. Retorna la respuesta final en lenguaje natural para WhatsApp.
+    
+    Args:
+        mensaje: Texto entrante enviado por el cliente en WhatsApp.
+        numero: Teléfono del remitente (WhatsApp JID/número limpio).
+        db: Sesión activa de base de datos SQLAlchemy.
+        historial_mensajes: Conversación previa en formato [{"role": "user"|"assistant", "content": "..."}].
+        max_tool_iterations: Límite de ejecuciones secuenciales de herramientas por turno.
+    
+    Returns:
+        Texto final de respuesta redactado por SAM para enviar al cliente.
+    """
+    client = obtener_cliente_groq()
+
+    # Construcción de la lista inicial de mensajes
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "system",
+            "content": f"[METADATA DEL REMITENTE]: El cliente está escribiendo desde el número de WhatsApp '{numero}'. Usa este número si necesitas consultar sus datos."
+        }
+    ]
+
+    # Incorporar historial previo de la conversación si se proporciona
+    if historial_mensajes:
+        for msg in historial_mensajes[-6:]:  # Mantener los últimos 6 turnos para eficiencia
+            rol = msg.get("role", "user")
+            contenido = msg.get("content", "")
+            if rol in ["user", "assistant"] and contenido:
+                messages.append({"role": rol, "content": contenido})
+
+    # Agregar el mensaje actual del cliente
+    messages.append({"role": "user", "content": mensaje})
+
+    # Modelo a utilizar
+    model_to_use = DEFAULT_MODEL
+
+    # Ciclo de ejecución de herramientas (Soporta múltiples pasos: ej. consultar cliente -> consultar saturación -> responder)
+    for iteracion in range(max_tool_iterations):
+        try:
+            logger.info(f"[Chatbot SAM] [Pase {iteracion + 1}] Enviando solicitud a Groq (Modelo: {model_to_use})...")
+            
+            chat_completion = client.chat.completions.create(
+                model=model_to_use,
+                messages=messages,
+                tools=TOOLS_SCHEMA,
+                tool_choice="auto",
+                temperature=0.4,
+                max_tokens=600
+            )
+
+            response_message = chat_completion.choices[0].message
+            tool_calls = response_message.tool_calls
+
+            # CASO A: Groq no solicitó herramientas o ya terminó de recopilar datos -> Retornar respuesta
+            if not tool_calls:
+                texto_respuesta = response_message.content or ""
+                logger.info("[Chatbot SAM] Respuesta final de texto generada con éxito.")
+                return texto_respuesta.strip()
+
+            # CASO B: Groq solicitó la ejecución de una o más herramientas
+            logger.info(f"[Chatbot SAM] Groq solicitó {len(tool_calls)} llamada(s) a herramienta(s).")
+            
+            # Anexar el mensaje del asistente con las tool_calls al historial
+            messages.append(response_message)
+
+            # Ejecutar cada herramienta solicitada
+            for tool_call in tool_calls:
+                function_name = tool_call.function.name
+                arguments_str = tool_call.function.arguments or "{}"
+                
+                try:
+                    arguments = json.loads(arguments_str)
+                except json.JSONDecodeError:
+                    logger.error(f"[Chatbot SAM] Error decodificando argumentos JSON: {arguments_str}")
+                    arguments = {}
+
+                # Si la función es consultar_estado_cliente y no enviaron teléfono, autocompletar con el número del remitente
+                if function_name == "consultar_estado_cliente" and not arguments.get("telefono"):
+                    arguments["telefono"] = numero
+
+                logger.info(f"[Chatbot SAM] Ejecutando tool '{function_name}' con args: {arguments}")
+                
+                # Ejecutar la lógica real del backend usando el Router/Dispatcher
+                resultado = ejecutar_herramienta(
+                    nombre_herramienta=function_name,
+                    argumentos=arguments,
+                    db=db
+                )
+
+                # Agregar la respuesta de la herramienta con rol 'tool' y el ID correspondiente
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": function_name,
+                    "content": json.dumps(resultado, ensure_ascii=False)
+                })
+
+            # El ciclo continúa al siguiente pase para que Groq procese los datos de la herramienta
+
+        except Exception as e:
+            logger.error(f"[Chatbot SAM] Error durante ciclo de Groq con herramientas: {e}")
+            # Si el modelo principal falla (por rate limit o deprecación), probar fallback básico
+            return (
+                "Estimado cliente, en este momento estoy verificando su línea con el área técnica. "
+                "Por favor permítame un momento mientras procesamos su solicitud."
+            )
+
+    # Si se alcanzó el límite de iteraciones, solicitar la respuesta final de texto forzada
+    try:
+        final_completion = client.chat.completions.create(
+            model=model_to_use,
+            messages=messages,
+            temperature=0.5,
+            max_tokens=500
+        )
+        return (final_completion.choices[0].message.content or "").strip()
+    except Exception as e:
+        logger.error(f"[Chatbot SAM] Error generando respuesta de cierre tras tools: {e}")
+        return "Su solicitud ha sido recibida y el equipo técnico está al tanto para brindarle asistencia."
