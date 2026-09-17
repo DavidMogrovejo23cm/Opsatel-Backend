@@ -24,19 +24,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "consultar_estado_cliente",
-            "description": (
-                "Busca al cliente en la base de datos MySQL por su número de teléfono celular. "
-                "Devuelve su estado financiero (al día o en mora), saldo pendiente, plan contratado, "
-                "nodo de red asociado, dirección IP y datos de su módem ONT (puerto GPON y ONT ID). "
-                "DEBE ejecutarse SIEMPRE como primer paso ante cualquier consulta o reclamo."
-            ),
+            "description": "Busca cliente en MySQL por celular. Retorna estado financiero, saldo, plan, IP, ONT ID y puerto GPON.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "telefono": {
-                        "type": "string",
-                        "description": "Número de teléfono celular del cliente a consultar (ej: '0988804142', '593988804142')."
-                    }
+                    "telefono": {"type": "string", "description": "Celular del cliente (ej: '0995796562')."}
                 },
                 "required": ["telefono"]
             }
@@ -46,18 +38,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "consultar_saturacion_libreqos",
-            "description": (
-                "Consulta en tiempo real al servicio de LibreQoS si la dirección IP del cliente "
-                "presenta saturación de ancho de banda, alto tráfico o latencia elevada. "
-                "Utilízala cuando el cliente reporte lentitud, desconexiones o mal servicio."
-            ),
+            "description": "Consulta tráfico, saturación y latencia en tiempo real en LibreQoS para la IP del cliente.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "ip_cliente": {
-                        "type": "string",
-                        "description": "Dirección IP asignada al cliente (ej: '10.10.20.15' o '192.168.100.25')."
-                    }
+                    "ip_cliente": {"type": "string", "description": "IP asignada al cliente."}
                 },
                 "required": ["ip_cliente"]
             }
@@ -67,26 +52,13 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "reiniciar_ont",
-            "description": (
-                "Envía la orden directa al OLT Daemon / interfaz SSH/Telnet de la OLT para reiniciar "
-                "físicamente el módem (ONT) del cliente. Solo debe ejecutarse si el cliente está al día "
-                "y se ha diagnosticado que requiere un reinicio físico del equipo."
-            ),
+            "description": "Ordena a la OLT reiniciar físicamente el módem (ONT) del cliente al día.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "id_olt": {
-                        "type": "integer",
-                        "description": "ID numérico de la OLT en el sistema asociada al nodo del cliente (ej: 1 o 2)."
-                    },
-                    "puerto": {
-                        "type": "string",
-                        "description": "Puerto GPON donde está conectado el cliente (ej: '0/0/1' o '0/1/0')."
-                    },
-                    "ont_id": {
-                        "type": "string",
-                        "description": "Identificador ONT asignado al cliente dentro del puerto GPON (ej: '12')."
-                    }
+                    "id_olt": {"type": "integer", "description": "ID de la OLT (1 o 2)."},
+                    "puerto": {"type": "string", "description": "Puerto GPON (ej: '0/0/1')."},
+                    "ont_id": {"type": "string", "description": "ONT ID (ej: '12')."}
                 },
                 "required": ["id_olt", "puerto", "ont_id"]
             }
@@ -96,23 +68,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "generar_ticket_soporte",
-            "description": (
-                "Genera una orden formal de soporte técnico (Ticket / Hoja de Ruta) en la base de datos "
-                "y envía una alerta técnica inmediata por WhatsApp al personal técnico de guardia. "
-                "DEBE ejecutarse obligatoriamente cuando un cliente IDENTIFICADO presente un daño físico "
-                "(cable roto, luz roja LOS) o cuando el reinicio de ONT no solucione su lentitud o falla."
-            ),
+            "description": "Genera ticket de soporte en BD y alerta por WhatsApp al técnico de guardia ante daño físico o falla persistente.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "cliente_id": {
-                        "type": "integer",
-                        "description": "ID numérico del cliente en la base de datos MySQL (obtenido previamente mediante consultar_estado_cliente)."
-                    },
-                    "sintoma_reportado": {
-                        "type": "string",
-                        "description": "Descripción clara y detallada del fallo técnico o daño físico reportado por el cliente."
-                    }
+                    "cliente_id": {"type": "integer", "description": "ID numérico del cliente en BD."},
+                    "sintoma_reportado": {"type": "string", "description": "Descripción del daño o falla técnica."}
                 },
                 "required": ["cliente_id", "sintoma_reportado"]
             }
@@ -122,28 +83,13 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "consultar_pelicula_o_serie",
-            "description": (
-                "Consulta información detallada y real de películas o series (título, año, sinopsis, "
-                "reparto, director, duración, género y calificación IMDb) usando OMDb API. "
-                "Utilízala obligatoriamente cuando el cliente solicite recomendaciones, consulte de qué trata "
-                "una producción o pida entretenimiento para el servicio OPSATV."
-            ),
+            "description": "Consulta ficha técnica real (título, año, sinopsis, reparto, director, IMDb) en OMDb API para OPSATV.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "titulo": {
-                        "type": "string",
-                        "description": "Nombre o título de la película o serie a consultar (ej: 'Inception', 'Breaking Bad', 'Gladiator')."
-                    },
-                    "anio": {
-                        "type": "string",
-                        "description": "Año de estreno opcional si el cliente lo especificó (ej: '2010')."
-                    },
-                    "tipo": {
-                        "type": "string",
-                        "enum": ["movie", "series", "episode"],
-                        "description": "Tipo de contenido opcional: 'movie' para películas o 'series' para series."
-                    }
+                    "titulo": {"type": "string", "description": "Título de la película o serie."},
+                    "anio": {"type": "string", "description": "Año opcional."},
+                    "tipo": {"type": "string", "enum": ["movie", "series", "episode"], "description": "Tipo opcional."}
                 },
                 "required": ["titulo"]
             }

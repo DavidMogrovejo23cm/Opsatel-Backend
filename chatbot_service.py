@@ -6,6 +6,8 @@ respuestas contextuales sin alucinaciones para WhatsApp.
 
 import os
 import json
+import re
+import time
 import logging
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
@@ -21,6 +23,7 @@ DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 FALLBACK_MODELS = [
     DEFAULT_MODEL,
     "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
     "openai/gpt-oss-120b",
     "llama-3.3-70b-versatile",
     "llama-3.1-70b-versatile",
@@ -183,13 +186,13 @@ def procesar_mensaje_con_herramientas(
         }
     ]
 
-    # Incorporar historial previo de la conversación si se proporciona
+    # Incorporar historial previo de la conversación si se proporciona (máx 3 turnos para ahorro de tokens)
     if historial_mensajes:
-        for msg in historial_mensajes[-6:]:  # Mantener los últimos 6 turnos para eficiencia
+        for msg in historial_mensajes[-3:]:
             rol = msg.get("role", "user")
             contenido = msg.get("content", "")
             if rol in ["user", "assistant"] and contenido:
-                messages.append({"role": rol, "content": contenido})
+                messages.append({"role": rol, "content": str(contenido)[:350]})
 
     # Agregar el mensaje actual del cliente solo si no fue ya incluido
     if not messages or messages[-1].get("content") != mensaje:
@@ -212,14 +215,39 @@ def procesar_mensaje_con_herramientas(
                         tools=TOOLS_SCHEMA,
                         tool_choice="auto",
                         temperature=0.4,
-                        max_tokens=600
+                        max_tokens=400
                     )
                     model_to_use = cand
                     _active_groq_model = cand
                     break
                 except Exception as e_cand:
                     err_msg = str(e_cand).lower()
-                    if any(k in err_msg for k in ["404", "does not exist", "access", "tool calling", "not supported", "400"]):
+                    # Manejo inteligente de Rate Limit (429 TPM)
+                    if "429" in err_msg or "rate_limit" in err_msg or "tokens per minute" in err_msg or "tokens" in err_msg:
+                        wait_match = re.search(r'try again in (\d+(\.\d+)?)s', err_msg)
+                        wait_s = float(wait_match.group(1)) if wait_match else 0.0
+                        if 0 < wait_s <= 2.5:
+                            logger.info(f"[Chatbot SAM] Esperando {wait_s + 0.3:.2f}s por límite TPM de {cand}...")
+                            time.sleep(wait_s + 0.3)
+                            try:
+                                chat_completion = client.chat.completions.create(
+                                    model=cand,
+                                    messages=messages,
+                                    tools=TOOLS_SCHEMA,
+                                    tool_choice="auto",
+                                    temperature=0.4,
+                                    max_tokens=400
+                                )
+                                model_to_use = cand
+                                _active_groq_model = cand
+                                break
+                            except Exception as e_retry:
+                                logger.warning(f"[Chatbot SAM] Reintento tras espera falló en {cand} ({e_retry}). Rotando al siguiente modelo...")
+
+                        logger.warning(f"[Chatbot SAM] Modelo '{cand}' saturó tokens (429). Rotando automáticamente a modelo alternativo...")
+                        continue
+
+                    elif any(k in err_msg for k in ["404", "does not exist", "access", "tool calling", "not supported", "400"]):
                         logger.warning(f"[Chatbot SAM] Modelo '{cand}' incompatible o no disponible ({e_cand}). Probando alternativo...")
                         continue
                     else:
