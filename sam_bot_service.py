@@ -1192,6 +1192,17 @@ Formato para cada recomendación:
 
 def procesar_recomendacion_peliculas(numero: str, mensaje: str, contexto: str) -> str:
     try:
+        from services.omdb_service import consultar_pelicula, formatear_para_whatsapp
+        msg_lower = (mensaje or "").lower().strip()
+        # Si el usuario pregunta por una película específica (ej: "de qué trata Inception", "info de Gladiator")
+        for trigger in ["de que trata", "de qué trata", "sinopsis de", "info de", "informacion de", "información de", "pelicula", "película", "serie"]:
+            if trigger in msg_lower:
+                candidato = msg_lower.replace(trigger, "").strip(" ?:!.,¿¡")
+                if len(candidato) >= 3 and not any(g in candidato for g in ["accion", "acción", "comedia", "terror", "miedo", "drama", "suspenso", "recomienda", "recomendame"]):
+                    data_omdb = consultar_pelicula(candidato)
+                    if data_omdb.get("encontrado"):
+                        return formatear_para_whatsapp(data_omdb)
+
         content = f"{PROMPT_PELICULAS}\n\nConversación con el usuario:\n{contexto}\n\nMensaje actual del usuario: {mensaje}\n\nResponde directamente con las recomendaciones, sin preámbulos ni encabezados adicionales."
         return generar_respuesta_ia(content, max_tokens=500, temperature=0.9)
     except Exception as e:

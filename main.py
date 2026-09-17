@@ -153,7 +153,7 @@ def init_db(max_retries=12, retry_interval=5):
 # Ejecutar inicialización ANTES de importar rutas
 init_db()
 
-from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance, asistencia, whatsapp, olt_tasks, caja
+from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance, asistencia, whatsapp, olt_tasks, caja, peliculas
 import rutas_configuraciones
 
 # ========================================================================
@@ -221,6 +221,7 @@ app.include_router(whatsapp.router)
 app.include_router(olt_tasks.router)
 from routes import libreqos
 app.include_router(libreqos.router)
+app.include_router(peliculas.router)
 
 # pyrefly: ignore [missing-import]
 from fastapi.staticfiles import StaticFiles

@@ -117,6 +117,37 @@ TOOLS_SCHEMA = [
                 "required": ["cliente_id", "sintoma_reportado"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "consultar_pelicula_o_serie",
+            "description": (
+                "Consulta información detallada y real de películas o series (título, año, sinopsis, "
+                "reparto, director, duración, género y calificación IMDb) usando OMDb API. "
+                "Utilízala obligatoriamente cuando el cliente solicite recomendaciones, consulte de qué trata "
+                "una producción o pida entretenimiento para el servicio OPSATV."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "titulo": {
+                        "type": "string",
+                        "description": "Nombre o título de la película o serie a consultar (ej: 'Inception', 'Breaking Bad', 'Gladiator')."
+                    },
+                    "anio": {
+                        "type": "string",
+                        "description": "Año de estreno opcional si el cliente lo especificó (ej: '2010')."
+                    },
+                    "tipo": {
+                        "type": "string",
+                        "enum": ["movie", "series", "episode"],
+                        "description": "Tipo de contenido opcional: 'movie' para películas o 'series' para series."
+                    }
+                },
+                "required": ["titulo"]
+            }
+        }
     }
 ]
 
@@ -465,6 +496,13 @@ def ejecutar_herramienta(nombre_herramienta: str, argumentos: Dict[str, Any], db
             cliente_id = int(argumentos.get("cliente_id", 0))
             sintoma = str(argumentos.get("sintoma_reportado", "Falla técnica reportada por el cliente")).strip()
             return generar_ticket_soporte(cliente_id=cliente_id, sintoma_reportado=sintoma, db=db)
+
+        case "consultar_pelicula_o_serie":
+            from services.omdb_service import consultar_pelicula
+            titulo = str(argumentos.get("titulo", "")).strip()
+            anio = argumentos.get("anio")
+            tipo = argumentos.get("tipo")
+            return consultar_pelicula(titulo=titulo, anio=anio, tipo=tipo)
 
         case _:
             logger.warning(f"[ai_tools] Herramienta desconocida solicitada: {nombre_herramienta}")
