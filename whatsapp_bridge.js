@@ -4,6 +4,7 @@ const QRCode = require('qrcode');
 const express = require('express');
 const { execSync, statSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -549,7 +550,6 @@ app.post('/send', handleSendMessage);
 app.post('/send-media', handleSendMessage);
 
 // Limpiar archivos de bloqueo residuales de Chromium en el volumen montado
-const path = require('path');
 function cleanChromiumLocks(dir) {
     if (!fs.existsSync(dir)) return;
     try {
