@@ -17,14 +17,12 @@ from system_prompt import SYSTEM_PROMPT
 logger = logging.getLogger("opsatel.chatbot_service")
 
 # Modelos recomendados de Groq compatibles con Tool Calling nativo
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "groq/compound-mini")
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 FALLBACK_MODELS = [
     DEFAULT_MODEL,
-    "groq/compound-mini",
-    "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
-    "groq/compound",
-    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+    "llama-3.3-70b-versatile",
     "llama-3.1-70b-versatile",
     "llama-3.1-8b-instant"
 ]
@@ -34,8 +32,8 @@ _active_groq_model = None
 
 def resolver_modelo_groq(client: Groq) -> str:
     """
-    Resuelve dinámicamente un modelo de Groq activo y disponible en la cuenta.
-    Evita caídas por Error 404 (modelo inexistente o sin permisos).
+    Resuelve dinámicamente un modelo de Groq activo y compatible con Tool Calling.
+    Filtra modelos incompatibles (whisper, compound, safeguards, etc.).
     """
     global _active_groq_model
     if _active_groq_model:
@@ -49,8 +47,14 @@ def resolver_modelo_groq(client: Groq) -> str:
 
     try:
         models_resp = client.models.list()
-        live_ids = [m.id for m in models_resp.data if m.id]
-        logger.info(f"[Chatbot SAM] Modelos reportados en cuenta Groq: {live_ids}")
+        # Filtrar modelos que no soportan Tool Calling (compound, whisper, guard, vision, etc.)
+        live_ids = [
+            m.id for m in models_resp.data
+            if m.id and not any(x in m.id.lower() for x in [
+                "compound", "whisper", "guard", "safeguard", "embed", "tts", "audio", "vision", "orpheus", "allam"
+            ])
+        ]
+        logger.info(f"[Chatbot SAM] Modelos compatibles reportados en cuenta Groq: {live_ids}")
         for pref in FALLBACK_MODELS:
             if pref in live_ids:
                 _active_groq_model = pref
@@ -216,11 +220,12 @@ def procesar_mensaje_con_herramientas(
                         max_tokens=600
                     )
                     model_to_use = cand
+                    _active_groq_model = cand
                     break
                 except Exception as e_cand:
                     err_msg = str(e_cand).lower()
-                    if "404" in err_msg or "does not exist" in err_msg or "access" in err_msg:
-                        logger.warning(f"[Chatbot SAM] Modelo '{cand}' no disponible (404/permisos). Probando alternativo...")
+                    if any(k in err_msg for k in ["404", "does not exist", "access", "tool calling", "not supported", "400"]):
+                        logger.warning(f"[Chatbot SAM] Modelo '{cand}' incompatible o no disponible ({e_cand}). Probando alternativo...")
                         continue
                     else:
                         raise e_cand
