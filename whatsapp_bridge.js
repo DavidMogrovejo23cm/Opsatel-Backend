@@ -190,6 +190,75 @@ function sendWebhook(from, body, pushname = '', originalJid = '') {
     req.end();
 }
 
+// --- Sistema de Resolución y Caché LID -> Teléfono Real ---
+const LID_CACHE_FILE = path.join(__dirname, 'lid_cache.json');
+let lidPhoneMap = {};
+
+try {
+    if (fs.existsSync(LID_CACHE_FILE)) {
+        lidPhoneMap = JSON.parse(fs.readFileSync(LID_CACHE_FILE, 'utf8'));
+    }
+} catch (eCache) {
+    console.warn('[WhatsApp Bridge] Aviso leyendo lid_cache.json:', eCache.message);
+}
+
+function saveLidCache() {
+    try {
+        fs.writeFileSync(LID_CACHE_FILE, JSON.stringify(lidPhoneMap, null, 2), 'utf8');
+    } catch (eSave) {
+        console.warn('[WhatsApp Bridge] Aviso guardando lid_cache.json:', eSave.message);
+    }
+}
+
+async function resolveLidToPhone(lidId) {
+    if (!lidId || typeof lidId !== 'string') return null;
+    const cleanLid = lidId.trim().toLowerCase();
+    if (!cleanLid.endsWith('@lid')) return null;
+
+    // 1. Verificar si ya lo tenemos en caché
+    if (lidPhoneMap[cleanLid]) {
+        return lidPhoneMap[cleanLid];
+    }
+
+    // 2. Intentar resolución nativa con whatsapp-web.js (getContactLidAndPhone)
+    if (client && typeof client.getContactLidAndPhone === 'function') {
+        try {
+            const mappings = await client.getContactLidAndPhone([cleanLid]);
+            if (mappings && mappings.length > 0) {
+                const m = mappings[0];
+                const pn = m.pn || m.phoneNumber || '';
+                if (pn && !pn.endsWith('@lid')) {
+                    const phoneOnly = pn.replace('@c.us', '').replace('@s.whatsapp.net', '').trim();
+                    if (phoneOnly && phoneOnly.length >= 8 && phoneOnly.length <= 15) {
+                        lidPhoneMap[cleanLid] = phoneOnly;
+                        saveLidCache();
+                        console.log(`[WhatsApp Bridge] 🎯 getContactLidAndPhone resolvió ${cleanLid} -> ${phoneOnly}`);
+                        return phoneOnly;
+                    }
+                }
+            }
+        } catch (eGetPn) {
+            console.warn(`[WhatsApp Bridge] getContactLidAndPhone error para ${cleanLid}:`, eGetPn.message);
+        }
+    }
+
+    // 3. Inspeccionar el chat internamente en WhatsApp Web
+    try {
+        if (client && typeof client.getChatById === 'function') {
+            const chat = await client.getChatById(cleanLid);
+            if (chat && chat.id && chat.id.user && !chat.id.user.endsWith('@lid') && chat.id.user.length >= 8 && chat.id.user.length <= 13) {
+                const phoneOnly = chat.id.user;
+                lidPhoneMap[cleanLid] = phoneOnly;
+                saveLidCache();
+                console.log(`[WhatsApp Bridge] 🎯 getChatById resolvió ${cleanLid} -> ${phoneOnly}`);
+                return phoneOnly;
+            }
+        }
+    } catch (_) {}
+
+    return null;
+}
+
 // Incoming Message Event
 client.on('message', async (msg) => {
     if (msg.isStatus) return;
@@ -201,10 +270,21 @@ client.on('message', async (msg) => {
     let pushname = msg._data?.notifyName || '';
     let realPhone = '';
 
+    // Si viene como @lid, resolver a teléfono real
+    if (remitente.endsWith('@lid')) {
+        const resolved = await resolveLidToPhone(remitente);
+        if (resolved) {
+            realPhone = resolved;
+        }
+    }
+
     try {
         const contact = await msg.getContact();
         if (contact) {
-            if (contact.number) realPhone = contact.number;
+            // Solo considerar contact.number si NO es un LID y tiene longitud normal de teléfono (8-13 dígitos)
+            if (!realPhone && contact.number && !contact.number.endsWith('@lid') && contact.number.length >= 8 && contact.number.length <= 13) {
+                realPhone = contact.number;
+            }
             if (contact.pushname) pushname = contact.pushname;
             else if (contact.name) pushname = contact.name;
         }
@@ -212,22 +292,22 @@ client.on('message', async (msg) => {
         console.warn(`[WhatsApp Bridge] No se pudo obtener contacto de ${msg.from}:`, eContact.message);
     }
 
-    // Si viene como @lid pero obtuvimos su número telefónico real, usarlo para vincular con la BD
-    let idDestino = remitente;
-    if (remitente.endsWith('@lid') && realPhone) {
-        idDestino = `${realPhone}@c.us`;
-        console.log(`[WhatsApp Bridge] Mapeando LID ${remitente} -> Teléfono real: ${idDestino} (${pushname})`);
+    let idDestino = remitente; // Conservar el JID de la sesión para responder
+    let numeroParaWebhook = remitente;
+    if (realPhone) {
+        numeroParaWebhook = `${realPhone}@c.us`;
+        console.log(`[WhatsApp Bridge] 📲 Mensaje vinculado: LID ${remitente} -> Teléfono real: ${realPhone} (${pushname})`);
+    } else {
+        console.log(`[WhatsApp Bridge] Mensaje de LID ${remitente} (${pushname})`);
     }
-
-    console.log(`[WhatsApp Bridge] Mensaje entrante de ${idDestino} (LID original: ${msg.from}, nombre: "${pushname}"): "${msg.body ? msg.body.substring(0, 40) : '[Sin texto]'}"`);
 
     // Manejar mensajes entrantes: solo procesar texto o multimedia real enviada por personas
     const userMediaTypes = ['image', 'video', 'audio', 'ptt', 'sticker', 'document'];
     if (msg.type === 'chat' && msg.body) {
-        sendWebhook(idDestino, msg.body, pushname, msg.from);
+        sendWebhook(numeroParaWebhook, msg.body, pushname, remitente);
     } else if (userMediaTypes.includes(msg.type)) {
         // Notificar a SAM sobre contenido multimedia real enviado por el usuario
-        sendWebhook(idDestino, `[NON_TEXT_MSG] ${msg.type}`, pushname, msg.from);
+        sendWebhook(numeroParaWebhook, `[NON_TEXT_MSG] ${msg.type}`, pushname, remitente);
     } else {
         // Ignorar eventos o notificaciones del protocolo interno de WhatsApp (e2e_notification, notification_template, protocol, etc.)
         console.log(`[WhatsApp Bridge] Evento/protocolo interno de WhatsApp ignorado (${msg.type}) de ${idDestino}`);
@@ -247,10 +327,16 @@ app.get('/contact/:chatId', async (req, res) => {
         let name = null;
         let pushname = null;
 
+        if (chatId.endsWith('@lid')) {
+            number = await resolveLidToPhone(chatId);
+        }
+
         try {
             const contact = await client.getContactById(chatId);
             if (contact) {
-                number = contact.number || null;
+                if (!number && contact.number && !contact.number.endsWith('@lid') && contact.number.length >= 8 && contact.number.length <= 13) {
+                    number = contact.number;
+                }
                 name = contact.name || null;
                 pushname = contact.pushname || null;
             }

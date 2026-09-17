@@ -85,11 +85,11 @@ def obtener_cliente_groq() -> Groq:
 def resolver_identidad_whatsapp(numero_raw: str, jid_original: str = "") -> Dict[str, Any]:
     """
     Analiza y normaliza el identificador o teléfono entrante de WhatsApp.
-    Distingue entre identificadores opacos/privados (LID de Baileys) y números telefónicos reales.
+    Distingue entre identificadores opacos/privados (LID de WhatsApp) y números telefónicos reales.
     
     Retorna un diccionario con:
-        - es_lid: bool indicando si es un LID anónimo
-        - telefono_limpio: str con el número telefónico real (vacío si es LID)
+        - es_lid: bool indicando si es un LID anónimo no resuelto
+        - telefono_limpio: str con el número telefónico real si se conoce
         - jid_destino: str con el JID de destino para enviar la respuesta a WhatsApp
         - metadata_ia: str con la directriz contextual estricta para Groq
     """
@@ -105,33 +105,28 @@ def resolver_identidad_whatsapp(numero_raw: str, jid_original: str = "") -> Dict
     else:
         jid_destino = num_str
 
-    # Extraer únicamente los dígitos numéricos
+    # Extraer únicamente los dígitos numéricos del número principal recibido
     parte_usuario = num_str.split("@")[0] if "@" in num_str else num_str
     solo_digitos = re.sub(r"\D", "", parte_usuario)
 
-    # Identificar si es un LID de WhatsApp (longitud anómala >= 14 dígitos o sufijo @lid)
-    es_lid = (
-        "@lid" in num_str.lower()
-        or "@lid" in jid_str.lower()
-        or len(solo_digitos) >= 14
-        or len(solo_digitos) < 8
-    )
-
-    if es_lid:
-        telefono_limpio = ""
+    # Es un número celular real si tiene entre 8 y 13 dígitos y no contiene la palabra 'lid'
+    if "@lid" not in num_str.lower() and 8 <= len(solo_digitos) <= 13:
+        telefono_limpio = solo_digitos
+        es_lid = False
         metadata_ia = (
-            f"El usuario te escribe desde un identificador privado de WhatsApp (LID: '{jid_destino}') que oculta su número celular. "
-            "NO posees su número telefónico real. Tu OBLIGACIÓN ABSOLUTA es solicitarle amablemente su número de cédula o su celular "
-            "registrado de contrato ANTES de realizar diagnósticos, reiniciar equipos o generar tickets de soporte."
+            f"El cliente escribe desde el número celular registrado '{telefono_limpio}'. "
+            f"Tu PRIMERA ACCIÓN OBLIGATORIA ante cualquier consulta, saludo o reclamo es ejecutar "
+            f"'consultar_estado_cliente(telefono='{telefono_limpio}')' para verificar su contrato, saldo y servicio. "
+            "Si la herramienta encuentra sus datos, identifícalo de inmediato por su nombre, trátalo con calidez y "
+            "NO LE PIDAS CÉDULA NI NÚMERO DE TELÉFONO porque ya está plenamente identificado en el sistema."
         )
     else:
-        # Número celular normal (Ecuador)
-        telefono_limpio = solo_digitos
+        telefono_limpio = ""
+        es_lid = True
         metadata_ia = (
-            f"El cliente escribe desde el número celular '{telefono_limpio}'. "
-            "Usa este número como primer intento en 'consultar_estado_cliente'. "
-            "Si la herramienta responde que no está registrado (encontrado: false), tu OBLIGACIÓN ABSOLUTA "
-            "es pedirle su número de cédula o celular registrado antes de ofrecer soporte o escalar el caso."
+            f"El usuario te escribe desde un identificador de WhatsApp (LID: '{jid_destino}') que oculta temporalmente su número. "
+            "Si no posees su teléfono en el historial, solicítale amablemente su número de cédula o su celular registrado de contrato "
+            "para ubicar su ficha en el sistema."
         )
 
     return {

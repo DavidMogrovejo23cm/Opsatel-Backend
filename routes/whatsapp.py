@@ -920,6 +920,38 @@ def webhook_mensaje_whatsapp(
         jid_destino = identidad["jid_destino"]
         tel_real = identidad["telefono_limpio"]
 
+        # Si aún no tenemos tel_real y el remitente es un LID, intentar resolverlo mediante el bridge o BD
+        if not tel_real and (identidad["es_lid"] or "@lid" in str(jid_destino).lower()):
+            # A. Consultar al bridge si ya resolvió el teléfono para este LID
+            info_contacto = obtener_info_contacto_bridge(jid_destino)
+            if info_contacto and info_contacto.get("number"):
+                num_c = re.sub(r'\D', '', str(info_contacto["number"]))
+                if 8 <= len(num_c) <= 13:
+                    tel_real = num_c
+
+            # B. Si no se resolvió por bridge, revisar en BD si este LID ya tuvo mensajes asociados a un cliente_id
+            if not tel_real:
+                prev_chat = db.query(models.WhatsAppMensajeChat).filter(
+                    models.WhatsAppMensajeChat.numero == jid_destino,
+                    models.WhatsAppMensajeChat.cliente_id.isnot(None)
+                ).order_by(models.WhatsAppMensajeChat.id.desc()).first()
+                if prev_chat and prev_chat.cliente_id:
+                    c_asoc = db.query(models.Cliente).filter(models.Cliente.id == prev_chat.cliente_id).first()
+                    if c_asoc and c_asoc.celular:
+                        tel_real = re.sub(r'\D', '', str(c_asoc.celular))
+
+            # Si se logró resolver tel_real, actualizar la metadata para Groq
+            if tel_real:
+                identidad["es_lid"] = False
+                identidad["telefono_limpio"] = tel_real
+                identidad["metadata_ia"] = (
+                    f"El cliente escribe desde el número celular registrado '{tel_real}'. "
+                    f"Tu PRIMERA ACCIÓN OBLIGATORIA ante cualquier consulta, saludo o reclamo es ejecutar "
+                    f"'consultar_estado_cliente(telefono='{tel_real}')' para verificar su contrato, saldo y servicio. "
+                    "Si la herramienta encuentra sus datos, identifícalo de inmediato por su nombre, trátalo con calidez y "
+                    "NO LE PIDAS CÉDULA NI NÚMERO DE TELÉFONO porque ya está plenamente identificado en el sistema."
+                )
+
         # 3. Verificar si el bot está en pausa por intervención de un operador humano
         if sam_bot_service.esta_bot_pausado_por_operador(jid_destino) or (payload.numero and sam_bot_service.esta_bot_pausado_por_operador(payload.numero)):
             registrar_mensaje_chat(db, jid_destino, "cliente", mensaje, nombre_remitente=payload.nombre or "")
