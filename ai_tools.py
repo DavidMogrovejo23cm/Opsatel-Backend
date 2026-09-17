@@ -91,6 +91,32 @@ TOOLS_SCHEMA = [
                 "required": ["id_olt", "puerto", "ont_id"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generar_ticket_soporte",
+            "description": (
+                "Genera una orden formal de soporte técnico (Ticket / Hoja de Ruta) en la base de datos "
+                "y envía una alerta técnica inmediata por WhatsApp al personal técnico de guardia. "
+                "DEBE ejecutarse obligatoriamente cuando un cliente IDENTIFICADO presente un daño físico "
+                "(cable roto, luz roja LOS) o cuando el reinicio de ONT no solucione su lentitud o falla."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cliente_id": {
+                        "type": "integer",
+                        "description": "ID numérico del cliente en la base de datos MySQL (obtenido previamente mediante consultar_estado_cliente)."
+                    },
+                    "sintoma_reportado": {
+                        "type": "string",
+                        "description": "Descripción clara y detallada del fallo técnico o daño físico reportado por el cliente."
+                    }
+                },
+                "required": ["cliente_id", "sintoma_reportado"]
+            }
+        }
     }
 ]
 
@@ -321,6 +347,94 @@ def reiniciar_ont(id_olt: int, puerto: str, ont_id: str, db: Session) -> Dict[st
             "ont_id": ont_id
         }
 
+
+NUMERO_TECNICO_GUARDIA = "593988804142"
+
+def generar_ticket_soporte(cliente_id: int, sintoma_reportado: str, db: Session) -> Dict[str, Any]:
+    """
+    Crea una orden formal de trabajo en models.HojaRuta y despacha una alerta al técnico de guardia.
+    Exige que cliente_id pertenezca a un cliente verificado en MySQL para evitar tickets con 'N/A' o vacíos.
+    """
+    if not cliente_id:
+        return {
+            "success": False,
+            "mensaje": "No se puede generar un ticket de soporte sin el ID del cliente. Debe identificar al cliente primero."
+        }
+
+    try:
+        cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+        if not cliente:
+            return {
+                "success": False,
+                "mensaje": f"No se encontró ningún cliente en la base de datos con ID {cliente_id}. Pida cédula o celular para identificarlo."
+            }
+
+        import pytz
+        from datetime import datetime
+        EC_TZ = pytz.timezone('America/Guayaquil')
+        ahora = datetime.now(EC_TZ)
+        fecha_hoy = ahora.strftime("%Y-%m-%d")
+        hora_actual = ahora.strftime("%H:%M")
+
+        # 1. Crear Orden en models.HojaRuta en MySQL
+        nuevo_ticket = models.HojaRuta(
+            fecha=fecha_hoy,
+            tecnico="Por Asignar",
+            hora=hora_actual,
+            cliente_id=cliente.id,
+            nombre_cliente=cliente.nombre or "Cliente",
+            ubicacion_cliente=f"{cliente.direccion or 'N/A'} (Nodo: {cliente.nodo or 'Principal'})".strip(),
+            celular_cliente=cliente.celular or "N/A",
+            actividad="SOPORTE TÉCNICO - GENERADO POR SAM AI",
+            observacion=f"Falla: {sintoma_reportado} | Plan: {cliente.plan or 'N/A'} | IP: {cliente.ip or 'N/A'}",
+            parroquia=cliente.parroquia or "N/A",
+            estado="Pendiente"
+        )
+        db.add(nuevo_ticket)
+        db.commit()
+        db.refresh(nuevo_ticket)
+
+        logger.info(f"[ai_tools] [OK] Creado ticket HojaRuta #{nuevo_ticket.id} para cliente {cliente.nombre}")
+
+        # 2. Despachar mensaje de alerta al WhatsApp del técnico de guardia
+        alerta_tecnico = (
+            f"🚨 *[NUEVA ORDEN DE SOPORTE TÉCNICO — OPSATEL]*\n\n"
+            f"🎫 *Ticket / Hoja de Ruta*: #{nuevo_ticket.id}\n"
+            f"👤 *Cliente*: {cliente.nombre}\n"
+            f"🆔 *ID Cliente*: {cliente.id}\n"
+            f"📱 *Teléfono*: {cliente.celular or 'N/A'}\n"
+            f"📍 *Nodo / Parroquia*: {cliente.nodo or 'N/A'} / {cliente.parroquia or 'N/A'}\n"
+            f"🏠 *Dirección*: {cliente.direccion or 'N/A'}\n"
+            f"🌐 *IP*: `{cliente.ip or 'N/A'}`\n"
+            f"📶 *Plan*: {cliente.plan or 'N/A'}\n\n"
+            f"💬 *Falla / Síntoma Reportado*:\n\"{sintoma_reportado}\"\n\n"
+            f"⏰ *Fecha y Hora*: {ahora.strftime('%d/%m/%Y %I:%M %p')}\n\n"
+            f"_Ticket escalado formalmente por SAM tras confirmación técnica. Favor gestionar con prioridad._"
+        )
+        try:
+            import whatsapp_service
+            whatsapp_service.send_whatsapp_message(NUMERO_TECNICO_GUARDIA, alerta_tecnico)
+            logger.info(f"[ai_tools] [OK] Alerta enviada a guardia {NUMERO_TECNICO_GUARDIA} para ticket #{nuevo_ticket.id}")
+        except Exception as e_wsp:
+            logger.error(f"[ai_tools] Error despachando alerta por WhatsApp a guardia: {e_wsp}")
+
+        return {
+            "success": True,
+            "ticket_id": nuevo_ticket.id,
+            "orden_numero": nuevo_ticket.id,
+            "cliente_nombre": cliente.nombre,
+            "estado": "Pendiente",
+            "mensaje": f"Ticket #{nuevo_ticket.id} generado exitosamente en el sistema y notificado con prioridad al equipo técnico de guardia."
+        }
+
+    except Exception as e:
+        logger.error(f"[ai_tools] Error generando ticket de soporte: {e}")
+        db.rollback()
+        return {
+            "success": False,
+            "mensaje": f"Error al registrar el ticket en el sistema: {str(e)}"
+        }
+
 # ============================================================================
 # 3. ROUTER / DISPATCHER DE HERRAMIENTAS
 # ============================================================================
@@ -347,9 +461,15 @@ def ejecutar_herramienta(nombre_herramienta: str, argumentos: Dict[str, Any], db
             ont_id = str(argumentos.get("ont_id", "")).strip()
             return reiniciar_ont(id_olt=id_olt, puerto=puerto, ont_id=ont_id, db=db)
             
+        case "generar_ticket_soporte":
+            cliente_id = int(argumentos.get("cliente_id", 0))
+            sintoma = str(argumentos.get("sintoma_reportado", "Falla técnica reportada por el cliente")).strip()
+            return generar_ticket_soporte(cliente_id=cliente_id, sintoma_reportado=sintoma, db=db)
+
         case _:
             logger.warning(f"[ai_tools] Herramienta desconocida solicitada: {nombre_herramienta}")
             return {
                 "success": False,
                 "error": f"Herramienta desconocida: {nombre_herramienta}"
             }
+

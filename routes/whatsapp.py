@@ -893,28 +893,92 @@ def webhook_mensaje_whatsapp(
     db: Session = Depends(get_db)
 ):
     """
-    Webhook público que recibe los mensajes entrantes de WhatsApp desde el puente local
-    y los procesa a través del asistente virtual SAM.
+    Webhook principal que recibe mensajes entrantes de WhatsApp desde el puente local (Node.js).
+    Orquestado al 100% por IA (Groq Tool Calling), con resolución de identificadores LID y
+    desactivación total del 'Skill Router' obsoleto para evitar tickets vacíos.
     """
     try:
+        import whatsapp_service
         import sam_bot_service
-        
-        # Si el mensaje provino de un LID (@lid), enviar la respuesta al LID original pero preservar el teléfono real
-        destino = payload.jid_original if (payload.jid_original and "@lid" in str(payload.jid_original).lower()) else payload.numero
-        tel_real = payload.numero if (payload.numero and "@lid" not in str(payload.numero).lower()) else ""
+        from chatbot_service import procesar_mensaje_con_herramientas, resolver_identidad_whatsapp
 
-        response_text = sam_bot_service.procesar_mensaje_entrante(
-            numero=destino,
-            mensaje=payload.mensaje,
-            db=db,
-            nombre_remitente=payload.nombre or "",
-            jid_original=payload.jid_original or "",
-            telefono_real=tel_real
+        mensaje = (payload.mensaje or "").strip()
+        if not mensaje:
+            return {"success": True, "response": ""}
+
+        # 1. Descartar eventos o notificaciones internas del protocolo de WhatsApp
+        if mensaje.startswith("[NON_TEXT_MSG]"):
+            tipo_rec = mensaje.replace("[NON_TEXT_MSG]", "").strip().lower()
+            if any(t in tipo_rec for t in ["notification", "protocol", "cipher", "call", "broadcast", "status"]):
+                return {"success": True, "response": ""}
+
+        # 2. Resolución de Identidad: detecta si es un @lid o número celular real
+        identidad = resolver_identidad_whatsapp(
+            numero_raw=payload.numero,
+            jid_original=payload.jid_original or ""
         )
+        jid_destino = identidad["jid_destino"]
+        tel_real = identidad["telefono_limpio"]
+
+        # 3. Verificar si el bot está en pausa por intervención de un operador humano
+        if sam_bot_service.esta_bot_pausado_por_operador(jid_destino) or (payload.numero and sam_bot_service.esta_bot_pausado_por_operador(payload.numero)):
+            registrar_mensaje_chat(db, jid_destino, "cliente", mensaje, nombre_remitente=payload.nombre or "")
+            return {"success": True, "response": "", "pausado": True}
+
+        # 4. Registrar mensaje del cliente en el historial persistente de chat
+        registrar_mensaje_chat(db, jid_destino, "cliente", mensaje, nombre_remitente=payload.nombre or "")
+        sam_bot_service.guardar_mensaje_historial(jid_destino, "user", mensaje)
+
+        # 5. Comando explícito de reinicio / cancelación
+        if mensaje.lower() in ["cancelar", "salir", "menu", "menú", "inicio", "empezar de nuevo", "reset", "reiniciar"]:
+            sam_bot_service.estados_skills[jid_destino] = None
+            sam_bot_service.historial_conversaciones[jid_destino] = []
+            response_text = "¡Listo! He reiniciado la conversación. ¿En qué te puedo colaborar hoy con tus servicios de Opsatel? 😊"
+            registrar_mensaje_chat(db, jid_destino, "asistente", response_text)
+            sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", response_text)
+            whatsapp_service.send_whatsapp_message(jid_destino, response_text)
+            return {"success": True, "response": response_text}
+
+        # 6. Comandos administrativos exclusivos (si el remitente es administrador)
+        admin_obj = sam_bot_service.es_numero_administrador(
+            jid_destino, db, jid_original=payload.jid_original,
+            nombre_remitente=payload.nombre or "", telefono_real=tel_real
+        )
+        es_cmd_admin = admin_obj and any(w in mensaje.lower() for w in [
+            "caja", "cobro", "cobros", "recaudacion", "recaudación", "ingresos", "cierre",
+            "moroso", "morosos", "corte", "cortes", "suspendido", "suspendidos", "deudores"
+        ])
+        if es_cmd_admin:
+            contexto = sam_bot_service.obtener_contexto_conversacion(jid_destino, mensaje)
+            response_text = sam_bot_service.procesar_comando_administrador(jid_destino, mensaje, contexto, db, admin_obj)
+            registrar_mensaje_chat(db, jid_destino, "asistente", response_text)
+            sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", response_text)
+            whatsapp_service.send_whatsapp_message(jid_destino, response_text)
+            return {"success": True, "response": response_text}
+
+        # 7. ORQUESTACIÓN PRINCIPAL CON IA (GROQ TOOL CALLING)
+        # Bypasea el viejo "Skill Router" para que Groq identifique al cliente en MySQL
+        # antes de ejecutar cualquier reinicio o generación de ticket
+        historial_reciente = sam_bot_service.historial_conversaciones.get(jid_destino, [])
+
+        response_text = procesar_mensaje_con_herramientas(
+            mensaje=mensaje,
+            numero=tel_real,
+            db=db,
+            historial_mensajes=historial_reciente,
+            metadata_identidad=identidad["metadata_ia"]
+        )
+
+        # 8. Registrar respuesta del asistente y despachar por WhatsApp
+        registrar_mensaje_chat(db, jid_destino, "asistente", response_text)
+        sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", response_text)
+        whatsapp_service.send_whatsapp_message(jid_destino, response_text)
+
         return {
             "success": True,
             "response": response_text
         }
+
     except Exception as e:
         print(f"[Webhook Mensaje Error] {str(e)}")
         import traceback

@@ -37,12 +37,73 @@ def obtener_cliente_groq() -> Groq:
     return Groq(api_key=api_key)
 
 
+def resolver_identidad_whatsapp(numero_raw: str, jid_original: str = "") -> Dict[str, Any]:
+    """
+    Analiza y normaliza el identificador o teléfono entrante de WhatsApp.
+    Distingue entre identificadores opacos/privados (LID de Baileys) y números telefónicos reales.
+    
+    Retorna un diccionario con:
+        - es_lid: bool indicando si es un LID anónimo
+        - telefono_limpio: str con el número telefónico real (vacío si es LID)
+        - jid_destino: str con el JID de destino para enviar la respuesta a WhatsApp
+        - metadata_ia: str con la directriz contextual estricta para Groq
+    """
+    import re
+    num_str = str(numero_raw or "").strip()
+    jid_str = str(jid_original or "").strip()
+
+    # Determinar el JID exacto para despachar la respuesta por WhatsApp
+    if jid_str and "@lid" in jid_str.lower():
+        jid_destino = jid_str
+    elif "@" in num_str:
+        jid_destino = num_str
+    else:
+        jid_destino = num_str
+
+    # Extraer únicamente los dígitos numéricos
+    parte_usuario = num_str.split("@")[0] if "@" in num_str else num_str
+    solo_digitos = re.sub(r"\D", "", parte_usuario)
+
+    # Identificar si es un LID de WhatsApp (longitud anómala >= 14 dígitos o sufijo @lid)
+    es_lid = (
+        "@lid" in num_str.lower()
+        or "@lid" in jid_str.lower()
+        or len(solo_digitos) >= 14
+        or len(solo_digitos) < 8
+    )
+
+    if es_lid:
+        telefono_limpio = ""
+        metadata_ia = (
+            f"El usuario te escribe desde un identificador privado de WhatsApp (LID: '{jid_destino}') que oculta su número celular. "
+            "NO posees su número telefónico real. Tu OBLIGACIÓN ABSOLUTA es solicitarle amablemente su número de cédula o su celular "
+            "registrado de contrato ANTES de realizar diagnósticos, reiniciar equipos o generar tickets de soporte."
+        )
+    else:
+        # Número celular normal (Ecuador)
+        telefono_limpio = solo_digitos
+        metadata_ia = (
+            f"El cliente escribe desde el número celular '{telefono_limpio}'. "
+            "Usa este número como primer intento en 'consultar_estado_cliente'. "
+            "Si la herramienta responde que no está registrado (encontrado: false), tu OBLIGACIÓN ABSOLUTA "
+            "es pedirle su número de cédula o celular registrado antes de ofrecer soporte o escalar el caso."
+        )
+
+    return {
+        "es_lid": es_lid,
+        "telefono_limpio": telefono_limpio,
+        "jid_destino": jid_destino,
+        "metadata_ia": metadata_ia
+    }
+
+
 def procesar_mensaje_con_herramientas(
     mensaje: str,
     numero: str,
     db: Session,
     historial_mensajes: Optional[List[Dict[str, Any]]] = None,
-    max_tool_iterations: int = 3
+    metadata_identidad: Optional[str] = None,
+    max_tool_iterations: int = 4
 ) -> str:
     """
     Función controladora del ciclo de vida del LLM con Function Calling.
@@ -58,6 +119,7 @@ def procesar_mensaje_con_herramientas(
         numero: Teléfono del remitente (WhatsApp JID/número limpio).
         db: Sesión activa de base de datos SQLAlchemy.
         historial_mensajes: Conversación previa en formato [{"role": "user"|"assistant", "content": "..."}].
+        metadata_identidad: Instrucción contextual sobre la resolución del LID o celular.
         max_tool_iterations: Límite de ejecuciones secuenciales de herramientas por turno.
     
     Returns:
@@ -65,16 +127,19 @@ def procesar_mensaje_con_herramientas(
     """
     client = obtener_cliente_groq()
 
+    # Directriz de identidad contextual para Groq
+    contexto_remitente = metadata_identidad or (
+        f"El cliente está enviando un mensaje desde el número '{numero}'. "
+        "La identidad, titularidad y estado del cliente se determinan exclusivamente por su registro en la BASE DE DATOS "
+        "usando la herramienta 'consultar_estado_cliente'. NO te fíes de nombres de perfiles o contactos de WhatsApp."
+    )
+
     # Construcción de la lista inicial de mensajes
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "system",
-            "content": (
-                f"[METADATA DEL REMITENTE]: El cliente está enviando un mensaje desde el número '{numero}'. "
-                "La identidad, titularidad y estado del cliente se determinan exclusivamente por su registro en la BASE DE DATOS "
-                "usando la herramienta 'consultar_estado_cliente'. NO te fíes de nombres de perfiles o contactos de WhatsApp."
-            )
+            "content": f"[METADATA DEL REMITENTE]: {contexto_remitente}"
         }
     ]
 
@@ -132,9 +197,14 @@ def procesar_mensaje_con_herramientas(
                     logger.error(f"[Chatbot SAM] Error decodificando argumentos JSON: {arguments_str}")
                     arguments = {}
 
-                # Si la función es consultar_estado_cliente y no enviaron teléfono, autocompletar con el número del remitente
+                # Si la función es consultar_estado_cliente y no enviaron teléfono, autocompletar solo si es número real (no LID)
                 if function_name == "consultar_estado_cliente" and not arguments.get("telefono"):
-                    arguments["telefono"] = numero
+                    import re
+                    solo_dig = re.sub(r'\D', '', str(numero or ""))
+                    if solo_dig and 8 <= len(solo_dig) <= 12 and "@lid" not in str(numero).lower():
+                        arguments["telefono"] = numero
+                    else:
+                        arguments["telefono"] = ""
 
                 logger.info(f"[Chatbot SAM] Ejecutando tool '{function_name}' con args: {arguments}")
                 

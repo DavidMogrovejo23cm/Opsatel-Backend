@@ -2088,9 +2088,25 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
         estados_skills[numero] = None
         response_text = procesar_recomendacion_peliculas(numero, mensaje, contexto)
     elif skill_activo == "soporte_tecnico_foco_rojo":
-        # Soporte técnico no deja el skill enganchado para la siguiente consulta
+        # ============================================================================
+        # [SKILL ROUTER OBSOLETO DESACTIVADO / PUENTEADO]:
+        # El evaluador por palabras clave ("sigue lento", "foco rojo") disparaba
+        # 'procesar_soporte_tecnico' antes de tiempo, creando órdenes con 'N/A' y
+        # 'Cliente no registrado' debido a IDs de WhatsApp como @lid.
+        # Ahora se puentea directamente hacia Groq Tool Calling, garantizando que
+        # la IA identifique al cliente en MySQL antes de generar cualquier ticket.
+        # ============================================================================
         estados_skills[numero] = None
-        response_text = procesar_soporte_tecnico(numero, mensaje, contexto, db)
+        from chatbot_service import procesar_mensaje_con_herramientas, resolver_identidad_whatsapp
+        identidad = resolver_identidad_whatsapp(numero, jid_original=jid_original)
+        historial_rec = historial_conversaciones.get(numero, [])
+        response_text = procesar_mensaje_con_herramientas(
+            mensaje=mensaje,
+            numero=identidad["telefono_limpio"],
+            db=db,
+            historial_mensajes=historial_rec,
+            metadata_identidad=identidad["metadata_ia"]
+        )
     elif admin_obj and msg_limpio in ["menu", "menú", "admin", "comandos", "panel"]:
         # Menú explícito de gestión administrativa
         estados_skills[numero] = None
