@@ -981,12 +981,15 @@ def webhook_mensaje_whatsapp(
             jid_destino, db, jid_original=payload.jid_original,
             nombre_remitente=payload.nombre or "", telefono_real=tel_real
         )
-        es_cmd_admin = admin_obj and any(w in mensaje.lower() for w in [
-            "caja", "cobro", "cobros", "recaudacion", "recaudación", "ingresos", "cierre",
-            "moroso", "morosos", "corte", "cortes", "suspendido", "suspendidos", "deudores",
-            "instalacion", "instalación", "nuevo cliente", "ingresar cliente", "registrar cliente",
-            "registrar", "alta"
-        ])
+        es_cmd_admin = admin_obj and (
+            sam_bot_service.estados_skills.get(jid_destino) == "alta_instalacion_admin"
+            or any(w in mensaje.lower() for w in [
+                "caja", "cobro", "cobros", "recaudacion", "recaudación", "ingresos", "cierre",
+                "moroso", "morosos", "corte", "cortes", "suspendido", "suspendidos", "deudores",
+                "instalacion", "instalación", "nuevo cliente", "ingresar cliente", "registrar cliente",
+                "registrar", "alta"
+            ])
+        )
         if es_cmd_admin:
             contexto = sam_bot_service.obtener_contexto_conversacion(jid_destino, mensaje)
             response_text = sam_bot_service.procesar_comando_administrador(jid_destino, mensaje, contexto, db, admin_obj)

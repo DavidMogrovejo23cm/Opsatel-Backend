@@ -125,6 +125,47 @@ TOOLS_SCHEMA = [
                 }
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "registrar_instalacion_cliente",
+            "description": "Registra a un nuevo cliente en la base de datos y crea inmediatamente su orden de instalación en la Hoja de Ruta de Opsatel. El plan puede especificarse por su nombre oficial (ej: 'LAG CERO'), por su velocidad en Megas (ej: '100 megas', '150 Mbps') o por su precio mensual (ej: '$17.50', '20 dólares', '20'). Revisa y valida siempre que se cuente con nombre, dirección, celular y plan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "nombre_cliente": {
+                        "type": "string",
+                        "description": "Nombre y apellido del cliente a registrar."
+                    },
+                    "direccion": {
+                        "type": "string",
+                        "description": "Dirección domiciliaria y referencias para la instalación."
+                    },
+                    "celular": {
+                        "type": "string",
+                        "description": "Número de teléfono celular de contacto del cliente."
+                    },
+                    "plan": {
+                        "type": "string",
+                        "description": "Plan solicitado. Puede indicarse por nombre (ej: 'LAG CERO'), por velocidad (ej: '100 megas', '150 mbps') o por precio mensual (ej: '$20', '17.50')."
+                    },
+                    "nodo_o_sector": {
+                        "type": "string",
+                        "description": "Sector, barrio o nodo de red donde se realizará la instalación (ej: 'Baños', 'Sayausí', 'Centro')."
+                    },
+                    "cedula": {
+                        "type": "string",
+                        "description": "Cédula o RUC del cliente (opcional)."
+                    },
+                    "comentarios": {
+                        "type": "string",
+                        "description": "Observaciones adicionales o detalles de instalación (opcional)."
+                    }
+                },
+                "required": ["nombre_cliente", "direccion", "celular", "plan"]
+            }
+        }
     }
 ]
 
@@ -741,6 +782,278 @@ def consultar_planes_disponibles(nombre_plan: Optional[str] = None, db: Session 
             "planes_oficiales": []
         }
 
+def resolver_plan_internet(texto_plan: str, db: Session) -> Optional[models.PlanInternet]:
+    """
+    Resuelve y homologa un plan de internet contra la tabla planes_internet
+    buscando por:
+    1. Nombre oficial (exacto o parcial, ej: 'LAG CERO', 'FIBRA HOGAR', 'BASICO')
+    2. Velocidad en Megas (ej: '100 megas', '150 Mbps', '200M', '100')
+    3. Precio mensual oficial (ej: '$17.50', '17.50', '20 dolares', '$20', '22')
+    """
+    if not texto_plan or not db:
+        return None
+    try:
+        planes = db.query(models.PlanInternet).all()
+        if not planes:
+            return None
+
+        raw = str(texto_plan).strip()
+        raw_lower = raw.lower()
+        limpio = raw_lower.replace("plan", "").replace("de", "").strip()
+
+        # 1. Coincidencia por Nombre
+        for p in planes:
+            nom_p = (p.nombre or "").strip().lower()
+            if nom_p and (nom_p == raw_lower or nom_p == limpio):
+                return p
+            if nom_p and (nom_p in raw_lower or limpio in nom_p):
+                return p
+
+        # 2. Coincidencia por Precio
+        numeros_float = []
+        for match in re.findall(r'(\d+(?:\.\d+)?)', raw):
+            try:
+                numeros_float.append(float(match))
+            except ValueError:
+                pass
+
+        tiene_indicador_precio = any(k in raw_lower for k in ["$", "dolar", "dólar", "usd", "precio", "costo", "valor"])
+        if tiene_indicador_precio or any('.' in s for s in re.findall(r'\d+\.\d+', raw)):
+            for num in numeros_float:
+                for p in planes:
+                    if p.precio is not None and abs(float(p.precio) - num) < 0.05:
+                        return p
+
+        # 3. Coincidencia por Megas (Velocidad)
+        tiene_indicador_megas = any(k in raw_lower for k in ["mega", "megas", "mbps", "mb", "m"])
+        if tiene_indicador_megas:
+            for num in numeros_float:
+                for p in planes:
+                    if p.megas is not None and int(num) == int(p.megas):
+                        return p
+
+        # 4. Números sin indicador explícito
+        for num in numeros_float:
+            for p in planes:
+                if p.precio is not None and abs(float(p.precio) - num) < 0.05:
+                    return p
+            for p in planes:
+                if p.megas is not None and int(num) == int(p.megas):
+                    return p
+
+        # 5. Fuzzy match por nombre si no hubo match directo
+        try:
+            from rapidfuzz import fuzz
+            mejor_plan = None
+            mejor_score = 0
+            for p in planes:
+                if p.nombre:
+                    score = fuzz.token_set_ratio(limpio, p.nombre.lower())
+                    if score > mejor_score and score >= 70:
+                        mejor_score = score
+                        mejor_plan = p
+            if mejor_plan:
+                return mejor_plan
+        except Exception:
+            pass
+
+        return None
+    except Exception as e_plan:
+        logger.warning(f"[ai_tools] Error resolviendo plan '{texto_plan}': {e_plan}")
+        return None
+
+
+def crear_orden_instalacion_hoja_ruta(datos_instalacion: Dict[str, Any], db: Session, registrado_por: str = "Admin") -> Dict[str, Any]:
+    """
+    Función centralizada y robusta para dar de alta a un cliente y agendar su orden en Hoja de Ruta.
+    Valida minuciosamente los datos, resuelve el plan por nombre/megas/precio, y crea los registros.
+    """
+    try:
+        # 1. Validación de datos esenciales
+        nombre = str(datos_instalacion.get("nombre") or datos_instalacion.get("nombre_cliente") or "").strip()
+        palabras_prohibidas = ["nueva instalacion", "nueva instalación", "instalacion", "instalación", "alta", "cliente desconocido", "cliente"]
+        if not nombre or len(nombre) < 3 or nombre.lower() in palabras_prohibidas:
+            return {
+                "success": False,
+                "error": "Falta el nombre completo del cliente a registrar.",
+                "campo_faltante": "nombre"
+            }
+
+        direccion = str(datos_instalacion.get("direccion") or "").strip()
+        if not direccion or len(direccion) < 3:
+            return {
+                "success": False,
+                "error": "Falta la dirección domiciliaria o referencia de ubicación para la instalación.",
+                "campo_faltante": "direccion"
+            }
+
+        celular = str(datos_instalacion.get("celular") or datos_instalacion.get("telefono") or "").strip()
+        cedula = str(datos_instalacion.get("cedula") or "").strip()
+        if not celular and not cedula:
+            return {
+                "success": False,
+                "error": "Falta el número de celular o teléfono de contacto del cliente.",
+                "campo_faltante": "celular"
+            }
+
+        # Normalización de cédula y celular
+        if cedula:
+            cedula_dig = re.sub(r'\D', '', cedula)
+            if len(cedula_dig) == 9:
+                cedula = "0" + cedula_dig
+            elif len(cedula_dig) in [10, 13]:
+                cedula = cedula_dig
+
+        if celular:
+            cel_dig = re.sub(r'\D', '', celular)
+            if len(cel_dig) == 9 and cel_dig.startswith("9"):
+                celular = "0" + cel_dig
+            elif len(cel_dig) == 10 and cel_dig.startswith("09"):
+                celular = cel_dig
+
+        # 2. Resolución del Plan por Nombre, Megas o Precio
+        plan_input = str(datos_instalacion.get("plan") or "").strip()
+        plan_obj = resolver_plan_internet(plan_input, db)
+        if plan_obj:
+            plan_nombre = plan_obj.nombre
+            detalles_plan = f"{plan_obj.nombre} ({plan_obj.megas} Mbps - ${float(plan_obj.precio or 0):.2f})"
+        else:
+            plan_nombre = plan_input if plan_input else "Plan Fibra Óptica"
+            detalles_plan = plan_nombre
+
+        # 3. Nodo / Sector
+        nodo = str(datos_instalacion.get("nodo") or datos_instalacion.get("nodo_o_sector") or datos_instalacion.get("sector") or "").strip()
+        parroquia = str(datos_instalacion.get("parroquia") or nodo or "Principal").strip()
+        if not nodo:
+            nodo = "Principal"
+
+        comentarios = str(datos_instalacion.get("comentarios") or "").strip()
+        ubicacion = str(datos_instalacion.get("ubicacion") or direccion).strip()
+
+        # 4. Generar ID secuencial reutilizando primer hueco disponible
+        ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
+        ids = [i[0] for i in ids_query if i[0] is not None]
+        nuevo_id = 1
+        for current_id in ids:
+            if current_id == nuevo_id:
+                nuevo_id += 1
+            elif current_id > nuevo_id:
+                break
+
+        # 5. Crear Cliente en la base de datos
+        nuevo_cliente = models.Cliente(
+            id=nuevo_id,
+            nombre=nombre,
+            cedula=cedula,
+            celular=celular,
+            direccion=direccion,
+            nodo=nodo,
+            parroquia=parroquia,
+            plan=plan_nombre,
+            estado="Pendiente",
+            saldo=0.00,
+            ubicacion=ubicacion,
+            comentarios=comentarios
+        )
+        db.add(nuevo_cliente)
+        db.flush()
+
+        # 6. Fecha y Hora para la Hoja de Ruta
+        from datetime import datetime, timezone, timedelta
+        try:
+            import pytz
+            EC_TZ = pytz.timezone('America/Guayaquil')
+            ahora = datetime.now(EC_TZ)
+        except Exception:
+            try:
+                from zoneinfo import ZoneInfo
+                ahora = datetime.now(ZoneInfo('America/Guayaquil'))
+            except Exception:
+                ahora = datetime.now(timezone(timedelta(hours=-5)))
+
+        fecha_inst = str(datos_instalacion.get("fecha_instalacion") or datos_instalacion.get("fecha") or "").strip()
+        if not fecha_inst or len(fecha_inst) < 8:
+            fecha_inst = ahora.strftime("%Y-%m-%d")
+
+        hora_inst = str(datos_instalacion.get("hora_instalacion") or datos_instalacion.get("hora") or "09:00 AM").strip()
+
+        # 7. Crear Orden en Hoja de Ruta
+        obs_hoja = f"Plan: {detalles_plan} | Cédula: {cedula or 'S/C'}"
+        if comentarios:
+            obs_hoja += f" | {comentarios}"
+
+        nueva_hoja = models.HojaRuta(
+            fecha=fecha_inst,
+            tecnico="Por Asignar",
+            hora=hora_inst,
+            cliente_id=nuevo_cliente.id,
+            nombre_cliente=nuevo_cliente.nombre,
+            ubicacion_cliente=f"{direccion} (Sector: {nodo})",
+            celular_cliente=celular,
+            actividad="INSTALACIÓN DE SERVICIO DE INTERNET",
+            observacion=obs_hoja,
+            parroquia=parroquia,
+            estado="Pendiente"
+        )
+        db.add(nueva_hoja)
+        db.commit()
+        db.refresh(nueva_hoja)
+        db.refresh(nuevo_cliente)
+
+        logger.info(f"[ai_tools] [OK] Instalación registrada: Cliente #{nuevo_cliente.id} ({nuevo_cliente.nombre}) -> HojaRuta #{nueva_hoja.id}")
+
+        return {
+            "success": True,
+            "cliente_id": nuevo_cliente.id,
+            "hoja_ruta_id": nueva_hoja.id,
+            "orden_numero": nueva_hoja.id,
+            "nombre_cliente": nuevo_cliente.nombre,
+            "cedula": nuevo_cliente.cedula,
+            "celular": nuevo_cliente.celular,
+            "direccion": nuevo_cliente.direccion,
+            "nodo": nuevo_cliente.nodo,
+            "parroquia": nuevo_cliente.parroquia,
+            "plan_asignado": plan_nombre,
+            "detalles_plan": detalles_plan,
+            "fecha": nueva_hoja.fecha,
+            "hora": nueva_hoja.hora,
+            "mensaje": f"Instalación agendada exitosamente en la Hoja de Ruta (Orden #{nueva_hoja.id}) para el cliente #{nuevo_cliente.id} {nuevo_cliente.nombre} con el plan {detalles_plan}."
+        }
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[ai_tools] Error creando orden de instalación: {e}")
+        return {
+            "success": False,
+            "error": f"Error interno registrando instalación: {str(e)}"
+        }
+
+
+def registrar_instalacion_cliente(
+    nombre_cliente: str,
+    direccion: str,
+    celular: str,
+    plan: str,
+    db: Session,
+    nodo_o_sector: Optional[str] = None,
+    cedula: Optional[str] = None,
+    comentarios: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Herramienta oficial para registrar un nuevo cliente y crear de inmediato su orden en la Hoja de Ruta.
+    """
+    datos = {
+        "nombre": nombre_cliente,
+        "direccion": direccion,
+        "celular": celular,
+        "plan": plan,
+        "nodo": nodo_o_sector,
+        "cedula": cedula,
+        "comentarios": comentarios
+    }
+    return crear_orden_instalacion_hoja_ruta(datos, db, registrado_por="SAM AI")
+
+
 # ============================================================================
 # 3. ROUTER / DISPATCHER DE HERRAMIENTAS
 # ============================================================================
@@ -787,6 +1100,18 @@ def ejecutar_herramienta(nombre_herramienta: str, argumentos: Dict[str, Any], db
         case "consultar_planes_disponibles":
             nombre_plan = argumentos.get("nombre_plan")
             return consultar_planes_disponibles(nombre_plan=nombre_plan, db=db)
+
+        case "registrar_instalacion_cliente":
+            return registrar_instalacion_cliente(
+                nombre_cliente=str(argumentos.get("nombre_cliente", "")).strip(),
+                direccion=str(argumentos.get("direccion", "")).strip(),
+                celular=str(argumentos.get("celular", "")).strip(),
+                plan=str(argumentos.get("plan", "")).strip(),
+                db=db,
+                nodo_o_sector=argumentos.get("nodo_o_sector"),
+                cedula=argumentos.get("cedula"),
+                comentarios=argumentos.get("comentarios")
+            )
 
         case _:
             logger.warning(f"[ai_tools] Herramienta desconocida solicitada: {nombre_herramienta}")

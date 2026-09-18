@@ -1765,125 +1765,124 @@ def es_numero_administrador(numero: str, db: Session, jid_original: str = "", no
 def procesar_registro_cliente_admin_directo(numero: str, mensaje: str, contexto: str, db: Session, admin_obj) -> str:
     """
     Procesa un mensaje de instalación enviado por un Administrador:
-    Extrae los datos en 1 solo paso, crea el Cliente y crea la orden de trabajo en HojaRuta en 1 segundo.
+    Revisa y valida los datos, resuelve el plan por nombre, megas o precio,
+    crea el Cliente y genera la orden en Hoja de Ruta.
     """
+    from ai_tools import crear_orden_instalacion_hoja_ruta
+
+    msg_clean = mensaje.strip()
+    msg_lower = msg_clean.lower()
+
+    # 1. Comprobar si el mensaje es solo una solicitud/intención de registrar instalación sin datos del cliente
+    intenciones_solo = [
+        "nueva instalacion", "nueva instalación", "registrar instalacion", "registrar instalación",
+        "ingresar instalacion", "ingresar instalación", "alta", "alta de cliente", "nuevo cliente",
+        "registrar cliente", "quiero registrar una instalacion", "quiero ingresar una instalacion",
+        "instalacion", "instalación"
+    ]
+    es_solo_intencion = (
+        len(msg_clean.split()) <= 4 and any(intent in msg_lower for intent in intenciones_solo)
+    ) or (
+        msg_lower in intenciones_solo
+    )
+
+    if es_solo_intencion:
+        estados_skills[numero] = "alta_instalacion_admin"
+        return (
+            f"👑 *¡Hola {admin_obj.nombre}! Modo Alta de Instalación Activo.* 🛠️\n\n"
+            f"Para ingresar al nuevo cliente y agendar su orden en la *Hoja de Ruta*, por favor facilítame los datos:\n\n"
+            f"• 👤 *Nombre del cliente*:\n"
+            f"• 📱 *Celular de contacto*:\n"
+            f"• 📍 *Dirección y Sector / Nodo*:\n"
+            f"• 📦 *Plan*: (Puedes indicarlo por *nombre*, *megas* o *precio*. Ej: *100 megas*, *$20*, *LAG CERO*)\n"
+            f"• 🆔 *Cédula*: (Opcional)\n\n"
+            f"_Envíame los datos en un solo mensaje o como te resulte más cómodo y yo lo agendo de inmediato._ 😊"
+        )
+
+    # 2. Extraer datos con IA a partir del mensaje y contexto previo
     valid_nodos = [n[0] for n in db.query(models.Nodo.nombre).filter(models.Nodo.nombre != None).all()]
-    valid_planes = [pl[0] for pl in db.query(models.PlanInternet.nombre).filter(models.PlanInternet.nombre != None).all()]
+    valid_planes = [
+        f"{pl.nombre} ({pl.megas} Mbps - ${float(pl.precio or 0):.2f})"
+        for pl in db.query(models.PlanInternet).all()
+    ]
 
-    prompt_admin = f"""# Skill: Alta Directa de Instalaciones (Modo Administrador)
-Eres SAM, el asistente inteligente de OPSATEL ejecutando comandos del Administrador: {admin_obj.nombre}.
-Un administrador ha enviado los datos de una nueva instalación por WhatsApp.
-Tu objetivo es EXTRAER de inmediato todos los datos posibles del mensaje y formatearlos en un JSON de una sola línea, SIN hacer preguntas, SIN pedir confirmación y SIN rodeos.
+    prompt_admin = f"""# Skill: Extracción de Datos de Instalación para Administrador: {admin_obj.nombre}
+Un administrador de Opsatel está enviando los datos para dar de alta una nueva instalación en la Hoja de Ruta.
+Tu objetivo es EXTRAER y estructurar los datos disponibles en un JSON limpio de una sola línea.
 
-Campos a extraer:
-* nombre: Nombre completo del cliente.
-* cedula: Cédula o RUC (10 o 13 dígitos).
-* celular: Teléfono de contacto.
-* direccion: Dirección domiciliaria.
-* plan: Plan de internet (intenta mapear a uno de los PLANES VÁLIDOS).
-* nodo: Sector o Nodo de red (intenta mapear a uno de los NODOS VÁLIDOS).
-* parroquia: Parroquia.
-* latitud: Latitud GPS (opcional, float 0.0 si no hay).
-* longitud: Longitud GPS (opcional, float 0.0 si no hay).
-* comentarios: Notas adicionales (promociones, si es arrendatario, correo, etc.).
+Campos:
+* nombre: Nombre y apellido del cliente.
+* celular: Teléfono celular del cliente.
+* direccion: Dirección domiciliaria y referencias.
+* plan: Plan solicitado. Puede decirse por nombre (ej: LAG CERO), velocidad (ej: 100 megas, 150 Mbps) o precio (ej: $17.50, 20 dólares, 20).
+* nodo: Sector, barrio o nodo de red (ej: Baños, Sayausí, Centro, Misicata).
+* parroquia: Parroquia (opcional).
+* cedula: Cédula o RUC (10 o 13 dígitos, opcional).
+* comentarios: Observaciones adicionales o promociones.
 
-PLANES VÁLIDOS: {json.dumps(valid_planes, ensure_ascii=False)}
-NODOS VÁLIDOS: {json.dumps(valid_nodos, ensure_ascii=False)}
+CATÁLOGO DE PLANES VIGENTES: {json.dumps(valid_planes, ensure_ascii=False)}
+NODOS / SECTORES: {json.dumps(valid_nodos, ensure_ascii=False)}
 
-Responde ÚNICAMENTE con el JSON final en este formato exacto:
-{{"nombre": "", "cedula": "", "celular": "", "direccion": "", "plan": "", "nodo": "", "parroquia": "", "latitud": 0.0, "longitud": 0.0, "comentarios": ""}}
+Responde ÚNICAMENTE con el JSON en este formato:
+{{"nombre": "", "celular": "", "direccion": "", "plan": "", "nodo": "", "parroquia": "", "cedula": "", "comentarios": ""}}
 """
-
     try:
-        content = f"{prompt_admin}\n\nMensaje enviado por el Administrador:\n{mensaje}"
-        res_text = generar_respuesta_ia(content, max_tokens=600, temperature=0.1)
-        
+        texto_analizar = f"Mensaje actual del Administrador:\n{mensaje}"
+        if contexto and len(contexto.strip()) > 10:
+            texto_analizar = f"Historial previo:\n{contexto}\n\n{texto_analizar}"
+
+        res_text = generar_respuesta_ia(f"{prompt_admin}\n\n{texto_analizar}", max_tokens=600, temperature=0.1)
+
         json_match = re.search(r'\{.*"nombre".*\}', res_text)
+        datos = {}
         if json_match:
-            data = json.loads(json_match.group(0))
-            
-            ubicacion_gps = f"{data.get('latitud') or 0.0}, {data.get('longitud') or 0.0}"
-            
-            cedula = str(data.get("cedula") or "").strip()
-            if cedula.isdigit() and len(cedula) == 9:
-                cedula = "0" + cedula
-                
-            celular = str(data.get("celular") or "").strip()
-            if celular.isdigit() and len(celular) == 9 and celular.startswith("9"):
-                celular = "0" + celular
+            try:
+                datos = json.loads(json_match.group(0))
+            except Exception:
+                pass
 
-            # Reutilizar primer ID disponible
-            ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
-            ids = [i[0] for i in ids_query]
-            nuevo_id = 1
-            for current_id in ids:
-                if current_id == nuevo_id:
-                    nuevo_id += 1
-                elif current_id > nuevo_id:
-                    break
+        if not datos:
+            datos = {}
+        if not datos.get("nombre"):
+            datos["nombre"] = ""
+        if not datos.get("celular"):
+            datos["celular"] = ""
+        if not datos.get("direccion"):
+            datos["direccion"] = ""
+        if not datos.get("plan"):
+            datos["plan"] = ""
 
-            # 1. Crear Cliente
-            nuevo_cliente = models.Cliente(
-                id=nuevo_id,
-                nombre=data.get("nombre") or "Cliente Desconocido",
-                cedula=cedula,
-                celular=celular,
-                direccion=data.get("direccion"),
-                plan=data.get("plan"),
-                nodo=data.get("nodo"),
-                parroquia=data.get("parroquia"),
-                ubicacion=ubicacion_gps,
-                comentarios=data.get("comentarios"),
-                estado="Pendiente",
-                saldo=0.00
-            )
-            db.add(nuevo_cliente)
-            db.flush()
+        # 3. Validar y crear en la base de datos y Hoja de Ruta
+        resultado = crear_orden_instalacion_hoja_ruta(datos, db, registrado_por=admin_obj.nombre)
 
-            # 2. Crear Orden de Trabajo en Hoja de Ruta
-            import pytz
-            from datetime import datetime
-            ECUADOR_TZ = pytz.timezone('America/Guayaquil')
-            fecha_hoy = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d")
-
-            obs_hoja = f"Plan: {data.get('plan') or 'No especificado'}"
-            if data.get("comentarios"):
-                obs_hoja += f" | {data.get('comentarios')}"
-
-            nueva_hoja = models.HojaRuta(
-                fecha=fecha_hoy,
-                tecnico="Por Asignar",
-                hora="09:00",
-                cliente_id=nuevo_cliente.id,
-                nombre_cliente=nuevo_cliente.nombre,
-                ubicacion_cliente=f"{nuevo_cliente.direccion or ''} (Sector: {nuevo_cliente.nodo or 'N/A'})".strip(),
-                celular_cliente=nuevo_cliente.celular,
-                actividad="INSTALACIÓN DE SERVICIO DE INTERNET",
-                observacion=obs_hoja,
-                parroquia=nuevo_cliente.parroquia,
-                estado="Pendiente"
-            )
-            db.add(nueva_hoja)
-            db.commit()
-            
-            # Limpiar skill activo
+        if resultado.get("success"):
             estados_skills[numero] = None
             if numero in historial_conversaciones:
                 historial_conversaciones[numero] = []
 
             return (
                 f"👑 *[Modo Administrador — {admin_obj.nombre}]*\n\n"
-                f"✅ ¡Instalación registrada y agendada en la *Hoja de Ruta* exitosamente!\n\n"
-                f"👤 *Cliente #{nuevo_cliente.id}*: {nuevo_cliente.nombre}\n"
-                f"🆔 *Cédula*: {nuevo_cliente.cedula or 'N/A'}\n"
-                f"📱 *Celular*: {nuevo_cliente.celular or 'N/A'}\n"
-                f"📍 *Nodo*: {nuevo_cliente.nodo or 'N/A'}\n"
-                f"📦 *Plan*: {nuevo_cliente.plan or 'N/A'}\n"
-                f"🛠️ *Orden Hoja de Ruta*: Creada (Estado: Pendiente)\n\n"
-                f"_La orden ya está disponible en el panel web para asignación técnica._"
+                f"✅ *¡Instalación registrada y agendada en la Hoja de Ruta exitosamente!* 🛠️\n\n"
+                f"🎫 *Orden Hoja de Ruta*: #{resultado['hoja_ruta_id']}\n"
+                f"👤 *Cliente #{resultado['cliente_id']}*: {resultado['nombre_cliente']}\n"
+                f"🆔 *Cédula*: {resultado.get('cedula') or 'No especificada'}\n"
+                f"📱 *Celular*: {resultado.get('celular') or 'No especificado'}\n"
+                f"📍 *Ubicación / Sector*: {resultado.get('direccion')} ({resultado.get('nodo') or 'N/A'})\n"
+                f"📦 *Plan Asignado*: {resultado.get('detalles_plan')}\n"
+                f"📅 *Fecha*: {resultado.get('fecha')} ({resultado.get('hora')})\n"
+                f"🛠️ *Estado*: Pendiente de asignación técnica\n\n"
+                f"_La orden ya está disponible en la pestaña 'Hoja de Ruta' del panel de Opsatel._"
             )
         else:
-            return procesar_registro_cliente(numero, mensaje, contexto, db)
+            # Mantiene el skill activo para que el admin pueda enviar el dato faltante
+            estados_skills[numero] = "alta_instalacion_admin"
+            error_msg = resultado.get("error", "Faltan datos del cliente.")
+            return (
+                f"👑 *Hola {admin_obj.nombre}*, para poder agendar la instalación en la *Hoja de Ruta* por favor revisa los datos:\n"
+                f"⚠️ *{error_msg}*\n\n"
+                f"Por favor indícame ese dato para completar el registro de inmediato."
+            )
+
     except Exception as e:
         print(f"[SAM Chatbot Admin] Error procesando alta directa: {e}")
         db.rollback()
@@ -1939,7 +1938,9 @@ def procesar_comando_administrador(numero: str, mensaje: str, contexto: str, db:
             f"_Para revisar la lista detallada, ingresa al panel web de Opsatel._"
         )
 
-    elif any(w in msg_lower for w in ["instalacion", "instalación", "nuevo cliente", "ingresar cliente", "registrar", "alta"]):
+    elif estados_skills.get(numero) == "alta_instalacion_admin" or any(w in msg_lower for w in [
+        "instalacion", "instalación", "nuevo cliente", "ingresar cliente", "registrar cliente", "registrar", "alta"
+    ]):
         return procesar_registro_cliente_admin_directo(numero, mensaje, contexto, db, admin_obj)
         
     return (
