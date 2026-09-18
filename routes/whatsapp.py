@@ -983,7 +983,9 @@ def webhook_mensaje_whatsapp(
         )
         es_cmd_admin = admin_obj and any(w in mensaje.lower() for w in [
             "caja", "cobro", "cobros", "recaudacion", "recaudación", "ingresos", "cierre",
-            "moroso", "morosos", "corte", "cortes", "suspendido", "suspendidos", "deudores"
+            "moroso", "morosos", "corte", "cortes", "suspendido", "suspendidos", "deudores",
+            "instalacion", "instalación", "nuevo cliente", "ingresar cliente", "registrar cliente",
+            "registrar", "alta"
         ])
         if es_cmd_admin:
             contexto = sam_bot_service.obtener_contexto_conversacion(jid_destino, mensaje)
