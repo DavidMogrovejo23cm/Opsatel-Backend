@@ -94,6 +94,22 @@ TOOLS_SCHEMA = [
                 "required": ["titulo"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "consultar_planes_disponibles",
+            "description": "Consulta la tabla oficial 'planes_internet' de MySQL en Opsatel. Retorna los planes vigentes con nombre real, velocidad en Megas (Mbps), precio mensual oficial ($) y pantallas IPTV incluidas. Es de uso OBLIGATORIO cuando pregunten por los planes disponibles, catálogo de planes, precios, velocidades o cambios de plan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "nombre_plan": {
+                        "type": "string",
+                        "description": "Nombre opcional del plan específico a consultar (ej: 'LAG CERO', 'ESTANDAR', 'FAMILIAR'). Si no se especifica, retorna todos los planes disponibles."
+                    }
+                }
+            }
+        }
     }
 ]
 
@@ -229,6 +245,33 @@ def consultar_estado_cliente(telefono: str, db: Session) -> Dict[str, Any]:
                 if olt_def:
                     id_olt = olt_def.id
 
+        # Obtener información técnica y comercial oficial del plan desde la tabla 'planes_internet'
+        nombre_plan_cliente = (cliente.plan or "Plan Estándar").strip()
+        detalles_plan = {
+            "nombre": nombre_plan_cliente,
+            "megas": "No especificado",
+            "velocidad_mbps": 0,
+            "precio_mensual": 0.0,
+            "pantallas_iptv": 0
+        }
+        if nombre_plan_cliente:
+            p_db = db.query(models.PlanInternet).filter(
+                func.lower(func.trim(models.PlanInternet.nombre)) == func.lower(nombre_plan_cliente)
+            ).first()
+            if not p_db:
+                nombre_sin_plan = nombre_plan_cliente.lower().replace("plan", "").strip()
+                p_db = db.query(models.PlanInternet).filter(
+                    func.lower(func.trim(models.PlanInternet.nombre)) == nombre_sin_plan
+                ).first()
+            if p_db:
+                detalles_plan = {
+                    "nombre": p_db.nombre,
+                    "megas": f"{p_db.megas} Megas ({p_db.megas} Mbps)",
+                    "velocidad_mbps": p_db.megas or 0,
+                    "precio_mensual": float(p_db.precio or 0.0),
+                    "pantallas_iptv": p_db.pantallas or 0
+                }
+
         return {
             "success": True,
             "encontrado": True,
@@ -246,7 +289,8 @@ def consultar_estado_cliente(telefono: str, db: Session) -> Dict[str, Any]:
                 "total": round(total_real, 2),
                 "detalle_resumen": desglose_resumen
             },
-            "plan_contratado": cliente.plan or "Plan Estándar",
+            "plan_contratado": nombre_plan_cliente,
+            "detalles_plan_oficial": detalles_plan,
             "nodo": cliente.nodo or "Principal",
             "ip_cliente": cliente.ip or "",
             "id_olt": id_olt,
@@ -461,6 +505,55 @@ def generar_ticket_soporte(cliente_id: int, sintoma_reportado: str, db: Session)
             "mensaje": f"Error al registrar el ticket en el sistema: {str(e)}"
         }
 
+def consultar_planes_disponibles(nombre_plan: Optional[str] = None, db: Session = None) -> Dict[str, Any]:
+    """
+    Consulta la tabla oficial 'planes_internet' de la base de datos MySQL de Opsatel.
+    Retorna la lista oficial de planes vigentes con nombre real, velocidad en Megas (Mbps),
+    precio mensual ($) y pantallas IPTV / OPSATV incluidas.
+    """
+    if db is None:
+        return {
+            "success": False,
+            "error": "Sesión de base de datos no provista.",
+            "planes_oficiales": []
+        }
+    try:
+        from sqlalchemy import func
+        query = db.query(models.PlanInternet)
+        if nombre_plan and str(nombre_plan).strip():
+            filtro = str(nombre_plan).strip().lower().replace("plan", "").strip()
+            query = query.filter(models.PlanInternet.nombre.ilike(f"%{filtro}%"))
+
+        planes = query.order_by(models.PlanInternet.precio.asc()).all()
+        # Si con filtro no encontró nada, consultar todos los planes
+        if not planes and nombre_plan:
+            planes = db.query(models.PlanInternet).order_by(models.PlanInternet.precio.asc()).all()
+
+        lista_planes = []
+        for p in planes:
+            lista_planes.append({
+                "id": p.id,
+                "nombre": p.nombre,
+                "megas": f"{p.megas} Megas ({p.megas} Mbps)",
+                "velocidad_mbps": p.megas or 0,
+                "precio_mensual": float(p.precio or 0.0),
+                "pantallas_iptv": p.pantallas or 0
+            })
+
+        return {
+            "success": True,
+            "total_planes": len(lista_planes),
+            "planes_oficiales": lista_planes,
+            "mensaje": f"Se obtuvieron exitosamente {len(lista_planes)} planes vigentes desde la tabla planes_internet de Opsatel."
+        }
+    except Exception as e:
+        logger.error(f"[ai_tools] Error consultando planes_internet: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "planes_oficiales": []
+        }
+
 # ============================================================================
 # 3. ROUTER / DISPATCHER DE HERRAMIENTAS
 # ============================================================================
@@ -498,6 +591,10 @@ def ejecutar_herramienta(nombre_herramienta: str, argumentos: Dict[str, Any], db
             anio = argumentos.get("anio")
             tipo = argumentos.get("tipo")
             return consultar_pelicula(titulo=titulo, anio=anio, tipo=tipo)
+
+        case "consultar_planes_disponibles":
+            nombre_plan = argumentos.get("nombre_plan")
+            return consultar_planes_disponibles(nombre_plan=nombre_plan, db=db)
 
         case _:
             logger.warning(f"[ai_tools] Herramienta desconocida solicitada: {nombre_herramienta}")
