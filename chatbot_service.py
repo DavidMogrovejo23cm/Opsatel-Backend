@@ -19,12 +19,12 @@ from system_prompt import SYSTEM_PROMPT
 logger = logging.getLogger("opsatel.chatbot_service")
 
 # Modelos recomendados de Groq compatibles con Tool Calling nativo
-DEFAULT_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 FALLBACK_MODELS = [
     DEFAULT_MODEL,
-    "openai/gpt-oss-20b",
     "qwen/qwen3.8-27b",
     "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
     "llama-3.3-70b-versatile",
     "llama-3.1-70b-versatile",
     "llama-3.1-8b-instant"
@@ -74,14 +74,14 @@ def resolver_modelo_groq(client: Groq) -> str:
 
 
 def obtener_cliente_groq() -> Groq:
-    """Instancia el cliente oficial de Groq con timeout estricto para evitar retrasos hacia WhatsApp Bridge."""
+    """Instancia el cliente oficial de Groq con timeout ágil y max_retries=0 para rotar modelos al instante."""
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
         raise ValueError(
             "GROQ_API_KEY no configurada en las variables de entorno (.env). "
             "Por favor, configure GROQ_API_KEY para habilitar el chatbot."
         )
-    return Groq(api_key=api_key, max_retries=1, timeout=18.0)
+    return Groq(api_key=api_key, max_retries=0, timeout=12.0)
 
 
 
@@ -224,39 +224,18 @@ def procesar_mensaje_con_herramientas(
                     break
                 except Exception as e_cand:
                     err_msg = str(e_cand).lower()
-                    # Manejo inteligente de Rate Limit (429 TPM)
-                    if "429" in err_msg or "rate_limit" in err_msg or "tokens per minute" in err_msg or "tokens" in err_msg:
-                        wait_match = re.search(r'try again in (\d+(\.\d+)?)s', err_msg)
-                        wait_s = float(wait_match.group(1)) if wait_match else 0.0
-                        if 0 < wait_s <= 2.5:
-                            logger.info(f"[Chatbot SAM] Esperando {wait_s + 0.3:.2f}s por límite TPM de {cand}...")
-                            time.sleep(wait_s + 0.3)
-                            try:
-                                chat_completion = client.chat.completions.create(
-                                    model=cand,
-                                    messages=messages,
-                                    tools=TOOLS_SCHEMA,
-                                    tool_choice="auto",
-                                    temperature=0.4,
-                                    max_tokens=400
-                                )
-                                model_to_use = cand
-                                _active_groq_model = cand
-                                break
-                            except Exception as e_retry:
-                                logger.warning(f"[Chatbot SAM] Reintento tras espera falló en {cand} ({e_retry}). Rotando al siguiente modelo...")
-
-                        logger.warning(f"[Chatbot SAM] Modelo '{cand}' saturó tokens (429). Rotando automáticamente a modelo alternativo...")
-                        continue
-
+                    # Manejo ágil de Rate Limit (429 TPM): rotación instantánea a modelo alternativo
+                    if "429" in err_msg or "rate_limit" in err_msg or "tokens" in err_msg:
+                        logger.warning(f"[Chatbot SAM] Modelo '{cand}' saturó tokens (429). Rotando inmediatamente a modelo alternativo...")
                     elif any(k in err_msg for k in ["404", "does not exist", "access", "tool calling", "not supported", "400"]):
-                        logger.warning(f"[Chatbot SAM] Modelo '{cand}' incompatible o no disponible ({e_cand}). Probando alternativo...")
-                        continue
+                        logger.warning(f"[Chatbot SAM] Modelo '{cand}' incompatible ({e_cand}). Rotando a modelo alternativo...")
                     else:
-                        raise e_cand
+                        logger.warning(f"[Chatbot SAM] Error con modelo '{cand}' ({e_cand}). Probando alternativo...")
+                    continue
 
             if not chat_completion:
-                raise RuntimeError("Ninguno de los modelos candidatos de Groq estuvo disponible en su cuenta.")
+                logger.error("[Chatbot SAM] Ninguno de los modelos candidatos pudo completar el ciclo con tools.")
+                break
 
             response_message = chat_completion.choices[0].message
             tool_calls = response_message.tool_calls
@@ -314,21 +293,32 @@ def procesar_mensaje_con_herramientas(
 
         except Exception as e:
             logger.error(f"[Chatbot SAM] Error durante ciclo de Groq con herramientas: {e}")
-            return (
-                "Estimado cliente, en este momento estoy verificando su línea con el área técnica. "
-                "Por favor permítame un momento mientras procesamos su solicitud."
-            )
+            break
 
-
-    # Si se alcanzó el límite de iteraciones, solicitar la respuesta final de texto forzada
+    # Si por alguna razón el ciclo de tools no pudo cerrar, solicitar respuesta final de texto natural
     try:
-        final_completion = client.chat.completions.create(
-            model=model_to_use,
-            messages=messages,
-            temperature=0.5,
-            max_tokens=500
-        )
-        return (final_completion.choices[0].message.content or "").strip()
+        # Filtrar llamadas a herramientas huérfanas si quedaron en messages
+        clean_messages = []
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") == "tool" and not m.get("content"):
+                continue
+            clean_messages.append(m)
+
+        for cand_fin in candidatos_modelos:
+            try:
+                final_completion = client.chat.completions.create(
+                    model=cand_fin,
+                    messages=clean_messages,
+                    temperature=0.5,
+                    max_tokens=450
+                )
+                txt_res = (final_completion.choices[0].message.content or "").strip()
+                if txt_res:
+                    return txt_res
+            except Exception:
+                continue
+
+        return "¡Hola! Con gusto te ayudo. ¿En qué te puedo colaborar el día de hoy con tus servicios de Opsatel? 😊"
     except Exception as e:
-        logger.error(f"[Chatbot SAM] Error generando respuesta de cierre tras tools: {e}")
-        return "Su solicitud ha sido recibida y el equipo técnico está al tanto para brindarle asistencia."
+        logger.error(f"[Chatbot SAM] Error generando respuesta de cierre: {e}")
+        return "¡Hola! ¿En qué te puedo colaborar el día de hoy con tus servicios de Opsatel? 😊"
