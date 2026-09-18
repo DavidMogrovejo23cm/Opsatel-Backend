@@ -67,13 +67,28 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "verificar_conexion_y_potencia",
+            "description": "Diagnóstico de conexión técnica: primero comprueba si la IP del cliente está en la lista de suspendidos por pago del firewall MikroTik, y luego consulta la potencia óptica RX de la ONT en la OLT y si está en rango óptimo (-15 a -27 dBm) o sin señal (LOS / foco rojo). Usar de forma obligatoria cuando el cliente reporte que no tiene internet o que está lento.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cliente_id": {"type": "integer", "description": "ID numérico del cliente en BD."}
+                },
+                "required": ["cliente_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "generar_ticket_soporte",
-            "description": "Genera ticket de soporte en BD y alerta por WhatsApp al técnico de guardia ante daño físico o falla persistente.",
+            "description": "Genera ticket de soporte en BD y alerta por WhatsApp al técnico de guardia ante daño físico o falla persistente tras agotar pruebas de primer nivel. Debe incluir el síntoma reportado y el diagnóstico técnico detallado con cifras (potencia óptica, puerto GPON, nodo, ONT ID, IP, saturación LibreQoS, pruebas realizadas).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "cliente_id": {"type": "integer", "description": "ID numérico del cliente en BD."},
-                    "sintoma_reportado": {"type": "string", "description": "Descripción del daño o falla técnica."}
+                    "sintoma_reportado": {"type": "string", "description": "Descripción del daño o falla técnica reportada."},
+                    "diagnostico_tecnico": {"type": "string", "description": "Resumen técnico detallado con cifras (potencia óptica en dBm, puerto GPON, nodo, ONT ID, IP, estado MikroTik, saturación LibreQoS y pruebas de reinicio/cables realizadas)."}
                 },
                 "required": ["cliente_id", "sintoma_reportado"]
             }
@@ -418,12 +433,170 @@ def reiniciar_ont(id_olt: int, puerto: str, ont_id: str, db: Session) -> Dict[st
         }
 
 
+def verificar_conexion_y_potencia(cliente_id: int, db: Session) -> Dict[str, Any]:
+    """
+    Diagnóstico técnico especializado para soporte de Opsatel:
+    1. Comprueba si la IP del cliente se encuentra en la lista de corte/suspensión del firewall en MikroTik
+       (ej: CLIENTES_SUSPENDIDOS_POR_PAGO o CLIENTES_SUSPENDIDOS_POR_PAGOS).
+    2. Si no está cortado en MikroTik, consulta la potencia óptica RX de la ONT en la OLT y verifica
+       si está en rango óptimo (-15.0 a -27.0 dBm) o sin señal (LOS / foco rojo).
+    """
+    if not cliente_id:
+        return {
+            "success": False,
+            "mensaje": "cliente_id es requerido para realizar el diagnóstico técnico."
+        }
+
+    try:
+        cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+        if not cliente:
+            return {
+                "success": False,
+                "mensaje": f"No se encontró el cliente con ID {cliente_id}."
+            }
+
+        ip_cliente = (cliente.ip or "").strip()
+        nodo_cliente = (cliente.nodo or "").strip()
+        is_sayausi = "SAYAUS" in nodo_cliente.upper()
+
+        # 1. Buscar configuración de OLT / MikroTik para el nodo
+        olt_cfg = db.query(models.OLTConfig).filter(
+            models.OLTConfig.active == True,
+            (models.OLTConfig.nodo_asociado == nodo_cliente) |
+            (models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi else models.OLTConfig.nodo_asociado.ilike("%BAN%"))
+        ).first()
+        if not olt_cfg:
+            olt_cfg = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
+
+        # 2. PASO 1: Verificar en Firewall de MikroTik si está en lista de corte por pago
+        suspendido_en_mikrotik = False
+        lista_corte_detectada = ""
+
+        if olt_cfg and olt_cfg.mikrotik_host and ip_cliente:
+            try:
+                from network.adapters.mikrotik import MikroTikAdapter
+                with MikroTikAdapter(
+                    host=olt_cfg.mikrotik_host,
+                    username=olt_cfg.mikrotik_username,
+                    password=olt_cfg.mikrotik_password,
+                    port=olt_cfg.mikrotik_port or 8728
+                ) as mt:
+                    suspendido_en_mikrotik = mt.is_ip_in_suspended_list(ip_cliente)
+                    if suspendido_en_mikrotik:
+                        lista_corte_detectada = "CLIENTES_SUSPENDIDOS_POR_PAGOS" if is_sayausi else "CLIENTES_SUSPENDIDOS_POR_PAGO"
+            except Exception as e_mt:
+                logger.warning(f"[ai_tools] No se pudo verificar MikroTik para IP {ip_cliente}: {e_mt}")
+                if any(k in (cliente.estado or "").lower() for k in ["suspen", "corta", "mora"]):
+                    suspendido_en_mikrotik = True
+                    lista_corte_detectada = "ESTADO_SUSPENDIDO_BD"
+        elif any(k in (cliente.estado or "").lower() for k in ["suspen", "corta"]):
+            suspendido_en_mikrotik = True
+            lista_corte_detectada = "ESTADO_SUSPENDIDO_BD"
+
+        # 3. PASO 2: Verificar potencia óptica de la ONT en la OLT
+        rx_power = None
+        tx_power = None
+        estado_ont = "Activo"
+        hay_potencia = True
+
+        gpon_port = cliente.puerto or ""
+        ont_id_str = str(cliente.ont or "").strip()
+
+        if olt_cfg and gpon_port and ont_id_str:
+            try:
+                olt_interface = OLTInterface(
+                    host=olt_cfg.host,
+                    port=olt_cfg.port or 23,
+                    username=olt_cfg.username,
+                    password=olt_cfg.password,
+                    timeout=olt_cfg.command_timeout or 12
+                )
+                power_res = olt_interface.check_ont_power(gpon_port=gpon_port, ont_id=ont_id_str)
+                rx_power = power_res.get("rx_power") or power_res.get("power")
+                tx_power = power_res.get("tx_power")
+                if power_res.get("status"):
+                    estado_ont = power_res.get("status")
+            except Exception as e_olt:
+                logger.warning(f"[ai_tools] Consulta a OLT en vivo falló ({e_olt}). Usando potencia de BD...")
+
+        # Si la OLT en vivo no respondió o no está disponible, tomar potencia registrada en BD
+        if rx_power is None and cliente.potencia:
+            pot_str = str(cliente.potencia).strip()
+            pot_match = re.search(r'[-+]?\d+(?:\.\d+)?', pot_str)
+            if pot_match:
+                try:
+                    rx_power = float(pot_match.group(0))
+                except ValueError:
+                    pass
+            if any(k in pot_str.lower() for k in ["rojo", "los", "sin", "corte", "offline", "baja"]):
+                hay_potencia = False
+                estado_ont = "LOS_SIN_SENAL"
+
+        # Evaluación de rango óptimo GPON (-15.0 dBm a -27.0 dBm)
+        potencia_en_rango = False
+        diagnostico = ""
+
+        if rx_power is not None:
+            if rx_power <= -31.0 or rx_power >= 0.0:
+                hay_potencia = False
+                potencia_en_rango = False
+                diagnostico = f"Sin potencia óptica detectable ({rx_power} dBm). Posible corte de fibra o foco rojo (LOS)."
+            elif rx_power < -27.5:
+                hay_potencia = True
+                potencia_en_rango = False
+                diagnostico = f"Potencia óptica atenuada o baja ({rx_power} dBm), fuera del rango óptimo recomendado."
+            elif -27.5 <= rx_power <= -14.0:
+                hay_potencia = True
+                potencia_en_rango = True
+                diagnostico = f"Potencia óptica normal y en rango óptimo ({rx_power} dBm)."
+            else:
+                hay_potencia = True
+                potencia_en_rango = True
+                diagnostico = f"Potencia óptica registrada: {rx_power} dBm."
+        else:
+            if any(k in estado_ont.lower() for k in ["los", "offline", "down", "sin", "corte", "fall"]):
+                hay_potencia = False
+                potencia_en_rango = False
+                diagnostico = f"ONT fuera de línea o sin señal óptica ({estado_ont}). Posible foco rojo (LOS)."
+            else:
+                hay_potencia = False
+                potencia_en_rango = False
+                diagnostico = f"Sin lectura de potencia óptica en la OLT (Estado: {estado_ont})."
+
+        return {
+            "success": True,
+            "cliente_id": cliente.id,
+            "nombre": cliente.nombre,
+            "ip": ip_cliente,
+            "nodo": nodo_cliente,
+            "gpon_puerto": gpon_port,
+            "ont_id": ont_id_str,
+            "suspendido_en_mikrotik": suspendido_en_mikrotik,
+            "en_lista_corte_mikrotik": suspendido_en_mikrotik,
+            "lista_corte_mikrotik": lista_corte_detectada,
+            "hay_potencia_optica": hay_potencia,
+            "foco_rojo_probable": (not hay_potencia),
+            "potencia_rx_dbm": rx_power,
+            "potencia_en_rango_optimo": potencia_en_rango,
+            "rango_optimo_referencia": "-15.0 dBm a -27.0 dBm",
+            "estado_ont": estado_ont,
+            "diagnostico_resumen": diagnostico
+        }
+    except Exception as e:
+        logger.error(f"[ai_tools] Error en verificar_conexion_y_potencia: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "diagnostico_resumen": f"Error realizando diagnóstico técnico: {str(e)}"
+        }
+
+
 NUMERO_TECNICO_GUARDIA = "593988804142"
 
-def generar_ticket_soporte(cliente_id: int, sintoma_reportado: str, db: Session) -> Dict[str, Any]:
+def generar_ticket_soporte(cliente_id: int, sintoma_reportado: str, db: Session, diagnostico_tecnico: Optional[str] = None) -> Dict[str, Any]:
     """
-    Crea una orden formal de trabajo en models.HojaRuta y despacha una alerta al técnico de guardia.
-    Exige que cliente_id pertenezca a un cliente verificado en MySQL para evitar tickets con 'N/A' o vacíos.
+    Crea una orden formal de trabajo en models.HojaRuta y despacha una alerta detallada al técnico de guardia.
+    Incluye el síntoma reportado y el diagnóstico técnico completo con cifras.
     """
     if not cliente_id:
         return {
@@ -439,14 +612,25 @@ def generar_ticket_soporte(cliente_id: int, sintoma_reportado: str, db: Session)
                 "mensaje": f"No se encontró ningún cliente en la base de datos con ID {cliente_id}. Pida cédula o celular para identificarlo."
             }
 
-        import pytz
-        from datetime import datetime
-        EC_TZ = pytz.timezone('America/Guayaquil')
-        ahora = datetime.now(EC_TZ)
+        from datetime import datetime, timezone, timedelta
+        try:
+            import pytz
+            EC_TZ = pytz.timezone('America/Guayaquil')
+            ahora = datetime.now(EC_TZ)
+        except Exception:
+            try:
+                from zoneinfo import ZoneInfo
+                ahora = datetime.now(ZoneInfo('America/Guayaquil'))
+            except Exception:
+                ahora = datetime.now(timezone(timedelta(hours=-5)))
         fecha_hoy = ahora.strftime("%Y-%m-%d")
         hora_actual = ahora.strftime("%H:%M")
 
         # 1. Crear Orden en models.HojaRuta en MySQL
+        observacion_txt = f"Falla: {sintoma_reportado} | Plan: {cliente.plan or 'N/A'} | IP: {cliente.ip or 'N/A'}"
+        if diagnostico_tecnico:
+            observacion_txt += f" | Diag: {diagnostico_tecnico[:250]}"
+
         nuevo_ticket = models.HojaRuta(
             fecha=fecha_hoy,
             tecnico="Por Asignar",
@@ -456,7 +640,7 @@ def generar_ticket_soporte(cliente_id: int, sintoma_reportado: str, db: Session)
             ubicacion_cliente=f"{cliente.direccion or 'N/A'} (Nodo: {cliente.nodo or 'Principal'})".strip(),
             celular_cliente=cliente.celular or "N/A",
             actividad="SOPORTE TÉCNICO - GENERADO POR SAM AI",
-            observacion=f"Falla: {sintoma_reportado} | Plan: {cliente.plan or 'N/A'} | IP: {cliente.ip or 'N/A'}",
+            observacion=observacion_txt,
             parroquia=cliente.parroquia or "N/A",
             estado="Pendiente"
         )
@@ -467,6 +651,8 @@ def generar_ticket_soporte(cliente_id: int, sintoma_reportado: str, db: Session)
         logger.info(f"[ai_tools] [OK] Creado ticket HojaRuta #{nuevo_ticket.id} para cliente {cliente.nombre}")
 
         # 2. Despachar mensaje de alerta al WhatsApp del técnico de guardia
+        diag_seccion = f"📊 *Análisis y Diagnóstico Técnico (SAM)*:\n\"{diagnostico_tecnico.strip()}\"\n\n" if diagnostico_tecnico else ""
+
         alerta_tecnico = (
             f"🚨 *[NUEVA ORDEN DE SOPORTE TÉCNICO — OPSATEL]*\n\n"
             f"🎫 *Ticket / Hoja de Ruta*: #{nuevo_ticket.id}\n"
@@ -478,8 +664,9 @@ def generar_ticket_soporte(cliente_id: int, sintoma_reportado: str, db: Session)
             f"🌐 *IP*: `{cliente.ip or 'N/A'}`\n"
             f"📶 *Plan*: {cliente.plan or 'N/A'}\n\n"
             f"💬 *Falla / Síntoma Reportado*:\n\"{sintoma_reportado}\"\n\n"
+            f"{diag_seccion}"
             f"⏰ *Fecha y Hora*: {ahora.strftime('%d/%m/%Y %I:%M %p')}\n\n"
-            f"_Ticket escalado formalmente por SAM tras confirmación técnica. Favor gestionar con prioridad._"
+            f"_Ticket escalado formalmente por SAM tras confirmación técnica de campo._"
         )
         try:
             import whatsapp_service
@@ -580,10 +767,15 @@ def ejecutar_herramienta(nombre_herramienta: str, argumentos: Dict[str, Any], db
             ont_id = str(argumentos.get("ont_id", "")).strip()
             return reiniciar_ont(id_olt=id_olt, puerto=puerto, ont_id=ont_id, db=db)
             
+        case "verificar_conexion_y_potencia":
+            cliente_id = int(argumentos.get("cliente_id", 0))
+            return verificar_conexion_y_potencia(cliente_id=cliente_id, db=db)
+
         case "generar_ticket_soporte":
             cliente_id = int(argumentos.get("cliente_id", 0))
             sintoma = str(argumentos.get("sintoma_reportado", "Falla técnica reportada por el cliente")).strip()
-            return generar_ticket_soporte(cliente_id=cliente_id, sintoma_reportado=sintoma, db=db)
+            diagnostico = argumentos.get("diagnostico_tecnico")
+            return generar_ticket_soporte(cliente_id=cliente_id, sintoma_reportado=sintoma, db=db, diagnostico_tecnico=diagnostico)
 
         case "consultar_pelicula_o_serie":
             from services.omdb_service import consultar_pelicula
