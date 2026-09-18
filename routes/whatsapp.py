@@ -948,8 +948,10 @@ def webhook_mensaje_whatsapp(
                     f"El cliente escribe desde el número celular registrado '{tel_real}'. "
                     f"Tu PRIMERA ACCIÓN OBLIGATORIA ante cualquier consulta, saludo o reclamo es ejecutar "
                     f"'consultar_estado_cliente(telefono='{tel_real}')' para verificar su contrato, saldo y servicio. "
-                    "Si la herramienta encuentra sus datos, identifícalo de inmediato por su nombre, trátalo con calidez y "
-                    "NO LE PIDAS CÉDULA NI NÚMERO DE TELÉFONO porque ya está plenamente identificado en el sistema."
+                    "Si la herramienta encuentra sus datos, trátalo con calidez por su primer nombre y "
+                    "NO LE PIDAS CÉDULA NI TELÉFONO. "
+                    "REGLA CRÍTICA: Si el usuario únicamente saluda ('hola', 'buenas'), responde exclusivamente con un saludo cálido y pregunta amablemente en qué le colaboras hoy. "
+                    "PROHIBIDO cobrarle, mencionarle moras, saldos o enviarle cuentas bancarias en un simple saludo."
                 )
 
         # 3. Verificar si el bot está en pausa por intervención de un operador humano

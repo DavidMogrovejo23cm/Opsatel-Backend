@@ -24,11 +24,11 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "consultar_estado_cliente",
-            "description": "Busca cliente en MySQL por celular. Retorna estado financiero, saldo, plan, IP, ONT ID y puerto GPON.",
+            "description": "Busca cliente en MySQL por celular o cédula. Retorna nombre amigable, estado financiero, saldo total consolidado (Internet + IPTV + Adicionales), desglose de deuda, plan, IP, ONT ID y puerto GPON.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "telefono": {"type": "string", "description": "Celular del cliente (ej: '0995796562')."}
+                    "telefono": {"type": "string", "description": "Celular o cédula del cliente (ej: '0995796562')."}
                 },
                 "required": ["telefono"]
             }
@@ -171,10 +171,49 @@ def consultar_estado_cliente(telefono: str, db: Session) -> Dict[str, Any]:
                 )
             }
 
-        # Determinación del estado financiero
-        saldo = float(cliente.saldo or 0.0)
+        # Función auxiliar para convertir valores numéricos/moneda a float limpio
+        def _parse_monto(val):
+            if val is None or val == "":
+                return 0.0
+            try:
+                s = str(val).replace("$", "").replace(",", ".").strip()
+                return float(s) if s else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+
+        # Cálculo de valores financieros consolidados (Internet + IPTV Plus + Adicionales)
+        saldo_internet = _parse_monto(cliente.saldo)
+        iptv_val = _parse_monto(cliente.plus)
+        adicional_val = _parse_monto(cliente.adicional)
+
+        # El sistema consolida en total_pago la deuda total real:
+        total_guardado = _parse_monto(cliente.total_pago)
+        total_calculado = max(0.0, saldo_internet + iptv_val + adicional_val)
+
+        if total_guardado > 0 and total_guardado >= total_calculado:
+            total_real = total_guardado
+        else:
+            total_real = total_calculado
+
         estado_raw = (cliente.estado or "").strip().lower()
-        es_mora = saldo > 0.05 or "corta" in estado_raw or "mora" in estado_raw or "suspen" in estado_raw
+        es_mora = total_real > 0.05 or "corta" in estado_raw or "mora" in estado_raw or "suspen" in estado_raw
+
+        # Construcción de desglose explicativo amigable
+        desglose_partes = []
+        if saldo_internet > 0:
+            desglose_partes.append(f"${saldo_internet:.2f} Internet")
+        if iptv_val > 0:
+            desglose_partes.append(f"${iptv_val:.2f} IPTV/TV")
+        if adicional_val > 0:
+            desglose_partes.append(f"${adicional_val:.2f} Adicional")
+
+        desglose_resumen = " + ".join(desglose_partes) if desglose_partes else "Sin valores pendientes"
+
+        # Nombre amigable formateado en Title Case para evitar responder en mayúsculas sostenidas
+        nombre_completo = (cliente.nombre or "Cliente").strip()
+        partes_nom = [p.capitalize() for p in nombre_completo.split() if p.strip()]
+        primer_nombre = partes_nom[0] if partes_nom else "Cliente"
+        nombre_amigable = f"{partes_nom[0]} {partes_nom[1]}" if len(partes_nom) > 1 else primer_nombre
 
         # Determinar ID de OLT según el nodo del cliente
         id_olt = 1
@@ -194,9 +233,19 @@ def consultar_estado_cliente(telefono: str, db: Session) -> Dict[str, Any]:
             "success": True,
             "encontrado": True,
             "cliente_id": cliente.id,
-            "nombre": cliente.nombre or "Cliente",
+            "nombre": nombre_completo,
+            "primer_nombre": primer_nombre,
+            "nombre_amigable": nombre_amigable,
             "estado_financiero": "EN_MORA" if es_mora else "AL_DIA",
-            "saldo_pendiente": saldo,
+            "total_pendiente": round(total_real, 2),
+            "saldo_pendiente": round(total_real, 2),
+            "desglose_deuda": {
+                "internet": round(saldo_internet, 2),
+                "iptv_plus": round(iptv_val, 2),
+                "adicional": round(adicional_val, 2),
+                "total": round(total_real, 2),
+                "detalle_resumen": desglose_resumen
+            },
             "plan_contratado": cliente.plan or "Plan Estándar",
             "nodo": cliente.nodo or "Principal",
             "ip_cliente": cliente.ip or "",

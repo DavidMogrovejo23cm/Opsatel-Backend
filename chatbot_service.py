@@ -120,8 +120,10 @@ def resolver_identidad_whatsapp(numero_raw: str, jid_original: str = "") -> Dict
             f"El cliente escribe desde el número celular registrado '{telefono_limpio}'. "
             f"Tu PRIMERA ACCIÓN OBLIGATORIA ante cualquier consulta, saludo o reclamo es ejecutar "
             f"'consultar_estado_cliente(telefono='{telefono_limpio}')' para verificar su contrato, saldo y servicio. "
-            "Si la herramienta encuentra sus datos, identifícalo de inmediato por su nombre, trátalo con calidez y "
-            "NO LE PIDAS CÉDULA NI NÚMERO DE TELÉFONO porque ya está plenamente identificado en el sistema."
+            "Si la herramienta encuentra sus datos, trátalo con calidez por su primer nombre y "
+            "NO LE PIDAS CÉDULA NI TELÉFONO. "
+            "REGLA CRÍTICA: Si el usuario únicamente saluda ('hola', 'buenas'), responde exclusivamente con un saludo cálido y pregunta amablemente en qué le colaboras hoy. "
+            "PROHIBIDO cobrarle, mencionarle moras, saldos o enviarle cuentas bancarias en un simple saludo."
         )
     else:
         telefono_limpio = ""
@@ -286,7 +288,7 @@ def procesar_mensaje_con_herramientas(
                 if function_name == "consultar_estado_cliente" and not arguments.get("telefono"):
                     import re
                     solo_dig = re.sub(r'\D', '', str(numero or ""))
-                    if solo_dig and 8 <= len(solo_dig) <= 12 and "@lid" not in str(numero).lower():
+                    if solo_dig and 8 <= len(solo_dig) <= 13 and "@lid" not in str(numero).lower():
                         arguments["telefono"] = numero
                     else:
                         arguments["telefono"] = ""
