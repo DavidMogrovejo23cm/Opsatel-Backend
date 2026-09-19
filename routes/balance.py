@@ -1607,6 +1607,46 @@ def construir_datos_arcotel(mes: str, db: Session):
         "% CUMPLIMIENTO": cumplimiento_sin_iva
     })
 
+    # 4. Tarifas de Internet Fijo Dedicado (ARCOTEL)
+    planes_tarifas_base = [
+        {"nombre": "PERSONAL 100M 8:1", "match": ["100", "ESTANDAR", "PERSONAL"], "precio": 17.25, "down": 100, "up": 100, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
+        {"nombre": "CONEXION ESTABLE 600M 8:1", "match": ["600", "FAMILIAR"], "precio": 20.54, "down": 250, "up": 250, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
+        {"nombre": "FULL CONECTADO 650M 8:1", "match": ["650", "+", "CONECTADO"], "precio": 23.00, "down": 300, "up": 300, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
+        {"nombre": "LAG CERO 700M 8:1", "match": ["700", "LAG CERO"], "precio": 25.00, "down": 400, "up": 400, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
+        {"nombre": "GAMER PRO 800M 8:1", "match": ["800", "GAMER"], "precio": 32.20, "down": 800, "up": 800, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
+        {"nombre": "CORP ESTABLE 850M 4:1", "match": ["850", "CORP ESTABLE"], "precio": 55.20, "down": 850, "up": 850, "comp": "4:1", "tipo": "CORPORATIVO", "tec": "FTTH"},
+        {"nombre": "CORP FULL 900M 4:1", "match": ["900", "CORP FULL"], "precio": 89.60, "down": 900, "up": 900, "comp": "4:1", "tipo": "CORPORATIVO", "tec": "FTTH"},
+    ]
+
+    fecha_vigencia_val = f"{month_num}/01/{parts[0]}" if len(parts) == 2 else "09/01/2026"
+    data_tarifas = []
+    for pt in planes_tarifas_base:
+        cant = 0
+        for r in resumen_data:
+            p_nom = str(r.get("PLAN", "")).upper()
+            if "TOTAL" in p_nom or "SIN IVA" in p_nom:
+                continue
+            if pt["nombre"].startswith("CONEXION ESTABLE") and "+" in p_nom:
+                continue
+            if any(m in p_nom for m in pt["match"]):
+                cant = int(r.get("CANTIDAD CLIENTES") or 0)
+                break
+        
+        data_tarifas.append({
+            "MES": mes_nombre_upper,
+            "CIUDAD": "CUENCA",
+            "NOMBRE COMERCIAL DEL PLAN TARIFARIO": pt["nombre"],
+            "FECHA DE VIGENCIA DEL PLAN TARIFARIO": fecha_vigencia_val,
+            "CANTIDAD ABONADOS/CLIENTES": cant,
+            "TIPO (RESIDENCIAL, CORPORATIVO, CIBERCAFE)": pt["tipo"],
+            "TARIFA MENSUAL [USD] (incluido impuestos)": pt["precio"],
+            "DOWNLINK [Mbps]": pt["down"],
+            "UPLINK [Mbps]": pt["up"],
+            "NIVEL DE COMPARTICIÓN [X:1]": pt["comp"],
+            "TECNOLOGÍA (ADSL, SDSL, HFC, FTTH, WIMAX, WIFI, OTROS)": pt["tec"],
+            "OBSERVACIONES (Opcional)": ""
+        })
+
     parroquias_set = sorted(list(set(str(x.get("Parroquia") or "") for x in data_alta_vel if x.get("Parroquia"))))
 
     kpis = {
@@ -1626,7 +1666,8 @@ def construir_datos_arcotel(mes: str, db: Session):
         "kpis": kpis,
         "cuentas_alta_velocidad": data_alta_vel,
         "facturacion_clientes": data_clientes,
-        "resumen_planes": resumen_data
+        "resumen_planes": resumen_data,
+        "tarifas_planes": data_tarifas
     }
 
 @router.get("/reporte-arcotel-preview")
@@ -1927,6 +1968,43 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     })
     df_resumen = pd.DataFrame(resumen_data)
 
+    # ── HOJA TARIFAS ARCOTEL (INTERNET FIJO DEDICADO) ──
+    planes_tarifas_base = [
+        {"nombre": "PERSONAL 100M 8:1", "match": ["100", "ESTANDAR", "PERSONAL"], "precio": 17.25, "down": 100, "up": 100, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
+        {"nombre": "CONEXION ESTABLE 600M 8:1", "match": ["600", "FAMILIAR"], "precio": 20.54, "down": 250, "up": 250, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
+        {"nombre": "FULL CONECTADO 650M 8:1", "match": ["650", "+", "CONECTADO"], "precio": 23.00, "down": 300, "up": 300, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
+        {"nombre": "LAG CERO 700M 8:1", "match": ["700", "LAG CERO"], "precio": 25.00, "down": 400, "up": 400, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
+        {"nombre": "GAMER PRO 800M 8:1", "match": ["800", "GAMER"], "precio": 32.20, "down": 800, "up": 800, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
+        {"nombre": "CORP ESTABLE 850M 4:1", "match": ["850", "CORP ESTABLE"], "precio": 55.20, "down": 850, "up": 850, "comp": "4:1", "tipo": "CORPORATIVO", "tec": "FTTH"},
+        {"nombre": "CORP FULL 900M 4:1", "match": ["900", "CORP FULL"], "precio": 89.60, "down": 900, "up": 900, "comp": "4:1", "tipo": "CORPORATIVO", "tec": "FTTH"},
+    ]
+    fecha_vigencia_val = f"{month_num}/01/{parts[0]}" if len(parts) == 2 else "09/01/2026"
+    data_tarifas = []
+    for pt in planes_tarifas_base:
+        cant = 0
+        for r in resumen_data:
+            p_nom = str(r.get("PLAN", "")).upper()
+            if "TOTAL" in p_nom or "SIN IVA" in p_nom: continue
+            if pt["nombre"].startswith("CONEXION ESTABLE") and "+" in p_nom: continue
+            if any(m in p_nom for m in pt["match"]):
+                cant = int(r.get("CANTIDAD CLIENTES") or 0)
+                break
+        data_tarifas.append({
+            "MES": month_name_es.upper(),
+            "CIUDAD": "CUENCA",
+            "NOMBRE COMERCIAL DEL PLAN TARIFARIO": pt["nombre"],
+            "FECHA DE VIGENCIA DEL PLAN TARIFARIO": fecha_vigencia_val,
+            "CANTIDAD ABONADOS/CLIENTES": cant,
+            "TIPO (RESIDENCIAL, CORPORATIVO, CIBERCAFE)": pt["tipo"],
+            "TARIFA MENSUAL [USD] (incluido impuestos)": pt["precio"],
+            "DOWNLINK [Mbps]": pt["down"],
+            "UPLINK [Mbps]": pt["up"],
+            "NIVEL DE COMPARTICIÓN [X:1]": pt["comp"],
+            "TECNOLOGÍA (ADSL, SDSL, HFC, FTTH, WIMAX, WIFI, OTROS)": pt["tec"],
+            "OBSERVACIONES (Opcional)": ""
+        })
+    df_tarifas = pd.DataFrame(data_tarifas)
+
     # ── HOJA 3: DESGLOSE DE INGRESOS POR BANCO/SERVICIO ──
     extras = db.query(models.ClienteExtra).all()
     month_key = {
@@ -2061,6 +2139,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         df_clientes.to_excel(writer, sheet_name="Facturación Clientes", startrow=4, index=False)
         df_alta_vel.to_excel(writer, sheet_name="Cuentas Alta Velocidad", startrow=2, index=False)
         df_resumen.to_excel(writer, sheet_name="Resumen por Plan", startrow=4, index=False)
+        df_tarifas.to_excel(writer, sheet_name="Tarifas ARCOTEL", startrow=2, index=False)
         df_desglose.to_excel(writer, sheet_name="Ingresos por Banco", startrow=4, index=False)
         df_egresos.to_excel(writer, sheet_name="Egresos", startrow=4, index=False)
         df_proyectos.to_excel(writer, sheet_name="Proyectos", startrow=4, index=False)
