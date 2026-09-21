@@ -1387,6 +1387,133 @@ def try_int_val(val, default=0):
     except Exception:
         return default
 
+# Mapeo oficial ARCOTEL para los planes configurados en Configuraciones
+MAP_COMERCIAL_TARIFAS = {
+    "ESTANDAR": ("PERSONAL 100M 8:1", 100, 100),
+    "100MB": ("PERSONAL 100M 8:1", 100, 100),
+    "FAMILIAR": ("CONEXION ESTABLE 600M 8:1", 250, 250),
+    "600MB": ("CONEXION ESTABLE 600M 8:1", 250, 250),
+    "FAMILIAR +": ("FULL CONECTADO 650M 8:1", 300, 300),
+    "FAMILIAR+": ("FULL CONECTADO 650M 8:1", 300, 300),
+    "650MB": ("FULL CONECTADO 650M 8:1", 300, 300),
+    "LAG CERO": ("LAG CERO 700M 8:1", 400, 400),
+    "700MB": ("LAG CERO 700M 8:1", 400, 400),
+    "GAMER PRO": ("GAMER PRO 800M 8:1", 800, 800),
+    "800MB": ("GAMER PRO 800M 8:1", 800, 800),
+}
+
+CORP_OFICIALES_TARIFAS = [
+    {"nombre": "CORP ESTABLE 850M 4:1", "precio": 55.20, "down": 850, "up": 850, "comp": "4:1", "tipo": "CORPORATIVO"},
+    {"nombre": "CORP FULL 900M 4:1", "precio": 89.60, "down": 900, "up": 900, "comp": "4:1", "tipo": "CORPORATIVO"},
+]
+
+def generar_data_tarifas(planes, resumen_data, mes_nombre_upper: str, fecha_vigencia_val: str):
+    data_tarifas = []
+    nombres_agregados = set()
+
+    # Iterar estrictamente sobre planes configurados en Configuraciones (models.PlanInternet)
+    for p in planes:
+        if not p.nombre:
+            continue
+        p_raw = p.nombre.strip()
+        p_clean = p_raw.upper()
+        if p_clean in nombres_agregados:
+            continue
+        nombres_agregados.add(p_clean)
+
+        if p_clean in MAP_COMERCIAL_TARIFAS:
+            nom_com, down_v, up_v = MAP_COMERCIAL_TARIFAS[p_clean]
+        else:
+            nom_com = p_raw.upper()
+            if "8:1" not in nom_com and "4:1" not in nom_com:
+                nom_com = f"{nom_com} {try_int_val(p.megas)}M 8:1"
+            down_v = try_int_val(p.megas) or 100
+            up_v = try_int_val(p.megas) or 100
+
+        cant_cli = 0
+        for r in resumen_data:
+            r_plan = str(r.get("PLAN", "")).strip().upper()
+            if r_plan == p_clean or (p_clean in r_plan and "TOTAL" not in r_plan and "SIN IVA" not in r_plan):
+                cant_cli = int(r.get("CANTIDAD CLIENTES") or 0)
+                break
+
+        is_corp = ("CORP" in nom_com or "EMPRES" in nom_com)
+        tipo_v = "CORPORATIVO" if is_corp else "RESIDENCIAL"
+        comp_v = "4:1" if is_corp else "8:1"
+
+        data_tarifas.append({
+            "MES": mes_nombre_upper,
+            "CIUDAD": "CUENCA",
+            "NOMBRE COMERCIAL DEL PLAN TARIFARIO": nom_com,
+            "FECHA DE VIGENCIA DEL PLAN TARIFARIO": fecha_vigencia_val,
+            "CANTIDAD ABONADOS/CLIENTES": cant_cli,
+            "TIPO (RESIDENCIAL, CORPORATIVO, CIBERCAFE)": tipo_v,
+            "TARIFA MENSUAL [USD] (incluido impuestos)": float(p.precio or 0.0),
+            "DOWNLINK [Mbps]": down_v,
+            "UPLINK [Mbps]": up_v,
+            "NIVEL DE COMPARTICIÓN [X:1]": comp_v,
+            "TECNOLOGÍA (ADSL, SDSL, HFC, FTTH, WIMAX, WIFI, OTROS)": "FTTH",
+            "OBSERVACIONES (Opcional)": ""
+        })
+
+    # Si no hubiera planes en BD por alguna razón, usar los estándar configurados
+    if not data_tarifas:
+        default_cfg = [
+            ("ESTANDAR", 100, 17.25),
+            ("FAMILIAR", 600, 20.54),
+            ("FAMILIAR +", 650, 23.00),
+            ("LAG CERO", 700, 25.00),
+            ("GAMER PRO", 800, 32.20),
+        ]
+        for nom, meg, prec in default_cfg:
+            nom_com, down_v, up_v = MAP_COMERCIAL_TARIFAS.get(nom, (f"{nom} {meg}M 8:1", meg, meg))
+            cant_cli = 0
+            for r in resumen_data:
+                r_plan = str(r.get("PLAN", "")).strip().upper()
+                if nom in r_plan and "TOTAL" not in r_plan and "SIN IVA" not in r_plan:
+                    cant_cli = int(r.get("CANTIDAD CLIENTES") or 0)
+                    break
+            data_tarifas.append({
+                "MES": mes_nombre_upper,
+                "CIUDAD": "CUENCA",
+                "NOMBRE COMERCIAL DEL PLAN TARIFARIO": nom_com,
+                "FECHA DE VIGENCIA DEL PLAN TARIFARIO": fecha_vigencia_val,
+                "CANTIDAD ABONADOS/CLIENTES": cant_cli,
+                "TIPO (RESIDENCIAL, CORPORATIVO, CIBERCAFE)": "RESIDENCIAL",
+                "TARIFA MENSUAL [USD] (incluido impuestos)": prec,
+                "DOWNLINK [Mbps]": down_v,
+                "UPLINK [Mbps]": up_v,
+                "NIVEL DE COMPARTICIÓN [X:1]": "8:1",
+                "TECNOLOGÍA (ADSL, SDSL, HFC, FTTH, WIMAX, WIFI, OTROS)": "FTTH",
+                "OBSERVACIONES (Opcional)": ""
+            })
+
+    # Agregar los 2 planes Corporativos oficiales fijos
+    for cp in CORP_OFICIALES_TARIFAS:
+        if not any(cp["nombre"].upper() in str(x.get("NOMBRE COMERCIAL DEL PLAN TARIFARIO", "")).upper() for x in data_tarifas):
+            cant_c = 0
+            for r in resumen_data:
+                r_plan = str(r.get("PLAN", "")).strip().upper()
+                if cp["nombre"].split()[0] in r_plan:
+                    cant_c = int(r.get("CANTIDAD CLIENTES") or 0)
+                    break
+            data_tarifas.append({
+                "MES": mes_nombre_upper,
+                "CIUDAD": "CUENCA",
+                "NOMBRE COMERCIAL DEL PLAN TARIFARIO": cp["nombre"],
+                "FECHA DE VIGENCIA DEL PLAN TARIFARIO": fecha_vigencia_val,
+                "CANTIDAD ABONADOS/CLIENTES": cant_c,
+                "TIPO (RESIDENCIAL, CORPORATIVO, CIBERCAFE)": cp["tipo"],
+                "TARIFA MENSUAL [USD] (incluido impuestos)": cp["precio"],
+                "DOWNLINK [Mbps]": cp["down"],
+                "UPLINK [Mbps]": cp["up"],
+                "NIVEL DE COMPARTICIÓN [X:1]": cp["comp"],
+                "TECNOLOGÍA (ADSL, SDSL, HFC, FTTH, WIMAX, WIFI, OTROS)": "FTTH",
+                "OBSERVACIONES (Opcional)": ""
+            })
+
+    return data_tarifas
+
 def construir_datos_arcotel(mes: str, db: Session):
     parts = mes.split("-")
     clientes = db.query(models.Cliente).all()
@@ -1458,7 +1585,7 @@ def construir_datos_arcotel(mes: str, db: Session):
         })
     data_clientes.sort(key=lambda x: (str(x.get("ESTADO") or ""), str(x.get("NAME") or "")))
 
-    # 2. Cuentas Alta Velocidad
+    # 2. Reporte Usuarios (Acceso no conmutado - Líneas dedicadas)
     mes_nombre_upper = month_name_es.upper()
     data_alta_vel = []
     for c in clientes_con_factura:
@@ -1607,45 +1734,9 @@ def construir_datos_arcotel(mes: str, db: Session):
         "% CUMPLIMIENTO": cumplimiento_sin_iva
     })
 
-    # 4. Tarifas de Internet Fijo Dedicado (ARCOTEL)
-    planes_tarifas_base = [
-        {"nombre": "PERSONAL 100M 8:1", "match": ["100", "ESTANDAR", "PERSONAL"], "precio": 17.25, "down": 100, "up": 100, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
-        {"nombre": "CONEXION ESTABLE 600M 8:1", "match": ["600", "FAMILIAR"], "precio": 20.54, "down": 250, "up": 250, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
-        {"nombre": "FULL CONECTADO 650M 8:1", "match": ["650", "+", "CONECTADO"], "precio": 23.00, "down": 300, "up": 300, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
-        {"nombre": "LAG CERO 700M 8:1", "match": ["700", "LAG CERO"], "precio": 25.00, "down": 400, "up": 400, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
-        {"nombre": "GAMER PRO 800M 8:1", "match": ["800", "GAMER"], "precio": 32.20, "down": 800, "up": 800, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
-        {"nombre": "CORP ESTABLE 850M 4:1", "match": ["850", "CORP ESTABLE"], "precio": 55.20, "down": 850, "up": 850, "comp": "4:1", "tipo": "CORPORATIVO", "tec": "FTTH"},
-        {"nombre": "CORP FULL 900M 4:1", "match": ["900", "CORP FULL"], "precio": 89.60, "down": 900, "up": 900, "comp": "4:1", "tipo": "CORPORATIVO", "tec": "FTTH"},
-    ]
-
+    # 4. Tarifas de Internet Fijo Dedicado (ARCOTEL) - Solo planes de Configuraciones + Corporativo
     fecha_vigencia_val = f"{month_num}/01/{parts[0]}" if len(parts) == 2 else "09/01/2026"
-    data_tarifas = []
-    for pt in planes_tarifas_base:
-        cant = 0
-        for r in resumen_data:
-            p_nom = str(r.get("PLAN", "")).upper()
-            if "TOTAL" in p_nom or "SIN IVA" in p_nom:
-                continue
-            if pt["nombre"].startswith("CONEXION ESTABLE") and "+" in p_nom:
-                continue
-            if any(m in p_nom for m in pt["match"]):
-                cant = int(r.get("CANTIDAD CLIENTES") or 0)
-                break
-        
-        data_tarifas.append({
-            "MES": mes_nombre_upper,
-            "CIUDAD": "CUENCA",
-            "NOMBRE COMERCIAL DEL PLAN TARIFARIO": pt["nombre"],
-            "FECHA DE VIGENCIA DEL PLAN TARIFARIO": fecha_vigencia_val,
-            "CANTIDAD ABONADOS/CLIENTES": cant,
-            "TIPO (RESIDENCIAL, CORPORATIVO, CIBERCAFE)": pt["tipo"],
-            "TARIFA MENSUAL [USD] (incluido impuestos)": pt["precio"],
-            "DOWNLINK [Mbps]": pt["down"],
-            "UPLINK [Mbps]": pt["up"],
-            "NIVEL DE COMPARTICIÓN [X:1]": pt["comp"],
-            "TECNOLOGÍA (ADSL, SDSL, HFC, FTTH, WIMAX, WIFI, OTROS)": pt["tec"],
-            "OBSERVACIONES (Opcional)": ""
-        })
+    data_tarifas = generar_data_tarifas(planes, resumen_data, mes_nombre_upper, fecha_vigencia_val)
 
     parroquias_set = sorted(list(set(str(x.get("Parroquia") or "") for x in data_alta_vel if x.get("Parroquia"))))
 
@@ -1773,7 +1864,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     if not df_clientes.empty:
         df_clientes = df_clientes.sort_values(by=["ESTADO", "NAME"])
 
-    # ── NUEVA HOJA: CUENTAS ALTA VELOCIDAD (FORMATO ARCOTEL - LÍNEAS DEDICADAS) ──
+    # ── NUEVA HOJA: REPORTE USUARIOS (FORMATO ARCOTEL - LÍNEAS DEDICADAS) ──
     mes_nombre_upper = month_name_es.upper()
     data_alta_vel = []
     for c in clientes_con_factura:
@@ -1969,40 +2060,8 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     df_resumen = pd.DataFrame(resumen_data)
 
     # ── HOJA TARIFAS ARCOTEL (INTERNET FIJO DEDICADO) ──
-    planes_tarifas_base = [
-        {"nombre": "PERSONAL 100M 8:1", "match": ["100", "ESTANDAR", "PERSONAL"], "precio": 17.25, "down": 100, "up": 100, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
-        {"nombre": "CONEXION ESTABLE 600M 8:1", "match": ["600", "FAMILIAR"], "precio": 20.54, "down": 250, "up": 250, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
-        {"nombre": "FULL CONECTADO 650M 8:1", "match": ["650", "+", "CONECTADO"], "precio": 23.00, "down": 300, "up": 300, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
-        {"nombre": "LAG CERO 700M 8:1", "match": ["700", "LAG CERO"], "precio": 25.00, "down": 400, "up": 400, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
-        {"nombre": "GAMER PRO 800M 8:1", "match": ["800", "GAMER"], "precio": 32.20, "down": 800, "up": 800, "comp": "8:1", "tipo": "RESIDENCIAL", "tec": "FTTH"},
-        {"nombre": "CORP ESTABLE 850M 4:1", "match": ["850", "CORP ESTABLE"], "precio": 55.20, "down": 850, "up": 850, "comp": "4:1", "tipo": "CORPORATIVO", "tec": "FTTH"},
-        {"nombre": "CORP FULL 900M 4:1", "match": ["900", "CORP FULL"], "precio": 89.60, "down": 900, "up": 900, "comp": "4:1", "tipo": "CORPORATIVO", "tec": "FTTH"},
-    ]
     fecha_vigencia_val = f"{month_num}/01/{parts[0]}" if len(parts) == 2 else "09/01/2026"
-    data_tarifas = []
-    for pt in planes_tarifas_base:
-        cant = 0
-        for r in resumen_data:
-            p_nom = str(r.get("PLAN", "")).upper()
-            if "TOTAL" in p_nom or "SIN IVA" in p_nom: continue
-            if pt["nombre"].startswith("CONEXION ESTABLE") and "+" in p_nom: continue
-            if any(m in p_nom for m in pt["match"]):
-                cant = int(r.get("CANTIDAD CLIENTES") or 0)
-                break
-        data_tarifas.append({
-            "MES": month_name_es.upper(),
-            "CIUDAD": "CUENCA",
-            "NOMBRE COMERCIAL DEL PLAN TARIFARIO": pt["nombre"],
-            "FECHA DE VIGENCIA DEL PLAN TARIFARIO": fecha_vigencia_val,
-            "CANTIDAD ABONADOS/CLIENTES": cant,
-            "TIPO (RESIDENCIAL, CORPORATIVO, CIBERCAFE)": pt["tipo"],
-            "TARIFA MENSUAL [USD] (incluido impuestos)": pt["precio"],
-            "DOWNLINK [Mbps]": pt["down"],
-            "UPLINK [Mbps]": pt["up"],
-            "NIVEL DE COMPARTICIÓN [X:1]": pt["comp"],
-            "TECNOLOGÍA (ADSL, SDSL, HFC, FTTH, WIMAX, WIFI, OTROS)": pt["tec"],
-            "OBSERVACIONES (Opcional)": ""
-        })
+    data_tarifas = generar_data_tarifas(planes, resumen_data, month_name_es.upper(), fecha_vigencia_val)
     df_tarifas = pd.DataFrame(data_tarifas)
 
     # ── HOJA 3: DESGLOSE DE INGRESOS POR BANCO/SERVICIO ──
@@ -2137,7 +2196,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     
     with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
         df_clientes.to_excel(writer, sheet_name="Facturación Clientes", startrow=4, index=False)
-        df_alta_vel.to_excel(writer, sheet_name="Cuentas Alta Velocidad", startrow=2, index=False)
+        df_alta_vel.to_excel(writer, sheet_name="Reporte Usuarios", startrow=2, index=False)
         df_resumen.to_excel(writer, sheet_name="Resumen por Plan", startrow=4, index=False)
         df_tarifas.to_excel(writer, sheet_name="Tarifas ARCOTEL", startrow=2, index=False)
         df_desglose.to_excel(writer, sheet_name="Ingresos por Banco", startrow=4, index=False)
@@ -2302,7 +2361,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     ws_res.column_dimensions["D"].width = 18
 
     for sheet_name in wb.sheetnames:
-        if sheet_name in ["Resumen Ejecutivo", "Cuentas Alta Velocidad"]:
+        if sheet_name in ["Resumen Ejecutivo", "Reporte Usuarios"]:
             continue
         ws = wb[sheet_name]
         ws.views.sheetView[0].showGridLines = True
@@ -2403,9 +2462,9 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
                     max_len = len(val_str)
             ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
-    # ── ESTILO OFICIAL PARA HOJA: CUENTAS ALTA VELOCIDAD (ARCOTEL) ──
-    if "Cuentas Alta Velocidad" in wb.sheetnames:
-        ws_av = wb["Cuentas Alta Velocidad"]
+    # ── ESTILO OFICIAL PARA HOJA: REPORTE USUARIOS (ARCOTEL) ──
+    if "Reporte Usuarios" in wb.sheetnames:
+        ws_av = wb["Reporte Usuarios"]
         ws_av.views.sheetView[0].showGridLines = True
 
         fill_arcotel_header = PatternFill(start_color="C5C6E8", end_color="C5C6E8", fill_type="solid")
@@ -2421,7 +2480,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         ws_av.row_dimensions[1].height = 22
         ws_av.merge_cells("A1:N1")
         cell_t1 = ws_av["A1"]
-        cell_t1.value = "REPORTE DE SERVICIO CUENTAS ALTA VELOCIDAD"
+        cell_t1.value = "REPORTE USUARIOS"
         cell_t1.font = font_arcotel_title1
         cell_t1.alignment = align_center
 
@@ -2486,6 +2545,98 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         }
         for col_letter, width in col_widths.items():
             ws_av.column_dimensions[col_letter].width = width
+
+    # ── ESTILO OFICIAL PARA HOJA: TARIFAS ARCOTEL (INTERNET FIJO DEDICADO) ──
+    if "Tarifas ARCOTEL" in wb.sheetnames:
+        ws_tar = wb["Tarifas ARCOTEL"]
+        ws_tar.views.sheetView[0].showGridLines = True
+
+        fill_blue_title = PatternFill(start_color="B8CCE4", end_color="B8CCE4", fill_type="solid")
+        fill_blue_header = PatternFill(start_color="DCE6F1", end_color="DCE6F1", fill_type="solid")
+        font_tar_title = Font(name="Calibri", size=11, bold=True, color="000000")
+        font_tar_col = Font(name="Calibri", size=9, bold=True, color="000000")
+        font_tar_data = Font(name="Calibri", size=9, color="000000")
+        thin_dark_side = Side(border_style="thin", color="808080")
+        border_tar = Border(left=thin_dark_side, right=thin_dark_side, top=thin_dark_side, bottom=thin_dark_side)
+
+        # Fila 1: Título "TARIFAS DE INTERNET FIJO DEDICADO"
+        ws_tar.row_dimensions[1].height = 22
+        ws_tar.merge_cells("A1:L1")
+        cell_t = ws_tar["A1"]
+        cell_t.value = "TARIFAS DE INTERNET FIJO DEDICADO"
+        cell_t.font = font_tar_title
+        cell_t.alignment = align_center
+
+        for col_idx in range(1, 13):
+            c = ws_tar.cell(row=1, column=col_idx)
+            c.fill = fill_blue_title
+            c.border = border_tar
+
+        # Fila 2 y 3: Encabezados Multinivel
+        ws_tar.row_dimensions[2].height = 20
+        ws_tar.row_dimensions[3].height = 28
+
+        ws_tar.merge_cells("A2:A3")
+        ws_tar.cell(row=2, column=1, value="MES")
+
+        ws_tar.merge_cells("B2:B3")
+        ws_tar.cell(row=2, column=2, value="CIUDAD")
+
+        ws_tar.merge_cells("C2:D2")
+        ws_tar.cell(row=2, column=3, value="PLAN TARIFARIO")
+
+        ws_tar.merge_cells("E2:G2")
+        ws_tar.cell(row=2, column=5, value="CUENTAS")
+
+        ws_tar.merge_cells("H2:K2")
+        ws_tar.cell(row=2, column=8, value="CARACTERISTICAS TECNICAS")
+
+        ws_tar.merge_cells("L2:L3")
+        ws_tar.cell(row=2, column=12, value="OBSERVACIONES\n(Opcional)")
+
+        sub_headers = [
+            (3, "NOMBRE COMERCIAL DEL PLAN TARIFARIO"),
+            (4, "FECHA DE VIGENCIA DEL PLAN TARIFARIO"),
+            (5, "CANTIDAD ABONADOS/CLIENTES"),
+            (6, "TIPO (RESIDENCIAL, CORPORATIVO, CIBERCAFE)"),
+            (7, "TARIFA MENSUAL [USD]\n(incluido impuestos)"),
+            (8, "DOWNLINK [Mbps]"),
+            (9, "UPLINK [Mbps]"),
+            (10, "NIVEL DE COMPARTICIÓN [X:1]"),
+            (11, "TECNOLOGÍA\n(ADSL, SDSL, HFC, FTTH, WIMAX, WIFI, OTROS)")
+        ]
+        for col_idx, text in sub_headers:
+            ws_tar.cell(row=3, column=col_idx, value=text)
+
+        for r_idx in [2, 3]:
+            for col_idx in range(1, 13):
+                c = ws_tar.cell(row=r_idx, column=col_idx)
+                c.fill = fill_blue_header
+                c.font = font_tar_col
+                c.alignment = align_center
+                c.border = border_tar
+
+        for row_idx in range(4, ws_tar.max_row + 1):
+            ws_tar.row_dimensions[row_idx].height = 20
+            for col_idx in range(1, 13):
+                c = ws_tar.cell(row=row_idx, column=col_idx)
+                c.font = font_tar_data
+                c.border = border_tar
+
+                if col_idx in [1, 2, 4, 5, 6, 8, 9, 10, 11, 12]:
+                    c.alignment = align_center
+                elif col_idx == 3:
+                    c.alignment = align_left
+                elif col_idx == 7:
+                    c.alignment = align_right
+                    c.number_format = '$#,##0.00'
+
+        col_widths_tar = {
+            "A": 12, "B": 12, "C": 32, "D": 16, "E": 15, "F": 16,
+            "G": 18, "H": 16, "I": 16, "J": 16, "K": 18, "L": 18
+        }
+        for col_letter, width in col_widths_tar.items():
+            ws_tar.column_dimensions[col_letter].width = width
 
     wb.save(file_path)
 

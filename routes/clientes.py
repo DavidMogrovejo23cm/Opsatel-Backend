@@ -2058,7 +2058,7 @@ def generar_reporte_mensual(db: Session = Depends(get_db)):
     # Escribir a Excel con hojas ordenadas
     with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
         df_clientes.to_excel(writer, sheet_name="Facturación Clientes", index=False)
-        df_alta_vel.to_excel(writer, sheet_name="Cuentas Alta Velocidad", index=False)
+        df_alta_vel.to_excel(writer, sheet_name="Reporte Usuarios", index=False)
         df_resumen.to_excel(writer, sheet_name="Resumen por Plan", index=False)
         df_egresos.to_excel(writer, sheet_name="Egresos", index=False)
         df_proyectos.to_excel(writer, sheet_name="Proyectos", index=False)
