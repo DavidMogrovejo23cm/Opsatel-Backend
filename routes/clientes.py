@@ -2579,24 +2579,6 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                 if not cliente.estado or str(cliente.estado).strip().lower() in ["", "none", "null", "pendiente"]:
                     cliente.estado = "Activo"
 
-                # Registrar estado QoS como APPLIED en BD para evitar aprovisionamientos o colas en LibreQoS
-                try:
-                    from libreqos_models import ClientQoSState
-                    qos_state = db.query(ClientQoSState).filter(ClientQoSState.cliente_id == cliente.id).first()
-                    if not qos_state:
-                        qos_state = ClientQoSState(
-                            cliente_id=cliente.id,
-                            status="APPLIED",
-                            ip=cliente.ip
-                        )
-                        db.add(qos_state)
-                    else:
-                        qos_state.status = "APPLIED"
-                        if cliente.ip:
-                            qos_state.ip = cliente.ip
-                except Exception:
-                    pass
-
                 # Commit individual por cada cliente procesado exitosamente
                 db.commit()
 
