@@ -1650,6 +1650,15 @@ def procesar_facturacion_global(db: Session):
             tarifa = float(cliente.precio_plan_especial)
         elif plan_info:
             tarifa = float(plan_info.precio or 0)
+        elif cliente.plan:
+            # Respaldo de seguridad: si el nombre del plan contiene un número o precio (ej. "20.54")
+            import re as _re_tarifa
+            m_tarifa = _re_tarifa.search(r'\$?(\d+(?:[\.,]\d{1,2})?)', str(cliente.plan))
+            if m_tarifa:
+                try:
+                    tarifa = float(m_tarifa.group(1).replace(',', '.'))
+                except ValueError:
+                    pass
             
         cliente.saldo = float(cliente.saldo or 0) + tarifa
         
@@ -2408,22 +2417,22 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
             "internet_payment": ["INTERNET_PAYMENT", "INTERNET PAYMENT", "PAGO_INTERNET", "INTERNET PAY"],
             "app": ["APP", "USA_APP"],
             "payment_date": ["PAYMENT_DATE", "PAYMENT DATE", "FECHA_PAGO"],
-            "client_payment_date": ["CLIENT_PAYMENT_DATE", "CLIENT PAYMENT DATE"],
+            "client_payment_date": ["CLIENT_PAYMENT_DATE", "CLIENT PAYMENT DATE", "CLIENT PAYMENT_DATE"],
             "bank": ["BANK", "BANCO", "ENTIDAD_FINANCIERA"],
             "cod": ["COD", "CODIGO_PAGO", "CODIGO_CLIENTE"],
             "plus": ["PLUS", "ADICIONAL_MENSUAL", "TV_PLUS", "VALOR_PLUS", "IPTV"],
             "bank_plus": ["BANK_PLUS", "BANCO_TV", "BANK PLUS"],
             "adicional": ["ADICIONAL", "MONTO_ADICIONAL", "CARGO_EXTRA"],
-            "comentarios": ["COMENTARIOS", "NOTAS", "OBS", "DESCRIPCION"],
+            "comentarios": ["COMENTARIOS", "NOTAS", "OBS", "DESCRIPCION", "COMENTARIO CONTRATO", "COMENTARIOS CONTRATO"],
             "observaciones": ["OBSERVACIONES"],
-            "notas_pago": ["NOTAS_PAGO", "OBSERVACION_PAGO"],
+            "notas_pago": ["NOTAS_PAGO", "OBSERVACION_PAGO", "NOTA DE PAGO / REPARACIÓN", "NOTA DE PAGO / REPARACION", "NOTA DE PAGO", "REPARACION"],
             "tercera_edad": ["TERCERA_EDAD", "DISCAPACIDAD", "MAYOR_EDAD"],
             "precio_plan_especial": ["PRECIO_PLAN_ESPECIAL", "VALOR_ESPECIAL", "TARIFA_REDUCIDA"],
             "mantenimiento": ["MANTENIMIENTO", "PLAN_MANTENIMIENTO"],
             "saldo": ["SALDO", "DEUDA", "PENDIENTE", "SALDO_ANTERIOR", "TOTAL"],
             "pago_mensual": ["PAGO_MENSUAL", "COBRO_MES", "RECAUDACION"],
             "iptv_activar": ["IPTV_ACTIVAR", "ACTIVAR_IPTV"],
-            "iptv_user": ["IPTV_USER", "USUARIO_IPTV"],
+            "iptv_user": ["IPTV_USER", "USUARIO_IPTV", "CUENTA IPTV", "CUENTA_IPTV"],
             "iptv_pass": ["IPTV_PASS", "CLAVE_IPTV"],
             "iptv_bouquets": ["IPTV_BOUQUETS", "PAQUETES_IPTV"],
             "iptv_exp_date": ["IPTV_EXP_DATE", "EXPIRACION_IPTV"],
@@ -2463,20 +2472,35 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                 cedula_raw = get_raw_val(row, FIELD_MAPPING["cedula"])
                 cedula = str(cedula_raw).strip() if cedula_raw else None
                 
-                # Buscar cliente por Cédula o por Nombre
+                # Obtener ID opcional del Excel
+                id_raw = get_raw_val(row, ["ID", "NUMERO", "COD_CLIENTE", "ID_CLIENTE"])
+                id_excel = None
+                if id_raw is not None:
+                    try:
+                        id_excel = int(float(str(id_raw).strip()))
+                    except:
+                        id_excel = None
+
+                # Buscar cliente por ID (si vino en Excel), por Cédula o por Nombre
                 cliente = None
-                if cedula:
+                if id_excel and id_excel in ids_existentes:
+                    cliente = db.query(models.Cliente).filter(models.Cliente.id == id_excel).first()
+                if not cliente and cedula:
                     cliente = db.query(models.Cliente).filter(models.Cliente.cedula == cedula).first()
                 if not cliente:
                     cliente = db.query(models.Cliente).filter(models.Cliente.nombre == nombre).first()
                 
                 if not cliente:
-                    # Lógica de IDs para llenar huecos de forma eficiente
-                    while proximo_id_hueco in ids_existentes:
-                        proximo_id_hueco += 1
+                    # Asignar ID: usar el ID del Excel si está disponible y libre, sino buscar hueco
+                    if id_excel and id_excel not in ids_existentes and id_excel > 0:
+                        nuevo_id = id_excel
+                    else:
+                        while proximo_id_hueco in ids_existentes:
+                            proximo_id_hueco += 1
+                        nuevo_id = proximo_id_hueco
                     
-                    cliente = models.Cliente(id=proximo_id_hueco, nombre=nombre, estado="Activo")
-                    ids_existentes.add(proximo_id_hueco)
+                    cliente = models.Cliente(id=nuevo_id, nombre=nombre, estado="Activo")
+                    ids_existentes.add(nuevo_id)
                     db.add(cliente)
                     count_nuevos += 1
                 else:
@@ -2517,6 +2541,36 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                                 clean_val = "0" + clean_val
                         setattr(cliente, field, clean_val)
                 
+                # Homologación inteligente de Plan y Precios
+                val_plan = get_raw_val(row, FIELD_MAPPING["plan"])
+                if val_plan is not None:
+                    plan_str = str(val_plan).strip()
+                    es_precio = False
+                    precio_num = 0.0
+                    try:
+                        precio_num = float(plan_str.replace('$', '').strip())
+                        es_precio = True
+                    except ValueError:
+                        pass
+                    
+                    if es_precio and precio_num > 0:
+                        cliente.precio_plan_especial = precio_num
+                        if abs(precio_num - 17.25) < 0.01:
+                            cliente.plan = "100mb"
+                        elif abs(precio_num - 17.87) < 0.01:
+                            cliente.plan = "600mb"
+                        elif abs(precio_num - 21.73) < 0.01:
+                            cliente.plan = "700mb"
+                        elif abs(precio_num - 32.20) < 0.01:
+                            cliente.plan = "800mb"
+                        else:
+                            cliente.plan = "Plan Especial"
+                    elif plan_str and plan_str.lower() not in ["none", "nan", "null"]:
+                        cliente.plan = plan_str
+
+                if not cliente.plan or str(cliente.plan).strip().lower() in ["", "none", "nan", "null"]:
+                    cliente.plan = "Plan Estándar"
+
                 # Recalcular balances (Importante para que total_pago sea correcto)
                 sync_cliente_balances(cliente, db)
                 
@@ -2524,6 +2578,24 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                 # y no pasen por 'Administrar' (Pendiente) ni generen colas en LibreQoS.
                 if not cliente.estado or str(cliente.estado).strip().lower() in ["", "none", "null", "pendiente"]:
                     cliente.estado = "Activo"
+
+                # Registrar estado QoS como APPLIED en BD para evitar aprovisionamientos o colas en LibreQoS
+                try:
+                    from libreqos_models import ClientQoSState
+                    qos_state = db.query(ClientQoSState).filter(ClientQoSState.cliente_id == cliente.id).first()
+                    if not qos_state:
+                        qos_state = ClientQoSState(
+                            cliente_id=cliente.id,
+                            status="APPLIED",
+                            ip=cliente.ip
+                        )
+                        db.add(qos_state)
+                    else:
+                        qos_state.status = "APPLIED"
+                        if cliente.ip:
+                            qos_state.ip = cliente.ip
+                except Exception:
+                    pass
 
                 # Commit individual por cada cliente procesado exitosamente
                 db.commit()

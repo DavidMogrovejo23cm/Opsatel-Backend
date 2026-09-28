@@ -93,11 +93,12 @@ class LibreQoSManager:
             if plan_rec:
                 download_mbps = plan_rec.megas
             else:
-                # Intento de extraer número del string del plan
-                import re
-                nums = re.findall(r'\d+', cliente.plan)
-                if nums:
-                    download_mbps = int(nums[0])
+                # Intento de extraer número del string del plan solo si no es un precio con decimales y es >= 50 Mbps
+                if "." not in str(cliente.plan):
+                    import re
+                    nums = re.findall(r'\d+', cliente.plan)
+                    if nums and int(nums[0]) >= 50:
+                        download_mbps = int(nums[0])
         # Aplicar regla del usuario: Máximo de bajada y subida son la mitad de lo que tiene el plan (ej: plan de 800 -> 400 DL y 400 UL)
         download_max = max(2, download_mbps // 2)
         upload_max = download_max
