@@ -56,21 +56,21 @@ class Cliente(Base):
 
     ip = Column("IP", String(50))
 
-    dispositivo = Column("DISPOSITIVO", String(50))
+    dispositivo = Column("DISPOSITIVO", String(255))
 
     potencia = Column("POTENCIA", String(50))
 
     nap = Column("NAP", String(50))
 
-    ubicacion = Column("UBICACION", String(255))
+    ubicacion = Column("UBICACION", Text)
 
-    tecnico = Column("TECNICO", String(100))
+    tecnico = Column("TECNICO", String(255))
 
-    activador = Column("ACTIVADOR", String(100))
+    activador = Column("ACTIVADOR", String(255))
 
-    red = Column("RED", String(100))
+    red = Column("RED", String(255))
 
-    clave = Column("CLAVE", String(100))
+    clave = Column("CLAVE", Text)
     mac = Column("MAC", String(50))
     instalation_date = Column("INSTALATION_DATE", String(50))
 

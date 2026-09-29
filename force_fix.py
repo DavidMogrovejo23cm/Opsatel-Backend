@@ -98,6 +98,38 @@ def force_fix_columns():
     process_table(table_proyectos, columns_proyectos)
     process_table(table_whatsapp_config, columns_whatsapp_config)
     
+    # Ampliar columnas existentes que requieren mayor tamaño
+    modify_columns = [
+        ("hoja_de_c__lculo_sin_t__tulo", "CLAVE", "TEXT"),
+        ("hoja_de_c__lculo_sin_t__tulo", "RED", "VARCHAR(255)"),
+        ("hoja_de_c__lculo_sin_t__tulo", "UBICACION", "TEXT"),
+        ("hoja_de_c__lculo_sin_t__tulo", "DISPOSITIVO", "VARCHAR(255)"),
+        ("hoja_de_c__lculo_sin_t__tulo", "TECNICO", "VARCHAR(255)"),
+        ("hoja_de_c__lculo_sin_t__tulo", "ACTIVADOR", "VARCHAR(255)"),
+        ("hoja_de_c__lculo_sin_t__tulo", "PARROQUIA", "VARCHAR(255)"),
+        ("hoja_de_c__lculo_sin_t__tulo", "ONT", "TEXT"),
+        ("hoja_de_c__lculo_sin_t__tulo", "SERVICIO", "TEXT"),
+        ("hoja_de_c__lculo_sin_t__tulo", "BREACH", "TEXT"),
+        ("hoja_de_c__lculo_sin_t__tulo", "SERVICE PORT", "TEXT"),
+        ("hoja_de_c__lculo_sin_t__tulo", "IPTV_OUTPUTS", "TEXT"),
+    ]
+    inspector = inspect(engine)
+    with engine.connect() as conn:
+        for tbl, col, col_type in modify_columns:
+            if not inspector.has_table(tbl):
+                continue
+            cols = [c['name'] for c in inspector.get_columns(tbl)]
+            if col in cols:
+                try:
+                    if is_postgres:
+                        query = f'ALTER TABLE "{tbl}" ALTER COLUMN "{col}" TYPE {col_type}'
+                    else:
+                        query = f'ALTER TABLE `{tbl}` MODIFY COLUMN `{col}` {col_type}'
+                    conn.execute(text(query))
+                except Exception as e:
+                    print(f"AVISO ampliando {tbl}.{col}: {e}")
+        conn.commit()
+
     print("Reparación terminada.")
 
 if __name__ == "__main__":

@@ -2456,6 +2456,23 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                         return val
             return None
 
+        # Asegurar de antemano que columnas de texto amplio no reboten por DataError en la base de datos
+        try:
+            is_postgres = "postgresql" in str(db.bind.url).lower() if db.bind else False
+            if is_postgres:
+                db.execute(text('ALTER TABLE "hoja_de_c__lculo_sin_t__tulo" ALTER COLUMN "CLAVE" TYPE TEXT'))
+            else:
+                db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `CLAVE` TEXT"))
+                db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `RED` VARCHAR(255)"))
+                db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `UBICACION` TEXT"))
+                db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `DISPOSITIVO` VARCHAR(255)"))
+                db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `TECNICO` VARCHAR(255)"))
+                db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `ACTIVADOR` VARCHAR(255)"))
+            db.commit()
+        except Exception as alter_err:
+            db.rollback()
+            print(f"Aviso asegurando tipos de columnas en BD: {alter_err}")
+
         # Optimización: Obtener IDs existentes UNA SOLA VEZ antes del bucle
         ids_query = db.query(models.Cliente.id).order_by(models.Cliente.id).all()
         ids_existentes = set(i[0] for i in ids_query)
