@@ -2263,7 +2263,7 @@ def eliminar_todos_clientes(db: Session = Depends(get_db)):
             elif is_mysql:
                 db.execute(text("ALTER TABLE hoja_de_c__lculo_sin_t__tulo AUTO_INCREMENT = 1"))
                 db.execute(text("ALTER TABLE hoja_ruta AUTO_INCREMENT = 1"))
-                db.execute(text("ALTER TABLE pago AUTO_INCREMENT = 1"))
+                db.execute(text("ALTER TABLE historial_pagos AUTO_INCREMENT = 1"))
             
             db.commit()
         except Exception as e:
@@ -2526,7 +2526,7 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
             # Descartar etiquetas o textos comunes de copias de cédula que no son números de identificación
             if s.upper() in ["DIGITAL", "FISICO", "FISICA", "NO", "SI", "F", "D", "PENDIENTE", "S/N", "SIN", "CHAT", "ESTA EN EL CHAT", "JOHN"]:
                 return False
-            digits = re.sub(r'\D', '', s)
+            digits = ''.join(ch for ch in s if ch.isdigit())
             # Solo usar para búsqueda si es un número real de identificación (mínimo 8 dígitos)
             return len(digits) >= 8 and len(digits) == len(s)
 
@@ -2596,8 +2596,7 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                             setattr(cliente, field, s_val in ["SI", "S", "TRUE", "1", "ACTIVO", "YES"])
                     elif field == "mac":
                         # Sanitizar MAC: solo letras y números en mayúsculas
-                        import re
-                        mac_clean = re.sub(r'[^a-zA-Z0-9]', '', str(val)).upper()
+                        mac_clean = ''.join(ch for ch in str(val) if ch.isalnum()).upper()
                         cliente.mac = mac_clean
                     else:
                         # Texto / String
