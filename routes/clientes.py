@@ -2477,6 +2477,17 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
         ids_existentes = set(i[0] for i in ids_query)
         proximo_id_hueco = 1
 
+        def es_cedula_valida_busqueda(c_val):
+            if not c_val:
+                return False
+            s = str(c_val).strip()
+            # Descartar etiquetas o textos comunes de copias de cédula que no son números de identificación
+            if s.upper() in ["DIGITAL", "FISICO", "FISICA", "NO", "SI", "F", "D", "PENDIENTE", "S/N", "SIN", "CHAT", "ESTA EN EL CHAT", "JOHN"]:
+                return False
+            digits = re.sub(r'\D', '', s)
+            # Solo usar para búsqueda si es un número real de identificación (mínimo 8 dígitos)
+            return len(digits) >= 8 and len(digits) == len(s)
+
         for index, row in df.iterrows():
             try:
                 # Validar nombre (Obligatorio)
@@ -2497,13 +2508,13 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                     except:
                         id_excel = None
 
-                # Buscar cliente por ID (si vino en Excel), por Cédula o por Nombre
+                # Buscar cliente por ID (si vino en Excel), por Cédula VÁLIDA (solo numérica) o por Nombre
                 cliente = None
                 if id_excel and id_excel in ids_existentes:
                     cliente = db.query(models.Cliente).filter(models.Cliente.id == id_excel).first()
-                if not cliente and cedula:
+                if not cliente and es_cedula_valida_busqueda(cedula):
                     cliente = db.query(models.Cliente).filter(models.Cliente.cedula == cedula).first()
-                if not cliente:
+                if not cliente and not id_excel:
                     cliente = db.query(models.Cliente).filter(models.Cliente.nombre == nombre).first()
                 
                 if not cliente:
@@ -2552,6 +2563,8 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                         if field == "cedula":
                             if clean_val and clean_val.isdigit() and len(clean_val) == 9:
                                 clean_val = "0" + clean_val
+                            if clean_val and clean_val.upper() in ["DIGITAL", "FISICO", "FISICA"]:
+                                cliente.cedula_tipo = clean_val.upper()
                         elif field == "celular":
                             if clean_val and clean_val.isdigit() and len(clean_val) == 9 and clean_val.startswith("9"):
                                 clean_val = "0" + clean_val
@@ -2612,6 +2625,20 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                 traceback.print_exc()
                 detalles_errores.append(error_msg)
                 
+        # Actualizar AUTO_INCREMENT para futuros clientes creados manualmente
+        try:
+            max_id_res = db.execute(text("SELECT MAX(NUMERO) FROM hoja_de_c__lculo_sin_t__tulo")).fetchone()
+            if max_id_res and max_id_res[0]:
+                max_id = int(max_id_res[0])
+                is_pg = "postgresql" in str(db.bind.url).lower() if db.bind else False
+                if is_pg:
+                    db.execute(text(f"ALTER SEQUENCE hoja_de_c__lculo_sin_t__tulo_numero_seq RESTART WITH {max_id + 1}"))
+                else:
+                    db.execute(text(f"ALTER TABLE hoja_de_c__lculo_sin_t__tulo AUTO_INCREMENT = {max_id + 1}"))
+                db.commit()
+        except Exception as autoinc_err:
+            print(f"Aviso actualizando AUTO_INCREMENT tras importación: {autoinc_err}")
+
         return {
             "message": f"Importación completada. {count_nuevos} nuevos, {count_actualizados} actualizados, {errores} errores.",
             "nuevos": count_nuevos,
