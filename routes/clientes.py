@@ -4,8 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 import os
 import shutil
 import re
-# pyrefly: ignore [missing-import]
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from typing import List
 import models, schemas
