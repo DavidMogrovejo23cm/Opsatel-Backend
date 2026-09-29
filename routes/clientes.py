@@ -211,6 +211,48 @@ def get_pendientes_count(db: Session = Depends(get_db)):
     count = db.query(models.Cliente).filter(models.Cliente.estado.in_(["Pendiente", "En Activación"])).count()
     return {"count": count}
 
+@router.get("/contador")
+@router.get("/count")
+def get_clientes_contador(estado: str = "TODOS", db: Session = Depends(get_db)):
+    """
+    Retorna el contador general de clientes según el estado seleccionado.
+    Si se indica 'TODOS' o no se especifica, retorna el total general y el desglose por estado.
+    """
+    try:
+        from sqlalchemy import func
+        estado_clean = (estado or "TODOS").strip().upper()
+
+        if estado_clean in ["TODOS", "", "ALL"]:
+            total = db.query(models.Cliente).count()
+            raw_group = db.query(func.upper(models.Cliente.estado), func.count(models.Cliente.id)).group_by(func.upper(models.Cliente.estado)).all()
+            por_estado = {str(k or "DESCONOCIDO").strip(): v for k, v in raw_group}
+            return {
+                "estado": "TODOS",
+                "count": total,
+                "total": total,
+                "por_estado": por_estado
+            }
+
+        query = db.query(models.Cliente)
+        if estado_clean == "PENDIENTE":
+            query = query.filter(models.Cliente.estado.in_(["Pendiente", "En Activación", "EN ACTIVACIÓN", "EN ACTIVACION"]))
+        elif estado_clean in ["PROCESO", "EN PROCESO"]:
+            query = query.filter(models.Cliente.estado.in_(["Proceso", "PROCESO", "En Proceso", "EN PROCESO"]))
+        elif estado_clean in ["JURIDICO", "JURÍDICO"]:
+            query = query.filter(models.Cliente.estado.in_(["Juridico", "JURIDICO", "Jurídico", "JURÍDICO"]))
+        else:
+            query = query.filter(func.upper(models.Cliente.estado) == estado_clean)
+
+        count = query.count()
+        return {
+            "estado": estado,
+            "count": count
+        }
+    except Exception as e:
+        logger.error(f"Error en contador de clientes (estado='{estado}'): {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # El sistema ahora utiliza exclusivamente la tabla 'planes_internet' de la base de datos 
 # para obtener los precios vigentes, permitiendo configurarlos desde el panel administrativo.
 
