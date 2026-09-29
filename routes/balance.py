@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel
-from database import get_db
-from .auth import require_role
+from database import get_db, engine
+from .auth import require_role, get_current_user
+import json
 import models
 import schemas
 import datetime
@@ -1761,14 +1762,124 @@ def construir_datos_arcotel(mes: str, db: Session):
         "tarifas_planes": data_tarifas
     }
 
+def guardar_excel_arcotel_congelado(datos: dict, mes: str, output_path: str):
+    df_clientes = pd.DataFrame(datos.get("facturacion_clientes") or [])
+    df_alta_vel = pd.DataFrame(datos.get("cuentas_alta_velocidad") or [])
+    df_resumen = pd.DataFrame(datos.get("resumen_planes") or [])
+    df_tarifas = pd.DataFrame(datos.get("tarifas_planes") or [])
+
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        if not df_clientes.empty:
+            df_clientes.to_excel(writer, sheet_name="Facturación Clientes", index=False)
+        else:
+            pd.DataFrame([{"Mensaje": "Sin datos"}]).to_excel(writer, sheet_name="Facturación Clientes", index=False)
+
+        if not df_alta_vel.empty:
+            df_alta_vel.to_excel(writer, sheet_name="Reporte Usuarios", index=False)
+        else:
+            pd.DataFrame([{"Mensaje": "Sin datos"}]).to_excel(writer, sheet_name="Reporte Usuarios", index=False)
+
+        if not df_resumen.empty:
+            df_resumen.to_excel(writer, sheet_name="Resumen por Plan", index=False)
+        else:
+            pd.DataFrame([{"Mensaje": "Sin datos"}]).to_excel(writer, sheet_name="Resumen por Plan", index=False)
+
+        if not df_tarifas.empty:
+            df_tarifas.to_excel(writer, sheet_name="Tarifas Planes", index=False)
+
 @router.get("/reporte-arcotel-preview")
 def preview_reporte_arcotel(mes: str, db: Session = Depends(get_db)):
     try:
-        return construir_datos_arcotel(mes, db)
+        # Asegurar tabla en BD
+        try:
+            models.ReporteArcotelGuardado.__table__.create(bind=engine, checkfirst=True)
+        except Exception:
+            pass
+
+        # 1. Si ya está guardado/congelado en BD, servirlo tal cual
+        guardado = db.query(models.ReporteArcotelGuardado).filter(models.ReporteArcotelGuardado.mes == mes).first()
+        if guardado and guardado.datos_json:
+            data = json.loads(guardado.datos_json)
+            data["esta_guardado"] = True
+            data["fecha_guardado"] = guardado.fecha_guardado.strftime("%d/%m/%Y %H:%M") if guardado.fecha_guardado else None
+            return data
+
+        # 2. Respaldo físico en disco si existiese
+        backup_file = os.path.join("rutas_reportes", f"arcotel_frozen_{mes}.json")
+        if os.path.exists(backup_file):
+            with open(backup_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                data["esta_guardado"] = True
+                return data
+
+        # 3. Si no está guardado, generar dinámicamente
+        data = construir_datos_arcotel(mes, db)
+        data["esta_guardado"] = False
+        return data
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error al generar preview ARCOTEL: {str(e)}")
+
+@router.post("/reporte-arcotel/guardar")
+def guardar_reporte_arcotel(payload: dict, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    mes = payload.get("mes")
+    if not mes:
+        raise HTTPException(status_code=400, detail="El parámetro 'mes' es requerido (ej: 2026-09)")
+
+    try:
+        models.ReporteArcotelGuardado.__table__.create(bind=engine, checkfirst=True)
+    except Exception:
+        pass
+
+    existente = db.query(models.ReporteArcotelGuardado).filter(models.ReporteArcotelGuardado.mes == mes).first()
+    if existente:
+        return {
+            "message": f"El reporte de {mes} ya está guardado y congelado permanentemente.",
+            "esta_guardado": True,
+            "fecha_guardado": existente.fecha_guardado.strftime("%d/%m/%Y %H:%M") if existente.fecha_guardado else None
+        }
+
+    datos = payload.get("datos")
+    if not datos:
+        datos = construir_datos_arcotel(mes, db)
+
+    now = datetime.datetime.utcnow()
+    datos["esta_guardado"] = True
+    datos["fecha_guardado"] = now.strftime("%d/%m/%Y %H:%M")
+
+    datos_str = json.dumps(datos, ensure_ascii=False)
+
+    nuevo = models.ReporteArcotelGuardado(
+        mes=mes,
+        fecha_guardado=now,
+        guardado_por=getattr(current_user, 'username', 'usuario'),
+        datos_json=datos_str
+    )
+    db.add(nuevo)
+    db.commit()
+
+    # Guardar archivo JSON físico de respaldo
+    try:
+        os.makedirs("rutas_reportes", exist_ok=True)
+        backup_file = os.path.join("rutas_reportes", f"arcotel_frozen_{mes}.json")
+        with open(backup_file, "w", encoding="utf-8") as f:
+            f.write(datos_str)
+    except Exception as io_err:
+        print(f"Aviso guardando JSON físico ARCOTEL: {io_err}")
+
+    # Guardar Excel físico congelado para descarga inmediata
+    try:
+        excel_path = os.path.join("rutas_reportes", f"arcotel_guardado_{mes}.xlsx")
+        guardar_excel_arcotel_congelado(datos, mes, excel_path)
+    except Exception as exc_err:
+        print(f"Aviso generando Excel congelado ARCOTEL: {exc_err}")
+
+    return {
+        "message": f"Reporte de {mes} guardado y congelado exitosamente. Sus valores no cambiarán.",
+        "esta_guardado": True,
+        "fecha_guardado": now.strftime("%d/%m/%Y %H:%M")
+    }
 
 @router.get("/reporte-excel")
 def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
@@ -1778,7 +1889,33 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     else:
         mes_anio_buscar = mes
 
-    # Si existe un reporte mensual guardado para este mes ya cerrado, lo servimos directamente
+    # 1. Si existe un archivo congelado de ARCOTEL para este mes, servirlo directamente
+    arcotel_frozen_excel = os.path.join("rutas_reportes", f"arcotel_guardado_{mes}.xlsx")
+    if os.path.exists(arcotel_frozen_excel):
+        return FileResponse(
+            path=arcotel_frozen_excel,
+            filename=f"Reporte_ARCOTEL_{mes}.xlsx",
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    # 2. Si existe un snapshot guardado en BD, generar el Excel congelado y servirlo
+    try:
+        models.ReporteArcotelGuardado.__table__.create(bind=engine, checkfirst=True)
+        guardado = db.query(models.ReporteArcotelGuardado).filter(models.ReporteArcotelGuardado.mes == mes).first()
+        if guardado and guardado.datos_json:
+            data_guardada = json.loads(guardado.datos_json)
+            os.makedirs("rutas_reportes", exist_ok=True)
+            guardar_excel_arcotel_congelado(data_guardada, mes, arcotel_frozen_excel)
+            if os.path.exists(arcotel_frozen_excel):
+                return FileResponse(
+                    path=arcotel_frozen_excel,
+                    filename=f"Reporte_ARCOTEL_{mes}.xlsx",
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+    except Exception as err_frozen:
+        print(f"Aviso sirviendo reporte congelado ARCOTEL: {err_frozen}")
+
+    # 3. Si existe un reporte mensual guardado para este mes ya cerrado, lo servimos directamente
     reporte_guardado = db.query(models.ReporteMensual).filter(models.ReporteMensual.mes_anio == mes_anio_buscar).first()
     if reporte_guardado and reporte_guardado.archivo_ruta_excel:
         path_rel = reporte_guardado.archivo_ruta_excel.lstrip("/")
@@ -1788,6 +1925,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
                 filename=os.path.basename(path_rel),
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
 
     # Si no existe reporte cerrado o es el mes actual en curso, lo generamos dinámicamente:
     clientes = db.query(models.Cliente).all()

@@ -178,6 +178,15 @@ class ReporteMensual(Base):
     fecha_generacion = Column(DateTime, default=datetime.datetime.utcnow)
     archivo_ruta_excel = Column(String(255))
 
+class ReporteArcotelGuardado(Base):
+    __tablename__ = 'reportes_arcotel_guardados'
+    id = Column(Integer, primary_key=True, index=True)
+    mes = Column(String(20), unique=True, index=True)
+    fecha_guardado = Column(DateTime, default=datetime.datetime.utcnow)
+    guardado_por = Column(String(100), nullable=True)
+    datos_json = Column(Text, nullable=False)
+
+
 class Usuario(Base):
     __tablename__ = "usuarios"
     id = Column(Integer, primary_key=True, index=True)
