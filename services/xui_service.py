@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("xui_service")
 
 # Config variables from environment
-XUI_URL = os.getenv("XUI_URL", "http://172.30.0.3/bwfdVuGs").rstrip("/")
+XUI_URL = os.getenv("XUI_URL", "http://181.78.205.206/bwfdVuGs").rstrip("/")
 XUI_USERNAME = os.getenv("XUI_USERNAME", "DAVIDOPSA")
 XUI_PASSWORD = os.getenv("XUI_PASSWORD", "OPSATEL.@#22")
 
