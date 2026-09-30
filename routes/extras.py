@@ -53,7 +53,7 @@ async def crear_extra(extra: schemas.ClienteExtraCreate, db: Session = Depends(g
             )
             print(f"IPTV EXTRA: Cuenta de XUI creada exitosamente para {iptv_u}. Detalle: {res}")
         except Exception as xui_err:
-            print(f"ERROR IPTV EXTRA: Falló la creación en panel XUI para {iptv_u}: {xui_err}")
+            print(f"ERROR IPTV EXTRA: Falló la creación en panel XUI para {iptv_u}: {type(xui_err).__name__}: {str(xui_err) or repr(xui_err)}")
 
     return db_extra
 

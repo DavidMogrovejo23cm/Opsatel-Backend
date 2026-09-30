@@ -494,7 +494,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
                     )
                     print(f"IPTV: Cuenta de XUI creada exitosamente para {iptv_u}. Detalle: {res}")
                 except Exception as xui_err:
-                    print(f"ERROR IPTV: Falló la creación en panel XUI para {iptv_u}: {xui_err}")
+                    print(f"ERROR IPTV: Falló la creación en panel XUI para {iptv_u}: {type(xui_err).__name__}: {str(xui_err) or repr(xui_err)}")
 
             # Correr en background para no ralentizar la respuesta del API principal
             try:

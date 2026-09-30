@@ -39,10 +39,31 @@ def _normalize_xui_urls(raw_url: str):
 
 # Config variables from environment
 RAW_XUI_URL = os.getenv("XUI_URL", "http://181.78.205.206/bwfdVuGs/login?referrer=dashboard")
+RAW_XUI_FALLBACK = os.getenv("XUI_FALLBACK_URL", "http://172.30.0.3/bwfdVuGs")
+
 XUI_URL, XUI_LOGIN_URL, XUI_ORIGIN = _normalize_xui_urls(RAW_XUI_URL)
 XUI_USERNAME = os.getenv("XUI_USERNAME", "DAVIDOPSA")
 XUI_PASSWORD = os.getenv("XUI_PASSWORD", "OPSATEL.@#22")
 XUI_MEMBER_ID = os.getenv("XUI_MEMBER_ID", "16")
+
+# Estado dinámico del host alcanzable (auto-failover WAN / LAN)
+ACTIVE_XUI_BASE_URL: str = XUI_URL
+ACTIVE_XUI_LOGIN_URL: str = XUI_LOGIN_URL
+ACTIVE_XUI_ORIGIN: str = XUI_ORIGIN
+
+def get_candidate_base_urls() -> List[str]:
+    """Genera lista ordenada de URLs candidatas (WAN pública e IP privada interna)"""
+    candidates = []
+    for raw in [RAW_XUI_URL, RAW_XUI_FALLBACK, "http://181.78.205.206/bwfdVuGs", "http://172.30.0.3/bwfdVuGs"]:
+        if raw and str(raw).strip():
+            b, _, _ = _normalize_xui_urls(raw)
+            if b not in candidates:
+                candidates.append(b)
+    # Colocar la URL actualmente activa al principio si ya se comprobó
+    if ACTIVE_XUI_BASE_URL in candidates:
+        candidates.remove(ACTIVE_XUI_BASE_URL)
+        candidates.insert(0, ACTIVE_XUI_BASE_URL)
+    return candidates
 
 # Global HTTP client session to keep cookies
 _http_session: Any = None
@@ -61,7 +82,8 @@ def _get_session() -> Any:
     if _http_session is None or getattr(_http_session, "is_closed", False) or (_session_loop is not None and _session_loop != current_loop):
         _session_loop = current_loop
         _http_session = httpx.AsyncClient(
-            timeout=20.0,
+            # timeout connect rápido (3.5s) para detectar de inmediato si la IP no es ruteable por falta de NAT Loopback
+            timeout=httpx.Timeout(20.0, connect=3.5),
             verify=False,  # XUI panels might use self-signed certificates
             headers={
                 "User-Agent": (
@@ -72,49 +94,74 @@ def _get_session() -> Any:
                 "X-Requested-With": "XMLHttpRequest",
                 "Accept": "application/json, text/javascript, */*; q=0.01",
                 "Accept-Language": "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Referer": f"{XUI_URL}/users",
+                "Referer": f"{ACTIVE_XUI_BASE_URL}/users",
             },
             follow_redirects=True
         )
     return _http_session
 
 async def do_login() -> None:
+    global ACTIVE_XUI_BASE_URL, ACTIVE_XUI_LOGIN_URL, ACTIVE_XUI_ORIGIN
     session = _get_session()
-    login_url = XUI_LOGIN_URL
-    logger.info(f"🔐 XUI: Iniciando login en dos pasos en {login_url}...")
+    candidates = get_candidate_base_urls()
 
-    # Step 1: GET /login?referrer=dashboard to initialize session cookies and fetch the referrer token
-    referrer_val = "dashboard"
-    try:
-        r_get = await session.get(login_url)
-        referrer_match = re.search(r'name=["\']referrer["\']\s+value=["\']([^"\']*)["\']', r_get.text)
-        if referrer_match and referrer_match.group(1):
-            referrer_val = referrer_match.group(1)
-    except Exception as e:
-        logger.warning(f"XUI: Error en el GET de login inicial: {e}")
+    last_error = None
+    for cand_base in candidates:
+        cand_login = f"{cand_base}/login?referrer=dashboard"
+        cand_origin = f"{urllib.parse.urlparse(cand_base).scheme}://{urllib.parse.urlparse(cand_base).netloc}"
+        logger.info(f"🔐 XUI: Intentando login en dos pasos en {cand_login}...")
 
-    # Step 2: POST /login
-    post_login_url = f"{XUI_URL}/login"
-    payload = {
-        "username": XUI_USERNAME,
-        "password": XUI_PASSWORD,
-        "referrer": referrer_val,
-        "login": "Login",
-    }
+        # Step 1: GET /login?referrer=dashboard
+        referrer_val = "dashboard"
+        try:
+            r_get = await session.get(cand_login)
+            if r_get.status_code != 200:
+                logger.warning(f"XUI: GET inicial en {cand_login} retornó HTTP {r_get.status_code}")
+                continue
+            referrer_match = re.search(r'name=["\']referrer["\']\s+value=["\']([^"\']*)["\']', r_get.text)
+            if referrer_match and referrer_match.group(1):
+                referrer_val = referrer_match.group(1)
+        except Exception as e:
+            err_msg = f"{type(e).__name__}: {str(e) or repr(e)}"
+            logger.warning(f"XUI: No se pudo conectar a {cand_login} ({err_msg}). Probando alternativa...")
+            last_error = e
+            continue
 
-    try:
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Referer": login_url
+        # Step 2: POST /login
+        post_login_url = f"{cand_base}/login"
+        payload = {
+            "username": XUI_USERNAME,
+            "password": XUI_PASSWORD,
+            "referrer": referrer_val,
+            "login": "Login",
         }
-        r = await session.post(post_login_url, data=payload, headers=headers)
-        html = r.text
-        if "XUI | Login" in html or 'data-id="login"' in html:
-            raise ConnectionError("Login en panel XUI.one rechazado. Verifica credenciales.")
-        logger.info("✅ XUI: Login de sesión IPTV exitoso.")
-    except Exception as e:
-        logger.error(f"XUI: Error de login en el panel: {e}")
-        raise
+
+        try:
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": cand_login
+            }
+            r = await session.post(post_login_url, data=payload, headers=headers)
+            html = r.text
+            if "XUI | Login" in html or 'data-id="login"' in html:
+                raise ConnectionError("Login en panel XUI.one rechazado. Verifica credenciales (DAVIDOPSA / contraseña).")
+            
+            # Éxito: fijar este host como el activo para las demás operaciones
+            ACTIVE_XUI_BASE_URL = cand_base
+            ACTIVE_XUI_LOGIN_URL = cand_login
+            ACTIVE_XUI_ORIGIN = cand_origin
+            logger.info(f"✅ XUI: Login de sesión IPTV exitoso en {cand_base}.")
+            return
+        except ConnectionError:
+            raise
+        except Exception as e:
+            err_msg = f"{type(e).__name__}: {str(e) or repr(e)}"
+            logger.error(f"XUI: Error en POST de login a {post_login_url}: {err_msg}")
+            last_error = e
+            continue
+
+    total_err = f"{type(last_error).__name__}: {str(last_error) or repr(last_error)}" if last_error else "Conexión rechazada"
+    raise ConnectionError(f"No fue posible conectar a ningún servidor XUI (candidatos probados: {candidates}). Detalle: {total_err}")
 
 async def create_xui_user(
     username: str, 
@@ -135,7 +182,7 @@ async def create_xui_user(
     if "PHPSESSID" not in cookies:
         await do_login()
 
-    url = f"{XUI_URL}/post.php?action=line&referrer=lines&order=0&dir=desc"
+    url = f"{ACTIVE_XUI_BASE_URL}/post.php?action=line&referrer=lines&order=0&dir=desc"
     
     import json
     # XUI.one expects bouquets_selected as a JSON string of strings, e.g. ["1","2","5"]
@@ -165,8 +212,8 @@ async def create_xui_user(
         files.append(("access_output[]", (None, str(out))))
 
     headers = {
-        "Referer": f"{XUI_URL}/line",
-        "Origin": XUI_ORIGIN,
+        "Referer": f"{ACTIVE_XUI_BASE_URL}/line",
+        "Origin": ACTIVE_XUI_ORIGIN,
         "X-Requested-With": "XMLHttpRequest",
         "Accept": "*/*"
     }
@@ -207,7 +254,7 @@ async def create_xui_user(
             return await _send_create()
         raise
     except Exception as e:
-        logger.error(f"XUI: Fallo al crear línea {username}: {e}")
+        logger.error(f"XUI: Fallo al crear línea {username}: {type(e).__name__}: {str(e) or repr(e)}")
         raise
 
 async def delete_xui_user(username: str) -> Dict:
@@ -233,7 +280,7 @@ async def delete_xui_user(username: str) -> Dict:
         line_id = clean_username
     else:
         # 1. Búsqueda del usuario mediante el endpoint DataTables de XUI: /table?id=lines
-        table_url = f"{XUI_URL}/table"
+        table_url = f"{ACTIVE_XUI_BASE_URL}/table"
         params = {
             "id": "lines",
             "draw": "1",
@@ -244,7 +291,7 @@ async def delete_xui_user(username: str) -> Dict:
             "filter": "reseller"
         }
         headers = {
-            "Referer": f"{XUI_URL}/lines?order=0&dir=desc",
+            "Referer": f"{ACTIVE_XUI_BASE_URL}/lines?order=0&dir=desc",
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "X-Requested-With": "XMLHttpRequest"
         }
@@ -295,9 +342,9 @@ async def delete_xui_user(username: str) -> Dict:
 
         # 2. Fallback a la página estática /lines?search= si /table no devolvió resultado
         if not line_id:
-            search_url = f"{XUI_URL}/lines?search={clean_username}"
+            search_url = f"{ACTIVE_XUI_BASE_URL}/lines?search={clean_username}"
             headers_html = {
-                "Referer": f"{XUI_URL}/lines",
+                "Referer": f"{ACTIVE_XUI_BASE_URL}/lines",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             }
             try:
@@ -324,10 +371,10 @@ async def delete_xui_user(username: str) -> Dict:
     logger.info(f"🗑️ XUI: Encontrado user_id {line_id} para '{clean_username}'. Eliminando vía GET API...")
     
     # URL real de eliminación capturada del panel XUI.one:
-    # GET {XUI_URL}/api?action=line&sub=delete&user_id={line_id}
-    delete_url = f"{XUI_URL}/api?action=line&sub=delete&user_id={line_id}"
+    # GET {ACTIVE_XUI_BASE_URL}/api?action=line&sub=delete&user_id={line_id}
+    delete_url = f"{ACTIVE_XUI_BASE_URL}/api?action=line&sub=delete&user_id={line_id}"
     delete_headers = {
-        "Referer": f"{XUI_URL}/lines?order=0&dir=desc",
+        "Referer": f"{ACTIVE_XUI_BASE_URL}/lines?order=0&dir=desc",
         "X-Requested-With": "XMLHttpRequest",
         "Accept": "application/json, text/javascript, */*; q=0.01",
         "Accept-Language": "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -353,6 +400,6 @@ async def delete_xui_user(username: str) -> Dict:
             return await _send_delete()
         raise
     except Exception as e:
-        logger.error(f"XUI: Error al eliminar el usuario {clean_username} (ID {line_id}): {e}")
+        logger.error(f"XUI: Error al eliminar el usuario {clean_username} (ID {line_id}): {type(e).__name__}: {str(e) or repr(e)}")
         return {"success": False, "error": str(e)}
 
