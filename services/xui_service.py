@@ -1,30 +1,65 @@
 import os
 import re
+import urllib.parse
 try:
     # pyrefly: ignore [missing-import]
     import httpx
 except ImportError:
     httpx = None
 import logging
+import asyncio
 from typing import Optional, Dict, List, Any
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("xui_service")
 
+def _normalize_xui_urls(raw_url: str):
+    """
+    Normaliza cualquier variante de URL ingresada (ej:
+    'http://181.78.205.206/bwfdVuGs/login?referrer=dashboard' o 'http://181.78.205.206/bwfdVuGs')
+    para obtener:
+      1. XUI_URL base (ej: http://181.78.205.206/bwfdVuGs)
+      2. XUI_LOGIN_URL (ej: http://181.78.205.206/bwfdVuGs/login?referrer=dashboard)
+      3. XUI_ORIGIN (ej: http://181.78.205.206)
+    """
+    raw_url = (raw_url or "").strip()
+    if not raw_url:
+        raw_url = "http://181.78.205.206/bwfdVuGs/login?referrer=dashboard"
+
+    parsed = urllib.parse.urlparse(raw_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    path = parsed.path.rstrip("/")
+    base_path = re.sub(r'/(login(\.php)?|dashboard|lines?|table|post\.php|api)/?$', '', path, flags=re.IGNORECASE)
+
+    base_url = f"{origin}{base_path}".rstrip("/")
+    login_url = f"{base_url}/login?referrer=dashboard"
+    return base_url, login_url, origin
+
 # Config variables from environment
-XUI_URL = os.getenv("XUI_URL", "http://181.78.205.206/bwfdVuGs").rstrip("/")
+RAW_XUI_URL = os.getenv("XUI_URL", "http://181.78.205.206/bwfdVuGs/login?referrer=dashboard")
+XUI_URL, XUI_LOGIN_URL, XUI_ORIGIN = _normalize_xui_urls(RAW_XUI_URL)
 XUI_USERNAME = os.getenv("XUI_USERNAME", "DAVIDOPSA")
 XUI_PASSWORD = os.getenv("XUI_PASSWORD", "OPSATEL.@#22")
+XUI_MEMBER_ID = os.getenv("XUI_MEMBER_ID", "16")
 
 # Global HTTP client session to keep cookies
 _http_session: Any = None
+_session_loop: Any = None
 
 def _get_session() -> Any:
-    global _http_session
+    global _http_session, _session_loop
     if httpx is None:
         raise ConnectionError("El paquete 'httpx' no está instalado en el entorno. Reconstruye la imagen de Docker o ejecuta 'pip install httpx'.")
-    if _http_session is None:
+    
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if _http_session is None or getattr(_http_session, "is_closed", False) or (_session_loop is not None and _session_loop != current_loop):
+        _session_loop = current_loop
         _http_session = httpx.AsyncClient(
             timeout=20.0,
             verify=False,  # XUI panels might use self-signed certificates
@@ -45,20 +80,21 @@ def _get_session() -> Any:
 
 async def do_login() -> None:
     session = _get_session()
-    login_url = f"{XUI_URL}/login"
+    login_url = XUI_LOGIN_URL
     logger.info(f"🔐 XUI: Iniciando login en dos pasos en {login_url}...")
 
-    # Step 1: GET /login to initialize session cookies and fetch the referrer token
-    referrer_val = ""
+    # Step 1: GET /login?referrer=dashboard to initialize session cookies and fetch the referrer token
+    referrer_val = "dashboard"
     try:
         r_get = await session.get(login_url)
-        referrer_match = re.search(r'name="referrer"\s+value="([^"]*)"', r_get.text)
-        if referrer_match:
+        referrer_match = re.search(r'name=["\']referrer["\']\s+value=["\']([^"\']*)["\']', r_get.text)
+        if referrer_match and referrer_match.group(1):
             referrer_val = referrer_match.group(1)
     except Exception as e:
         logger.warning(f"XUI: Error en el GET de login inicial: {e}")
 
     # Step 2: POST /login
+    post_login_url = f"{XUI_URL}/login"
     payload = {
         "username": XUI_USERNAME,
         "password": XUI_PASSWORD,
@@ -71,7 +107,7 @@ async def do_login() -> None:
             "Content-Type": "application/x-www-form-urlencoded",
             "Referer": login_url
         }
-        r = await session.post(login_url, data=payload, headers=headers)
+        r = await session.post(post_login_url, data=payload, headers=headers)
         html = r.text
         if "XUI | Login" in html or 'data-id="login"' in html:
             raise ConnectionError("Login en panel XUI.one rechazado. Verifica credenciales.")
@@ -85,7 +121,8 @@ async def create_xui_user(
     password: str, 
     max_connections: int = 1,
     bouquets: List[str] = ["1", "2", "5"],
-    allowed_outputs: List[str] = ["1", "2"]
+    allowed_outputs: List[str] = ["1", "2"],
+    member_id: Optional[str] = None
 ) -> Dict:
     """
     Simulates the XUI.one panel line creation request using post.php.
@@ -104,12 +141,14 @@ async def create_xui_user(
     # XUI.one expects bouquets_selected as a JSON string of strings, e.g. ["1","2","5"]
     bouquets_json = json.dumps([str(b) for b in bouquets], separators=(",", ":"))
 
+    use_member_id = str(member_id or XUI_MEMBER_ID or "16")
+
     # Construct the form fields for strict multipart/form-data using (None, value)
     files = [
         ("bouquets_selected", (None, bouquets_json)),
         ("username", (None, username)),
         ("password", (None, password)),
-        ("member_id", (None, "16")),  # Member ID for your reseller/admin account in XUI
+        ("member_id", (None, use_member_id)),  # Member ID for your reseller/admin account in XUI
         ("no_expire", (None, "on")),
         ("max_connections", (None, str(max_connections))),
         ("contact", (None, "")),
@@ -127,7 +166,7 @@ async def create_xui_user(
 
     headers = {
         "Referer": f"{XUI_URL}/line",
-        "Origin": XUI_URL.split("/bwfdVuGs")[0],
+        "Origin": XUI_ORIGIN,
         "X-Requested-With": "XMLHttpRequest",
         "Accept": "*/*"
     }
@@ -285,7 +324,7 @@ async def delete_xui_user(username: str) -> Dict:
     logger.info(f"🗑️ XUI: Encontrado user_id {line_id} para '{clean_username}'. Eliminando vía GET API...")
     
     # URL real de eliminación capturada del panel XUI.one:
-    # GET http://172.30.0.3/bwfdVuGs/api?action=line&sub=delete&user_id={line_id}
+    # GET {XUI_URL}/api?action=line&sub=delete&user_id={line_id}
     delete_url = f"{XUI_URL}/api?action=line&sub=delete&user_id={line_id}"
     delete_headers = {
         "Referer": f"{XUI_URL}/lines?order=0&dir=desc",

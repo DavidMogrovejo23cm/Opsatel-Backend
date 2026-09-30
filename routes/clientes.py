@@ -376,19 +376,22 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
     iptv_b = "[]"
     iptv_out = "[]"
 
-    if cliente.tv_tipo == "IPTV":
+    if cliente.tv_tipo == "IPTV" or cliente.iptv_activar:
         iptv_act = True
-        # Generar nombre de usuario sugerido: ID + Primer Apellido + Primera Letra Nombre
-        name_parts = (cliente.nombre or "").strip().split(" ")
-        name_parts = [p for p in name_parts if len(p) > 0]
-        generated_user = str(nuevo_id)
-        if len(name_parts) >= 2:
-            generated_user += name_parts[0].lower() + name_parts[1][0].lower()
-        elif len(name_parts) == 1:
-            generated_user += name_parts[0].lower()
+        # Usar usuario proporcionado o auto-generar sugerido: ID + Primer Apellido + Primera Letra Nombre
+        if cliente.iptv_user and str(cliente.iptv_user).strip():
+            iptv_u = str(cliente.iptv_user).strip()
+        else:
+            name_parts = (cliente.nombre or "").strip().split(" ")
+            name_parts = [p for p in name_parts if len(p) > 0]
+            generated_user = str(nuevo_id)
+            if len(name_parts) >= 2:
+                generated_user += name_parts[0].lower() + name_parts[1][0].lower()
+            elif len(name_parts) == 1:
+                generated_user += name_parts[0].lower()
+            iptv_u = generated_user
         
-        iptv_u = generated_user
-        iptv_p = "TV" + str(datetime.now().year) + ".@"
+        iptv_p = cliente.iptv_pass if (cliente.iptv_pass and str(cliente.iptv_pass).strip()) else ("TV" + str(datetime.now().year) + ".@")
         iptv_max = cliente.iptv_max_conn or 1
         iptv_b = "[1,2,5]"
         iptv_out = "[1,2]"
@@ -498,7 +501,8 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
                 loop = asyncio.get_running_loop()
                 loop.create_task(run_xui_creation())
             except RuntimeError:
-                asyncio.run(run_xui_creation())
+                import threading
+                threading.Thread(target=lambda: asyncio.run(run_xui_creation()), daemon=True).start()
 
         return db_cliente
     except Exception as e:
