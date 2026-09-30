@@ -238,20 +238,53 @@ def confirm_task_activation(
 ):
     """
     Confirma que una activación individual fue exitosa tras verificación del técnico.
+    Cambia automáticamente el estado en la Hoja de Ruta a 'Realizado'.
     """
     task = db.query(models.OLTTask).filter(models.OLTTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Tarea OLT no encontrada.")
-        
+
+    cid = task.cliente_id
+    if not cid and task.payload and isinstance(task.payload, dict):
+        cid = task.payload.get("cliente_id")
+
+    updated_count = 0
+    if cid:
+        try:
+            # 1. Actualizar por cliente_id
+            updated_count = db.query(models.HojaRuta).filter(
+                models.HojaRuta.cliente_id == cid,
+                models.HojaRuta.estado != "Cancelado"
+            ).update({"estado": "Realizado"}, synchronize_session=False)
+
+            # 2. Actualizar también por coincidencia de nombre si fuera necesario
+            cliente_obj = db.query(models.Cliente).filter(models.Cliente.id == cid).first()
+            if cliente_obj and cliente_obj.nombre:
+                name_count = db.query(models.HojaRuta).filter(
+                    models.HojaRuta.nombre_cliente == cliente_obj.nombre,
+                    models.HojaRuta.estado != "Cancelado"
+                ).update({"estado": "Realizado"}, synchronize_session=False)
+                updated_count += name_count
+
+            db.commit()
+            logger.info(f"[confirm_task_activation] Hoja de Ruta actualizada a 'Realizado' ({updated_count} registros) para cliente {cid}")
+        except Exception as hr_err:
+            logger.error(f"[confirm_task_activation] Error actualizando estado en Hoja de Ruta para cliente {cid}: {hr_err}")
+            db.rollback()
+
     obs.log_audit_event_async(
         accion="ACTIVATION_CONFIRMED",
         modulo="bulk_activation",
         usuario=current_user.username,
         entidad_tipo="Cliente",
-        entidad_id=str(task.cliente_id),
-        detalles=f"El técnico confirmó la activación correcta de la ONT/MikroTik. Tarea OLT: {task_id}"
+        entidad_id=str(cid or task.cliente_id),
+        detalles=f"El técnico confirmó la activación correcta de la ONT/MikroTik. Tarea OLT: {task_id}. Hoja de Ruta actualizada a Realizado ({updated_count} registros)."
     )
-    return {"status": "ok", "message": "Activación confirmada por el técnico."}
+    return {
+        "status": "ok",
+        "message": "Activación confirmada por el técnico. Hoja de ruta actualizada a Realizado.",
+        "hoja_ruta_actualizada": updated_count
+    }
 
 
 @bulk_router.post("/{task_id}/retry-activation", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
