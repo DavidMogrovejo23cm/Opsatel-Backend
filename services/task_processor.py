@@ -499,16 +499,16 @@ class TaskProcessor:
                                     f"[AutoScale] Error parseando payload tarea {t.id}: {parse_e}"
                                 )
 
-                        # ── 3. Primer ONT ID libre (0-127) ──
+                        # ── 3. Primer ONT ID libre (1-127) ──
                         calculated_ont_id = None
-                        for i in range(128):
+                        for i in range(1, 128):
                             if i not in existing_ont_ids and i not in reserved_ont_ids:
                                 calculated_ont_id = i
                                 break
 
                         if calculated_ont_id is None:
                             raise OLTCommandError(
-                                f"No hay ONT IDs disponibles en {gpon_port} (rango 0-127 agotado)"
+                                f"No hay ONT IDs disponibles en {gpon_port} (rango 1-127 agotado)"
                             )
 
                         logger.info(f"[AutoScale] ONT ID seleccionado: {calculated_ont_id}")
@@ -541,12 +541,17 @@ class TaskProcessor:
                         # Combinar con SPs reservados en tareas pendientes
                         all_occupied_sps = olt_occupied_sps | reserved_sps
 
-                        # Recorrer el rango y elegir el primer libre (reutiliza huecos)
-                        calculated_sp = None
-                        for sp_candidate in range(sp_range_start, sp_range_end + 1):
-                            if sp_candidate not in all_occupied_sps:
-                                calculated_sp = sp_candidate
-                                break
+                        # Intentar primero el SP correspondiente al ONT ID (ej: puerto 10, ont 2 → SP 1282)
+                        ideal_sp = port_index * 128 + calculated_ont_id
+                        if sp_range_start <= ideal_sp <= sp_range_end and ideal_sp not in all_occupied_sps:
+                            calculated_sp = ideal_sp
+                        else:
+                            # Recorrer el rango y elegir el primer libre (reutiliza huecos desde 1)
+                            calculated_sp = None
+                            for sp_candidate in range(sp_range_start + 1, sp_range_end + 1):
+                                if sp_candidate not in all_occupied_sps:
+                                    calculated_sp = sp_candidate
+                                    break
 
                         if calculated_sp is None:
                             raise OLTCommandError(

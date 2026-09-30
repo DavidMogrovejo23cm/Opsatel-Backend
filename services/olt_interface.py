@@ -853,7 +853,16 @@ class OLTInterface:
             'already existed',
             'already exists',
             'has existed',
-            'exist'
+            'exist',
+            'make configuration repeatedly',
+            'configuration repeatedly',
+            'repeatedly',
+            'the same configuration',
+            'same configuration',
+            'the same as',
+            'is the same',
+            'has already been configured',
+            'already configured'
         ]
         
         error_keywords = [
