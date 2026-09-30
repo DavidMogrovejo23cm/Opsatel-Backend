@@ -905,6 +905,12 @@ def ver_potencia_ont(
 
         try:
             power_data = olt.check_ont_power(gpon_port, ont_id)
+            if power_data and power_data.get('rx_power') is not None:
+                cliente.potencia = str(power_data.get('rx_power'))
+                try:
+                    db.commit()
+                except Exception as db_e:
+                    logger.warning(f"No se pudo actualizar cliente.potencia en DB: {db_e}")
         finally:
             olt.disconnect()
 

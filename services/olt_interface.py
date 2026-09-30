@@ -1067,9 +1067,10 @@ class OLTInterface:
                 self.enter_gpon_interface(gpon_port_val)
                 opt_cmd = f"display ont optical-info {port_num_val} {ont_id_val}"
                 # Huawei puede tardar unos segundos en publicar la ONT online.
-                # Reintentar aquí evita mostrar potencia vacía por una lectura
-                # demasiado temprana, sin bloquear la activación más de 2s.
-                for power_attempt in range(3):
+                # Huawei y el transceptor de la ONT/Bridge tardan unos segundos en estabilizarse
+                # al encenderse o aprovisionarse. Reintentar hasta 4 veces con 2s entre intentos si aún no
+                # registra rx_power, saliendo inmediatamente apenas responda con potencia válida.
+                for power_attempt in range(4):
                     opt_resp = self.send_command(
                         opt_cmd,
                         expect_string=r'\(config-if-gpon-',
@@ -1083,8 +1084,8 @@ class OLTInterface:
                     ont_status_live = self.parse_ont_status(opt_resp)
                     if rx_power is not None:
                         break
-                    if power_attempt < 2:
-                        time.sleep(1)
+                    if power_attempt < 3:
+                        time.sleep(2)
                 self.exit_gpon_interface()
                 logger.info(f"[Power-Inline] RX={rx_power} TX={tx_power} Status={ont_status_live}")
             except Exception as pw_inline_err:
