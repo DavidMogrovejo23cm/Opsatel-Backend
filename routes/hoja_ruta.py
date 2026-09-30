@@ -3,13 +3,36 @@ from sqlalchemy.orm import Session
 from typing import List
 import models, schemas
 from database import get_db
-from datetime import datetime
+from datetime import datetime, timedelta
 from .auth import get_current_user, require_role
 
 router = APIRouter(prefix="/hoja-ruta", tags=["hoja-ruta"])
 
 @router.get("/", response_model=List[schemas.HojaRutaResponse])
 def listar_hoja_ruta(db: Session = Depends(get_db)):
+    try:
+        # Auto-marcar como 'No completado' registros con más de 24h desde creación que sigan Pendientes o En proceso
+        cutoff_24h = datetime.utcnow() - timedelta(hours=24)
+        db.query(models.HojaRuta).filter(
+            models.HojaRuta.estado.in_(["Pendiente", "En proceso"]),
+            models.HojaRuta.created_at != None,
+            models.HojaRuta.created_at <= cutoff_24h
+        ).update({"estado": "No completado"}, synchronize_session=False)
+
+        # Para registros donde created_at sea NULL, usar la columna fecha si es anterior a hoy
+        today_str = datetime.utcnow().strftime("%Y-%m-%d")
+        db.query(models.HojaRuta).filter(
+            models.HojaRuta.estado.in_(["Pendiente", "En proceso"]),
+            models.HojaRuta.created_at == None,
+            models.HojaRuta.fecha != None,
+            models.HojaRuta.fecha < today_str
+        ).update({"estado": "No completado"}, synchronize_session=False)
+
+        db.commit()
+    except Exception as e_up:
+        db.rollback()
+        print(f"Aviso actualizando registros de 24h en Hoja de Ruta: {e_up}")
+
     try:
         # Ordenar por fecha (desc) y luego por hora (desc)
         return db.query(models.HojaRuta).order_by(models.HojaRuta.fecha.asc(), models.HojaRuta.hora.asc()).all()
