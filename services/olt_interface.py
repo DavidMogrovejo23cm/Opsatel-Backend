@@ -1939,12 +1939,17 @@ class OLTInterface:
             )
             logger.info(f"[OLTInterface] [reset_ont] interface gpon {gpon_interface}: {resp.strip()[:120]}")
 
-            # Ejecutar ont reset
+            # Ejecutar ont reset (detectando si Huawei pide confirmación y/n)
             resp = self.send_command(
                 f"ont reset {port_num} {ont_id}",
-                expect_string=r'\(config-if-gpon-', delay_factor=0.5
+                expect_string=r'(\(config-if-gpon-|y/n|are you sure|confirm)',
+                delay_factor=0.5,
+                read_timeout=15
             )
             logger.info(f"[OLTInterface] [reset_ont] ont reset {port_num} {ont_id}: {resp.strip()[:120]}")
+            if any(q in resp.lower() for q in ['y/n', 'are you sure', 'confirm']):
+                logger.info("[reset_ont] Confirmando reinicio con 'y'...")
+                resp += "\n" + self.send_command('y', expect_string=r'\(config-if-gpon-', delay_factor=0.5)
 
             # Salir de la interfaz GPON
             self.send_command('quit', expect_string=r'\(config\)#', delay_factor=0.3)

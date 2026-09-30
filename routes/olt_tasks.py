@@ -14,6 +14,8 @@ Autor: Arquitecto de Software Senior
 Versión: 1.0.0
 """
 
+from typing import Any
+from typing import Dict
 import json
 import logging
 from datetime import datetime
@@ -932,3 +934,104 @@ def ver_potencia_ont(
     except Exception as e:
         logger.error(f"Error consultando potencia ONT para cliente {cliente_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error consultando potencia: {str(e)}")
+
+
+@router.post("/clientes/{cliente_id}/reset-ont", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
+def reset_cliente_ont(
+    cliente_id: int,
+    payload: Optional[Dict[str, Any]] = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Reinicia un ONT en la OLT mediante:
+        interface gpon X/X
+        ont reset <port_num> <ont_id>
+        quit
+    """
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    payload_data = payload or {}
+    gpon_port = payload_data.get("gpon_port") or getattr(cliente, "puerto", None)
+    ont_id_str = payload_data.get("ont_id") or getattr(cliente, "id_port", None)
+
+    if not gpon_port or ont_id_str is None:
+        raise HTTPException(status_code=400, detail="El cliente no tiene puerto GPON u ONT ID asignado")
+
+    if "/" not in str(gpon_port):
+        import re
+        match = re.search(r"\d+", str(gpon_port))
+        if not match:
+            raise HTTPException(status_code=400, detail=f"Puerto GPON inválido: {gpon_port}")
+        frame = "1" if is_nodo_sayausi(getattr(cliente, "nodo", "")) else "0"
+        gpon_port = f"0/{frame}/{match.group()}"
+
+    ont_id = str(ont_id_str).strip()
+
+    # Buscar OLT activa para el nodo del cliente
+    nodo = getattr(cliente, "nodo", None)
+    if nodo:
+        is_sayausi_nodo = is_nodo_sayausi(nodo)
+        olt_config = db.query(models.OLTConfig).filter(
+            models.OLTConfig.active == True,
+            or_(
+                models.OLTConfig.nodo_asociado == nodo,
+                models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi_nodo else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
+                models.OLTConfig.nodo_asociado == None,
+                models.OLTConfig.nodo_asociado == ""
+            )
+        ).first()
+    else:
+        olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
+
+    if not olt_config:
+        raise HTTPException(status_code=503, detail="No hay OLT activa configurada para este nodo")
+
+    try:
+        olt = OLTInterface(
+            host=olt_config.host,
+            port=olt_config.port or 23,
+            username=olt_config.username,
+            password=olt_config.password,
+            timeout=15,
+            max_retries=1
+        )
+
+        connected = olt.connect()
+        if not connected:
+            raise HTTPException(status_code=503, detail="No se pudo conectar a la OLT")
+
+        try:
+            reset_success = olt.reset_ont(gpon_port, ont_id)
+        finally:
+            olt.disconnect()
+
+        if not reset_success:
+            raise HTTPException(status_code=500, detail="La OLT no pudo ejecutar el reinicio del ONT.")
+
+        # Auditoría
+        import observability as obs
+        obs.log_audit_event_async(
+            accion="RESET_ONT",
+            modulo="olt_tasks",
+            usuario=current_user.username,
+            entidad_tipo="Cliente",
+            entidad_id=str(cliente_id),
+            detalles=f"Reinicio ONT ejecutado: Puerto {gpon_port} ONT {ont_id} en {olt_config.nombre}"
+        )
+
+        return {
+            "success": True,
+            "cliente_id": cliente_id,
+            "gpon_port": gpon_port,
+            "ont_id": ont_id,
+            "message": f"ONT reiniciada correctamente en GPON {gpon_port} ID {ont_id}."
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reiniciando ONT para cliente {cliente_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error reiniciando ONT: {str(e)}")
