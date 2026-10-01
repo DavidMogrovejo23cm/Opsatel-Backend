@@ -2422,8 +2422,17 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
         errores = 0
         detalles_errores = []
         
-        # Diccionario de columnas del Excel para búsqueda insensible a mayúsculas/espacios
+        import unicodedata, re
+
+        def norm_col(col_name):
+            if not isinstance(col_name, str):
+                return ""
+            s = unicodedata.normalize('NFKD', col_name).encode('ASCII', 'ignore').decode('utf-8')
+            return re.sub(r'[^A-Z0-9]', '', s.upper())
+
+        # Diccionarios de columnas del Excel para búsqueda flexible
         columnas_df = {col.upper().strip(): col for col in df.columns if isinstance(col, str)}
+        norm_columnas_df = {norm_col(col): col for col in df.columns if isinstance(col, str)}
         
         # Mapeo exhaustivo de campos del modelo Cliente a posibles alias en el Excel
         FIELD_MAPPING = {
@@ -2470,12 +2479,12 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
             "adicional": ["ADICIONAL", "MONTO_ADICIONAL", "CARGO_EXTRA"],
             "comentarios": ["COMENTARIOS", "NOTAS", "OBS", "DESCRIPCION", "COMENTARIO CONTRATO", "COMENTARIOS CONTRATO"],
             "observaciones": ["OBSERVACIONES"],
-            "notas_pago": ["NOTAS_PAGO", "OBSERVACION_PAGO", "NOTA DE PAGO / REPARACIÓN", "NOTA DE PAGO / REPARACION", "NOTA DE PAGO", "REPARACION"],
+            "notas_pago": ["NOTAS_PAGO", "OBSERVACION_PAGO", "NOTA DE PAGO / REPARACIÓN", "NOTA DE PAGO / REPARACION", "NOTA DE PAGO / REPARACIN", "NOTA DE PAGO", "REPARACION", "REPARACIN"],
             "tercera_edad": ["TERCERA_EDAD", "DISCAPACIDAD", "MAYOR_EDAD"],
             "precio_plan_especial": ["PRECIO_PLAN_ESPECIAL", "VALOR_ESPECIAL", "TARIFA_REDUCIDA"],
             "mantenimiento": ["MANTENIMIENTO", "PLAN_MANTENIMIENTO"],
-            "saldo": ["SALDO", "DEUDA", "PENDIENTE", "SALDO_ANTERIOR", "TOTAL"],
-            "pago_mensual": ["PAGO_MENSUAL", "COBRO_MES", "RECAUDACION"],
+            "saldo": ["SALDO", "DEUDA", "PENDIENTE", "SALDO_ANTERIOR"],
+            "pago_mensual": ["PAGO_MENSUAL", "COBRO_MES", "RECAUDACION", "TOTAL"],
             "iptv_activar": ["IPTV_ACTIVAR", "ACTIVAR_IPTV"],
             "iptv_user": ["IPTV_USER", "USUARIO_IPTV", "CUENTA IPTV", "CUENTA_IPTV"],
             "iptv_pass": ["IPTV_PASS", "CLAVE_IPTV"],
@@ -2497,6 +2506,11 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                 a_up = alias.upper().strip()
                 if a_up in columnas_df:
                     val = row[columnas_df[a_up]]
+                    if pd.notnull(val):
+                        return val
+                a_norm = norm_col(alias)
+                if a_norm in norm_columnas_df:
+                    val = row[norm_columnas_df[a_norm]]
                     if pd.notnull(val):
                         return val
             return None
@@ -2523,28 +2537,14 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
         ids_existentes = set(i[0] for i in ids_query)
         proximo_id_hueco = 1
 
-        def es_cedula_valida_busqueda(c_val):
-            if not c_val:
-                return False
-            s = str(c_val).strip()
-            # Descartar etiquetas o textos comunes de copias de cédula que no son números de identificación
-            if s.upper() in ["DIGITAL", "FISICO", "FISICA", "NO", "SI", "F", "D", "PENDIENTE", "S/N", "SIN", "CHAT", "ESTA EN EL CHAT", "JOHN"]:
-                return False
-            digits = ''.join(ch for ch in s if ch.isdigit())
-            # Solo usar para búsqueda si es un número real de identificación (mínimo 8 dígitos)
-            return len(digits) >= 8 and len(digits) == len(s)
-
         for index, row in df.iterrows():
             try:
                 # Validar nombre (Obligatorio)
                 nombre_raw = get_raw_val(row, FIELD_MAPPING["nombre"])
-                if not nombre_raw:
+                if not nombre_raw or str(nombre_raw).strip() == "" or str(nombre_raw).strip().lower() in ["none", "nan", "null"]:
                     continue
                 nombre = str(nombre_raw).strip()
                     
-                cedula_raw = get_raw_val(row, FIELD_MAPPING["cedula"])
-                cedula = str(cedula_raw).strip() if cedula_raw else None
-                
                 # Obtener ID opcional del Excel
                 id_raw = get_raw_val(row, ["ID", "NUMERO", "COD_CLIENTE", "ID_CLIENTE"])
                 id_excel = None
@@ -2554,30 +2554,20 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                     except:
                         id_excel = None
 
-                # Buscar cliente por ID (si vino en Excel), por Cédula VÁLIDA (solo numérica) o por Nombre
-                cliente = None
-                if id_excel and id_excel in ids_existentes:
-                    cliente = db.query(models.Cliente).filter(models.Cliente.id == id_excel).first()
-                if not cliente and es_cedula_valida_busqueda(cedula):
-                    cliente = db.query(models.Cliente).filter(models.Cliente.cedula == cedula).first()
-                if not cliente and not id_excel:
-                    cliente = db.query(models.Cliente).filter(models.Cliente.nombre == nombre).first()
-                
-                if not cliente:
-                    # Asignar ID: usar el ID del Excel si está disponible y libre, sino buscar hueco
-                    if id_excel and id_excel not in ids_existentes and id_excel > 0:
-                        nuevo_id = id_excel
-                    else:
-                        while proximo_id_hueco in ids_existentes:
-                            proximo_id_hueco += 1
-                        nuevo_id = proximo_id_hueco
-                    
-                    cliente = models.Cliente(id=nuevo_id, nombre=nombre, estado="Activo")
-                    ids_existentes.add(nuevo_id)
-                    db.add(cliente)
-                    count_nuevos += 1
+                # CADA FILA ES UN CLIENTE / SERVICIO NUEVO E INDEPENDIENTE (NADA DE ACTUALIZADOS)
+                # Incluso si tienen el mismo nombre o la misma cédula por tener varios servicios contratados,
+                # todos deben agregarse a la tabla general con su ID único correspondiente.
+                if id_excel and id_excel not in ids_existentes and id_excel > 0:
+                    nuevo_id = id_excel
                 else:
-                    count_actualizados += 1
+                    while proximo_id_hueco in ids_existentes:
+                        proximo_id_hueco += 1
+                    nuevo_id = proximo_id_hueco
+                
+                cliente = models.Cliente(id=nuevo_id, nombre=nombre, estado="Activo")
+                ids_existentes.add(nuevo_id)
+                db.add(cliente)
+                count_nuevos += 1
 
                 # Mapear todos los campos del Excel al modelo
                 for field, aliases in FIELD_MAPPING.items():
@@ -2615,6 +2605,39 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                                 clean_val = "0" + clean_val
                         setattr(cliente, field, clean_val)
                 
+                # Respetar y estandarizar el estado del cliente según el Excel (ACTIVO, INACTIVO, FINIQUITO, etc.)
+                val_estado = get_raw_val(row, FIELD_MAPPING["estado"])
+                if val_estado is not None and str(val_estado).strip() and str(val_estado).strip().lower() not in ["none", "nan", "null"]:
+                    estado_str = str(val_estado).strip()
+                    est_upper = estado_str.upper()
+                    if est_upper == "ACTIVO":
+                        cliente.estado = "Activo"
+                    elif est_upper == "INACTIVO":
+                        cliente.estado = "Inactivo"
+                    elif est_upper in ["EN PROCESO", "PROCESO"]:
+                        cliente.estado = "En Proceso"
+                    elif est_upper in ["JURIDICO", "JURÍDICO"]:
+                        cliente.estado = "Jurídico"
+                    elif est_upper == "FINIQUITO":
+                        cliente.estado = "Finiquito"
+                    elif est_upper in ["CORTESIA", "CORTESÍA"]:
+                        cliente.estado = "Cortesía"
+                    elif est_upper == "TRASLADO":
+                        cliente.estado = "Traslado"
+                    elif est_upper in ["PENDIENTE", "EN ACTIVACION", "EN ACTIVACIÓN"]:
+                        cliente.estado = "Pendiente"
+                    else:
+                        cliente.estado = estado_str
+                else:
+                    if not cliente.estado or str(cliente.estado).strip().lower() in ["", "none", "nan", "null"]:
+                        cliente.estado = "Activo"
+
+                # IPTV detección
+                if cliente.iptv_user and str(cliente.iptv_user).strip():
+                    cliente.iptv_activar = True
+                    if not cliente.tv_tipo or cliente.tv_tipo in ["Ninguno", ""]:
+                        cliente.tv_tipo = "IPTV"
+
                 # Homologación inteligente de Plan y Precios
                 val_plan = get_raw_val(row, FIELD_MAPPING["plan"])
                 if val_plan is not None:
@@ -2647,11 +2670,6 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
 
                 # Recalcular balances (Importante para que total_pago sea correcto)
                 sync_cliente_balances(cliente, db)
-                
-                # Garantizar que clientes importados queden en 'Activo' (base de datos / general)
-                # y no pasen por 'Administrar' (Pendiente) ni generen colas en LibreQoS.
-                if not cliente.estado or str(cliente.estado).strip().lower() in ["", "none", "null", "pendiente"]:
-                    cliente.estado = "Activo"
 
                 # Commit individual por cada cliente procesado exitosamente
                 db.commit()
@@ -2685,9 +2703,9 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
             print(f"Aviso actualizando AUTO_INCREMENT tras importación: {autoinc_err}")
 
         return {
-            "message": f"Importación completada. {count_nuevos} nuevos, {count_actualizados} actualizados, {errores} errores.",
+            "message": f"Importación completada. Se añadieron {count_nuevos} clientes/servicios a la base de datos." + (f" ({errores} errores)" if errores > 0 else ""),
             "nuevos": count_nuevos,
-            "actualizados": count_actualizados,
+            "actualizados": 0,
             "errores": errores,
             "total_procesados": len(df),
             "detalles": detalles_errores[:50] # Mostramos hasta 50 errores para mejor diagnóstico
