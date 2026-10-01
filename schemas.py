@@ -743,6 +743,9 @@ class WhatsAppManualSend(BaseModel):
 class WhatsAppGlobalSend(BaseModel):
     mensaje: str
     nodo: Optional[str] = None
+    estado: Optional[str] = "ACTIVO"
+    delay_min: Optional[float] = 4.0
+    delay_max: Optional[float] = 7.5
 
 class WhatsAppAdministradorCreate(BaseModel):
     numero: str

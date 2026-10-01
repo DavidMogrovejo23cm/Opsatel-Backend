@@ -232,7 +232,14 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
     return nuevo_msg
 
 
-def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
+def send_global_broadcast_task(
+    mensaje: str,
+    nodo: Optional[str],
+    db_session_factory,
+    estado: Optional[str] = "ACTIVO",
+    delay_min: float = 4.0,
+    delay_max: float = 7.5
+):
     db = db_session_factory()
     import time
     import random
@@ -244,30 +251,70 @@ def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
 
     difusion_registro = None
     try:
-        # Obtener clientes activos con celular registrado (soporta ACTIVO / ACTIVA / Activo)
+        # Base query: clientes con celular registrado
         query = db.query(models.Cliente).filter(
-            func.upper(models.Cliente.estado).in_(["ACTIVO", "ACTIVA"]),
             models.Cliente.celular != None,
             models.Cliente.celular != ""
         )
 
-        if nodo and str(nodo).strip() and str(nodo).lower() not in ["todos", "all", "todos los nodos"]:
-            clean_nodo = remove_accents(str(nodo).strip())
+        # Filtro de Estado del cliente
+        estado_clean = (estado or "ACTIVO").strip().upper()
+        if estado_clean not in ["TODOS", "ALL", "TODOS LOS ESTADOS", "*"]:
+            if estado_clean in ["ACTIVO", "ACTIVA"]:
+                query = query.filter(func.upper(models.Cliente.estado).in_(["ACTIVO", "ACTIVA"]))
+                estado_label = "Clientes Activos"
+            elif estado_clean in ["INACTIVO", "INACTIVA"]:
+                query = query.filter(func.upper(models.Cliente.estado).in_(["INACTIVO", "INACTIVA"]))
+                estado_label = "Clientes Inactivos"
+            elif estado_clean in ["SUSPENDIDO", "SUSPENDIDA"]:
+                query = query.filter(func.upper(models.Cliente.estado).in_(["SUSPENDIDO", "SUSPENDIDA"]))
+                estado_label = "Clientes Suspendidos"
+            elif estado_clean in ["PROCESO", "EN PROCESO"]:
+                query = query.filter(func.upper(models.Cliente.estado).in_(["PROCESO", "EN PROCESO"]))
+                estado_label = "Clientes En Proceso"
+            elif estado_clean in ["JURIDICO", "JURÍDICO"]:
+                query = query.filter(func.upper(models.Cliente.estado).in_(["JURIDICO", "JURÍDICO"]))
+                estado_label = "Clientes en Jurídico"
+            elif estado_clean in ["PENDIENTE", "EN ACTIVACION", "EN ACTIVACIÓN"]:
+                query = query.filter(func.upper(models.Cliente.estado).in_(["PENDIENTE", "EN ACTIVACIÓN", "EN ACTIVACION"]))
+                estado_label = "Clientes Pendientes / En Activación"
+            elif estado_clean == "FINIQUITO":
+                query = query.filter(func.upper(models.Cliente.estado).in_(["FINIQUITO"]))
+                estado_label = "Clientes Finiquito"
+            elif estado_clean in ["CORTESIA", "CORTESÍA"]:
+                query = query.filter(func.upper(models.Cliente.estado).in_(["CORTESIA", "CORTESÍA"]))
+                estado_label = "Clientes Cortesía"
+            elif estado_clean == "TRASLADO":
+                query = query.filter(func.upper(models.Cliente.estado).in_(["TRASLADO"]))
+                estado_label = "Clientes Traslado"
+            else:
+                query = query.filter(func.upper(models.Cliente.estado) == estado_clean)
+                estado_label = f"Estado: {estado_clean}"
+        else:
+            estado_label = "Todos los estados"
+
+        # Filtro de Nodo / Parroquia
+        nodo_clean = nodo.strip() if nodo and str(nodo).strip() and str(nodo).lower() not in ["todos", "all", "todos los nodos"] else None
+        if nodo_clean:
+            clean_nodo_norm = remove_accents(nodo_clean)
             query = query.filter(
                 or_(
-                    models.Cliente.nodo.ilike(f"%{clean_nodo}%"),
-                    models.Cliente.parroquia.ilike(f"%{clean_nodo}%")
+                    models.Cliente.nodo.ilike(f"%{clean_nodo_norm}%"),
+                    models.Cliente.parroquia.ilike(f"%{clean_nodo_norm}%")
                 )
             )
+            nodo_label = f"Nodo: {nodo_clean}"
+        else:
+            nodo_label = "Todos los nodos"
         
         clientes = query.all()
-        nodo_label = f"Nodo/Parroquia: {nodo}" if (nodo and str(nodo).lower() not in ["todos", "all", "todos los nodos"]) else "TODOS los clientes activos"
-        print(f"[Broadcast Task] Iniciando difusión masiva con protección anti-baneo a {len(clientes)} clientes activos ({nodo_label}).")
+        alcance_label = f"{estado_label} ({nodo_label})"
+        print(f"[Broadcast Task] Iniciando difusión masiva con protección anti-baneo a {len(clientes)} clientes ({alcance_label}). Pausa: {delay_min}-{delay_max}s.")
         
         # Registrar campaña de difusión en historial
         difusion_registro = models.WhatsAppDifusionHistorial(
             tipo="difusion_masiva",
-            alcance=nodo_label,
+            alcance=alcance_label,
             mensaje=mensaje,
             total_destinatarios=len(clientes),
             total_exitosos=0,
@@ -282,6 +329,10 @@ def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
         exitosos = 0
         fallidos = 0
 
+        # Rango seguro de pausas anti-baneo
+        delay_a = float(delay_min) if delay_min and float(delay_min) >= 1.0 else 4.0
+        delay_b = float(delay_max) if delay_max and float(delay_max) >= delay_a else max(delay_a, 7.5)
+
         for idx, cliente in enumerate(clientes):
             numero = cliente.celular.strip()
             mensaje_personalizado = personalizar_mensaje_cliente(mensaje, cliente)
@@ -289,6 +340,10 @@ def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
             
             if success:
                 exitosos += 1
+                try:
+                    registrar_mensaje_chat(db, numero, "operador", mensaje_personalizado, cliente.id if cliente else None)
+                except Exception:
+                    pass
             else:
                 fallidos += 1
 
@@ -296,7 +351,7 @@ def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
             historial = models.WhatsAppHistorial(
                 numero_destino=numero,
                 mensaje=mensaje_personalizado,
-                tipo_envio=f"difusion_{nodo if (nodo and str(nodo).lower() not in ['todos', 'all']) else 'global'}",
+                tipo_envio=f"difusion_{nodo_clean if nodo_clean else 'global'}",
                 estado="enviado" if success else "fallido",
                 fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S") if success else None,
                 fecha_creacion=datetime.now(ECUADOR_TZ)
@@ -308,9 +363,9 @@ def send_global_broadcast_task(mensaje: str, nodo: str, db_session_factory):
                 difusion_registro.total_fallidos = fallidos
             db.commit()
 
-            # Pausa aleatoria anti-baneo (entre 4.0 y 7.5 segundos por mensaje)
+            # Pausa aleatoria anti-baneo por cada mensaje
             if idx < len(clientes) - 1:
-                delay_sec = random.uniform(4.0, 7.5)
+                delay_sec = random.uniform(delay_a, delay_b)
                 time.sleep(delay_sec)
 
         if difusion_registro:
@@ -863,18 +918,26 @@ def enviar_whatsapp_global(
     background_tasks: BackgroundTasks
 ):
     """
-    Envía un mensaje de WhatsApp a todos los clientes que se encuentran en estado 'Activo'.
-    El envío se realiza en segundo plano (asíncronamente) para no bloquear al servidor.
+    Envía un mensaje de difusión de WhatsApp según el estado de cliente y nodo seleccionado.
+    El envío se realiza en segundo plano (asíncronamente) con protección anti-baneo y pausas aleatorias.
     """
     if not payload.mensaje:
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío.")
     
-    # Encolar la tarea en background
-    background_tasks.add_task(send_global_broadcast_task, payload.mensaje, payload.nodo, SessionLocal)
+    # Encolar la tarea en background con estado y tiempos de espera configurables
+    background_tasks.add_task(
+        send_global_broadcast_task,
+        payload.mensaje,
+        payload.nodo,
+        SessionLocal,
+        payload.estado or "ACTIVO",
+        payload.delay_min if payload.delay_min is not None else 4.0,
+        payload.delay_max if payload.delay_max is not None else 7.5
+    )
     
     return {
         "success": True,
-        "message": "Difusión masiva iniciada en segundo plano."
+        "message": "Difusión masiva iniciada en segundo plano con protección anti-bloqueo."
     }
 
 from pydantic import BaseModel
