@@ -678,7 +678,7 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
             egresos_op_ef += monto_gf
 
     proyectos = db.query(models.Proyecto).all()
-    proyectos_activos = [p for p in proyectos if p.fecha_inicio[:7] <= mes and (not p.fecha_fin or p.fecha_fin[:7] >= mes)]
+    proyectos_activos = [p for p in proyectos if (p.fecha_inicio or "")[:7] <= mes and (not p.fecha_fin or (p.fecha_fin or "")[:7] >= mes)]
     total_proyectos = sum(float(p.monto_invertido or 0) for p in proyectos_activos)
 
     # Colchon total (histórico)
@@ -812,7 +812,7 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
         }
     }
 
-    # Cartera pendiente de clientes (Total Pendiente Morosos)
+    # Cartera pendiente de clientes (Total Pendiente Morosos - Clientes Activos)
     clientes_db = db.query(models.Cliente).all()
     total_morosos_val = 0.0
     cant_morosos = 0
@@ -821,7 +821,7 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
             continue
         est = str(getattr(c, 'estado', '') or '').strip().upper()
         est = est.replace("Í", "I").replace("Ó", "O").replace("Á", "A").replace("É", "E").replace("Ú", "U")
-        if est not in ["ACTIVO", "ACTIVOS", "JURIDICO", "PROCESO", "EN PROCESO"]:
+        if est not in ["ACTIVO", "ACTIVOS"]:
             continue
         s_val = float(c.saldo or 0)
         p_val = 0.0
