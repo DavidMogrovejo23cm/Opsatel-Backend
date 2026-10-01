@@ -542,4 +542,126 @@ def reset_todos_valores_dinero(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error al restablecer valores de dinero: {str(e)}")
 
 
+# ========================================================================
+# ELIMINAR BALANCE (REINICIO EXCLUSIVO DE BALANCE A CEROS)
+# ========================================================================
+@router.post("/eliminar-balance", dependencies=[Depends(require_role(["administrador"]))])
+def eliminar_balance(db: Session = Depends(get_db)):
+    """
+    Elimina y restablece a CERO todos los registros y movimientos del módulo de Balance
+    (pagos contabilizados, egresos, proyectos, colchón, movimientos internos, finanzas).
+    
+    IMPORTANTE:
+    NO modifica ni restaura deudas a los clientes (models.Cliente.saldo y total_pago
+    permanecen intactos). Solo borra los valores y movimientos en el balance.
+    """
+    try:
+        # 1. Vaciar historial de pagos de clientes principales (fuente de recaudación en balance)
+        db.query(models.Pago).delete()
+
+        # 2. Vaciar historial de pagos de clientes extras
+        try:
+            db.query(models.PagoExtra).delete()
+        except Exception:
+            pass
+
+        # 3. Restablecer valores de recaudación mensual en Clientes Extras a 0
+        # (NO se tocan saldo_pendiente ni {m}_saldo para no alterar las deudas de extras)
+        meses = [
+            "enero", "febrero", "marzo", "abril", "mayo", "junio",
+            "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+        ]
+        extras_update = {
+            models.ClienteExtra.total_pagado: 0.00,
+        }
+        for m in meses:
+            extras_update[getattr(models.ClienteExtra, f"{m}_pago")] = 0.00
+            extras_update[getattr(models.ClienteExtra, f"{m}_banco")] = None
+            extras_update[getattr(models.ClienteExtra, f"{m}_fecha_pago")] = None
+            extras_update[getattr(models.ClienteExtra, f"{m}_factura")] = None
+            extras_update[getattr(models.ClienteExtra, f"{m}_cod")] = None
+
+        db.query(models.ClienteExtra).update(extras_update)
+
+        # 4. Vaciar egresos operativos y fijos
+        try:
+            db.query(models.Egreso).delete()
+        except Exception:
+            pass
+
+        try:
+            db.query(models.GastoFijo).delete()
+        except Exception:
+            pass
+
+        # 5. Vaciar proyectos y sus movimientos de ingresos/gastos
+        try:
+            db.query(models.GastoProyecto).delete()
+            db.query(models.ProyectoPago).delete()
+            db.query(models.Proyecto).delete()
+        except Exception:
+            pass
+
+        # 6. Vaciar colchón / fondo de reserva
+        try:
+            db.query(models.Colchon).delete()
+        except Exception:
+            pass
+
+        # 7. Vaciar transferencias y movimientos internos de bancos
+        try:
+            db.query(models.MovimientoInterno).delete()
+        except Exception:
+            pass
+
+        # 8. Vaciar turnos de caja
+        try:
+            db.query(models.TurnoCaja).delete()
+        except Exception:
+            pass
+
+        # 9. Vaciar reportes mensuales y arcotel cacheados / guardados
+        try:
+            db.query(models.ReporteMensual).delete()
+            db.query(models.ReporteArcotelGuardado).delete()
+        except Exception:
+            pass
+
+        # 10. Restablecer Finanzas Base a 0 (modelo y config)
+        try:
+            fb = db.query(models.FinanzasBase).first()
+            if fb:
+                fb.caja_chica = 0.00
+                fb.pichincha = 0.00
+                fb.jep = 0.00
+        except Exception:
+            pass
+
+        try:
+            cfg = get_config()
+            if "finanzas_base" in cfg:
+                for k in cfg["finanzas_base"]:
+                    cfg["finanzas_base"][k] = 0.0
+                save_config({"finanzas_base": cfg["finanzas_base"]})
+        except Exception as e:
+            print(f"Aviso reseteando finanzas_base config: {e}")
+
+        # Invalidar caché de estadísticas si existe
+        try:
+            from routes import clientes
+            clientes._stats_cache = None
+            clientes._stats_cache_time = 0
+        except Exception:
+            pass
+
+        db.commit()
+        return {
+            "message": "El balance ha sido eliminado y reiniciado a $0.00 exitosamente. Las deudas de los clientes se mantienen intactas."
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar balance: {str(e)}")
+
+
+
 
