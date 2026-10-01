@@ -739,6 +739,7 @@ class WhatsAppConfiguracionUpdate(BaseModel):
 class WhatsAppManualSend(BaseModel):
     numero: str
     mensaje: str
+    historial_id: Optional[int] = None
 
 class WhatsAppGlobalSend(BaseModel):
     mensaje: str

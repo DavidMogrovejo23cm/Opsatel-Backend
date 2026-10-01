@@ -1,6 +1,7 @@
 import os
 import requests
 import re
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,76 +13,140 @@ WHATSAPP_API_URL = os.getenv("WHATSAPP_API_URL", "https://api.green-api.com")
 WHATSAPP_INSTANCE_ID = os.getenv("WHATSAPP_INSTANCE_ID", "")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 
-def format_whatsapp_number(number: str) -> str:
+def format_single_number(cleaned: str) -> str:
     """
-    Cleans a phone number and formats it for WhatsApp.
-    - Standardizes Ecuador mobile numbers to start with 593.
-    - Extracts the first mobile number if multiple are separated by / , ; or spaces.
-    - Rejects Ecuadorian landlines (02, 03, 04, 05, 06, 07) to avoid sending to numbers without WhatsApp.
-    - Preserves domain suffixes like @lid or @c.us if present.
+    Limpia y valida un único número de teléfono (Ecuador o internacional).
+    Descarta teléfonos fijos ecuatorianos.
     """
-    if not number:
-        return ""
-        
-    number_str = str(number).strip()
-    server = ""
-    if "@" in number_str:
-        parts = number_str.split("@", 1)
-        number_part = parts[0]
-        server = "@" + parts[1]
-    else:
-        number_part = number_str
-
-    # Si vienen múltiples números (ej: "0991234567 / 0987654321"), tomar el primero
-    for sep in ['/', ',', ';', '|', '\n']:
-        if sep in number_part:
-            number_part = number_part.split(sep)[0].strip()
-
-    cleaned = re.sub(r'\D', '', number_part)
     if not cleaned:
         return ""
+    
+    server = ""
+    if "@" in cleaned:
+        parts = cleaned.split("@", 1)
+        cleaned = parts[0]
+        server = "@" + parts[1]
 
-    # Si es un identificador de dispositivo vinculado (@lid) de WhatsApp, preservarlo tal cual
+    digits = re.sub(r'\D', '', cleaned)
+    if not digits:
+        return ""
+
     if server.lower() == "@lid":
-        return f"{cleaned}@lid"
+        return f"{digits}@lid"
 
-    # Detección y filtrado de teléfonos fijos de Ecuador (02, 03, 04, 05, 06, 07)
-    # Tienen 9 dígitos y no inician con 9 (los celulares inician con 09 o 9)
-    if len(cleaned) == 9 and cleaned.startswith(('02', '03', '04', '05', '06', '07')):
-        print(f"[WhatsApp Service] Teléfono fijo detectado ({number_part}). Omitiendo para WhatsApp.")
+    # Teléfonos fijos de Ecuador (9 dígitos iniciando con 02-07): descartar
+    if len(digits) == 9 and digits.startswith(('02', '03', '04', '05', '06', '07')):
         return ""
 
     # Celulares Ecuador:
     # 09xxxxxxxx (10 dígitos) -> 5939xxxxxxxx
-    if cleaned.startswith('09') and len(cleaned) == 10:
-        cleaned = '593' + cleaned[1:]
+    if digits.startswith('09') and len(digits) == 10:
+        return f"593{digits[1:]}{server}"
     # 9xxxxxxxx (9 dígitos) -> 5939xxxxxxxx
-    elif cleaned.startswith('9') and len(cleaned) == 9:
-        cleaned = '593' + cleaned
-    # 5939xxxxxxxx (12 dígitos) -> ya formateado
-    elif cleaned.startswith('5939') and len(cleaned) == 12:
-        pass
+    elif digits.startswith('9') and len(digits) == 9:
+        return f"593{digits}{server}"
+    # 5939xxxxxxxx (12 dígitos)
+    elif digits.startswith('5939') and len(digits) == 12:
+        return f"{digits}{server}"
     # 0xxxxxxxx (10 dígitos genérico) -> 593xxxxxxxx
-    elif cleaned.startswith('0') and len(cleaned) == 10:
-        cleaned = '593' + cleaned[1:]
+    elif digits.startswith('0') and len(digits) == 10:
+        return f"593{digits[1:]}{server}"
+    # Internacional (USA / Canadá: 10 dígitos sin 0 inicial -> 1 + dígitos)
+    elif len(digits) == 10 and not digits.startswith('0'):
+        return f"1{digits}{server}"
     # Internacional general (entre 10 y 15 dígitos)
-    elif len(cleaned) >= 10 and len(cleaned) <= 15:
-        pass
-    else:
-        return ""
+    elif 10 <= len(digits) <= 15:
+        return f"{digits}{server}"
+
+    return ""
+
+def extract_all_whatsapp_numbers(raw_string: str) -> list:
+    """
+    Extrae y formatea TODOS los números de teléfono válidos para WhatsApp encontrados
+    en una cadena (separados por espacios, comas, barras, guiones, saltos de línea o texto).
+    Descarta teléfonos fijos ecuatorianos y números no válidos.
+    Garantiza que no haya duplicados manteniendo el orden original.
+    """
+    if not raw_string:
+        return []
+    
+    raw = str(raw_string).strip()
+    if "@" in raw and ("@lid" in raw or "@s.whatsapp.net" in raw):
+        single = format_single_number(raw)
+        return [single] if single else []
+
+    # Delimitadores explícitos estándar
+    delimiters = re.compile(r'[/,;|\\\n\r]|\s+y\s+|\s+o\s+|\s+e\s+|\s+and\s+|\s+or\s+|\s*-\s*', re.IGNORECASE)
+    parts = [p.strip() for p in delimiters.split(raw) if p.strip()]
+
+    extracted = []
+
+    for part in parts:
+        only_digits = re.sub(r'\D', '', part)
         
-    return f"{cleaned}{server}"
+        # Si tiene 12 dígitos o menos, evaluarlo como número único
+        if len(only_digits) <= 12:
+            single = format_single_number(part)
+            if single:
+                extracted.append(single)
+                continue
 
-def send_whatsapp_message(numero: str, mensaje: str, media_path: str = None, mime_type: str = "image/png") -> bool:
-    """
-    Sends a WhatsApp message (text or media with caption) using the configured provider.
-    Returns True if successful, False otherwise.
-    """
-    clean_num = format_whatsapp_number(numero)
-    if not clean_num:
-        print(f"[WhatsApp Service] Error: Número de teléfono inválido o vacío: '{numero}'")
-        return False
+        # Si tiene más de 12 dígitos, contiene múltiples números separados por espacio o juntos
+        tokens = part.split()
+        idx = 0
+        while idx < len(tokens):
+            token = tokens[idx]
+            
+            # 1. Probar el token individual
+            single = format_single_number(token)
+            if single:
+                extracted.append(single)
+                idx += 1
+                continue
+            
+            # 2. Probar combinando con el siguiente token (ej: "646" + "2077179")
+            if idx + 1 < len(tokens):
+                combined = token + tokens[idx + 1]
+                single_comb = format_single_number(combined)
+                if single_comb:
+                    extracted.append(single_comb)
+                    idx += 2
+                    continue
+            
+            # 3. Probar extrayendo patrones celulares ecuatorianos pegados
+            sub_matches = re.findall(r'(?:09\d{8}|5939\d{8}|(?<!\d)9\d{8}(?!\d))', token)
+            if sub_matches:
+                for sm in sub_matches:
+                    s_fmt = format_single_number(sm)
+                    if s_fmt:
+                        extracted.append(s_fmt)
 
+            idx += 1
+
+    # Descartar duplicados manteniendo orden
+    seen = set()
+    result = []
+    for num in extracted:
+        if num and num not in seen:
+            seen.add(num)
+            result.append(num)
+
+    return result
+
+def format_whatsapp_number(number: str) -> str:
+    """
+    Limpia y formatea un número de teléfono para WhatsApp.
+    Si vienen múltiples números en la cadena, extrae todos y devuelve el primero válido.
+    """
+    if not number:
+        return ""
+    nums = extract_all_whatsapp_numbers(number)
+    return nums[0] if nums else ""
+
+def _send_single_whatsapp_message(clean_num: str, mensaje: str, media_path: str = None, mime_type: str = "image/png") -> bool:
+    """
+    Envía un mensaje o multimedia a un ÚNICO destinatario limpio.
+    """
     # 1. Local Bridge (whatsapp-web.js microservice)
     if WHATSAPP_PROVIDER == "local-bridge":
         url = f"{WHATSAPP_BRIDGE_URL.rstrip('/')}/send"
@@ -234,6 +299,36 @@ def send_whatsapp_message(numero: str, mensaje: str, media_path: str = None, mim
         else:
             print(f"[WhatsApp Mock Service] Enviando mensaje a {clean_num}: {mensaje}")
         return True
+
+def send_whatsapp_message(numero: str, mensaje: str, media_path: str = None, mime_type: str = "image/png") -> bool:
+    """
+    Envía un mensaje o multimedia a uno o varios números contenidos en 'numero'.
+    Si 'numero' contiene múltiples teléfonos (separados por espacio, coma, barra, etc.),
+    extrae cada número válido y envía el mensaje a todos ellos.
+    Retorna True si al menos uno fue enviado exitosamente.
+    """
+    if not numero:
+        print("[WhatsApp Service] Error: Número de teléfono vacío.")
+        return False
+
+    targets = extract_all_whatsapp_numbers(numero)
+    if not targets:
+        single = format_single_number(numero)
+        if single:
+            targets = [single]
+        else:
+            print(f"[WhatsApp Service] Error: No se pudo formatear/extraer ningún número válido de '{numero}'.")
+            return False
+
+    success_any = False
+    for i, target_num in enumerate(targets):
+        if i > 0:
+            time.sleep(1)
+        ok = _send_single_whatsapp_message(target_num, mensaje, media_path=media_path, mime_type=mime_type)
+        if ok:
+            success_any = True
+
+    return success_any
 
 def send_whatsapp_media(numero: str, media_path: str, caption: str = "", mime_type: str = "image/png") -> bool:
     """

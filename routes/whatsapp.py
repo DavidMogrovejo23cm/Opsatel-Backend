@@ -9,6 +9,8 @@ import traceback
 import whatsapp_service
 
 import requests
+import time
+import random
 from typing import Optional
 import urllib.parse
 
@@ -347,14 +349,21 @@ def send_global_broadcast_task(
         delay_b = float(delay_max) if delay_max and float(delay_max) >= delay_a else max(delay_a, 7.5)
 
         for idx, cliente in enumerate(clientes):
-            numero = cliente.celular.strip()
+            numero = (cliente.celular or "").strip()
+            if not numero:
+                fallidos += 1
+                continue
+
             mensaje_personalizado = personalizar_mensaje_cliente(mensaje, cliente)
+            # send_whatsapp_message extrae y despacha a todos los números válidos del cliente si tiene más de uno
             success = whatsapp_service.send_whatsapp_message(numero, mensaje_personalizado)
             
             if success:
                 exitosos += 1
                 try:
-                    registrar_mensaje_chat(db, numero, "operador", mensaje_personalizado, cliente.id if cliente else None)
+                    targets = whatsapp_service.extract_all_whatsapp_numbers(numero)
+                    for num_tgt in (targets if targets else [numero]):
+                        registrar_mensaje_chat(db, num_tgt, "operador", mensaje_personalizado, cliente.id if cliente else None)
                 except Exception:
                     pass
             else:
@@ -410,21 +419,26 @@ def enviar_whatsapp_manual(
     Si el número pertenece a un cliente en la BD o incluye variables {nombre}, {saldo}, etc., se personaliza.
     """
     try:
-        numero = payload.numero
-        mensaje = payload.mensaje
+        numero = str(payload.numero).strip() if payload.numero else ""
+        mensaje = str(payload.mensaje).strip() if payload.mensaje else ""
         
         if not numero or not mensaje:
             raise HTTPException(status_code=400, detail="Número y mensaje son obligatorios")
         
-        # Buscar si el número corresponde a un cliente en la BD para personalizar
-        num_limpio = whatsapp_service.format_whatsapp_number(numero)
-        num_solo_digitos = re.sub(r'\D', '', num_limpio)
-        num_ecuador = "0" + num_solo_digitos[3:] if num_solo_digitos.startswith("593") and len(num_solo_digitos) > 3 else num_solo_digitos
+        # Extraer todos los números posibles para buscar cliente y registrar
+        targets = whatsapp_service.extract_all_whatsapp_numbers(numero)
 
-        cliente = db.query(models.Cliente).filter(
-            (models.Cliente.celular.like(f"%{num_solo_digitos}%")) |
-            (models.Cliente.celular.like(f"%{num_ecuador}%"))
-        ).first()
+        # Buscar si alguno de los números corresponde a un cliente en la BD para personalizar
+        cliente = None
+        for t in (targets if targets else [numero]):
+            t_digits = re.sub(r'\D', '', t)
+            t_ecuador = "0" + t_digits[3:] if t_digits.startswith("593") and len(t_digits) > 3 else t_digits
+            cliente = db.query(models.Cliente).filter(
+                (models.Cliente.celular.like(f"%{t_digits}%")) |
+                (models.Cliente.celular.like(f"%{t_ecuador}%"))
+            ).first()
+            if cliente:
+                break
 
         mensaje_final = mensaje
         if cliente:
@@ -433,37 +447,49 @@ def enviar_whatsapp_manual(
             if tiene_variables:
                 mensaje_final = personalizar_mensaje_cliente(mensaje, cliente)
 
-        # Enviar mensaje usando el servicio unificado
+        # Enviar mensaje usando el servicio unificado a todos los números del destinatario
         success = whatsapp_service.send_whatsapp_message(numero, mensaje_final)
         
         if not success:
             raise HTTPException(
                 status_code=500,
-                detail="No se pudo enviar el mensaje. Asegúrate de que el puente local de WhatsApp esté conectado."
+                detail="No se pudo enviar el mensaje a WhatsApp. Verifica que el servicio esté conectado y el número sea válido."
             )
         
-        # Guardar en historial general
-        historial = models.WhatsAppHistorial(
-            numero_destino=numero,
-            mensaje=mensaje_final,
-            tipo_envio="manual",
-            estado="enviado",
-            fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S"),
-            fecha_creacion=datetime.now(ECUADOR_TZ)
-        )
-        db.add(historial)
-        db.commit()
+        # Si se proporcionó historial_id (ej. reintento desde la interfaz), actualizar registro existente
+        if payload.historial_id:
+            historial = db.query(models.WhatsAppHistorial).filter(
+                models.WhatsAppHistorial.id == payload.historial_id
+            ).first()
+            if historial:
+                historial.estado = "enviado"
+                historial.fecha_envio = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                db.commit()
+        else:
+            # Guardar en historial general
+            historial = models.WhatsAppHistorial(
+                numero_destino=numero,
+                mensaje=mensaje_final,
+                tipo_envio="manual",
+                estado="enviado",
+                fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+                fecha_creacion=datetime.now(ECUADOR_TZ)
+            )
+            db.add(historial)
+            db.commit()
 
-        # Guardar en el chat bidireccional del cliente (con regla de máximo 30 mensajes)
+        # Guardar en el chat bidireccional del cliente para cada número
         try:
-            registrar_mensaje_chat(db, numero, "operador", mensaje_final, cliente.id if cliente else None)
+            for t in (targets if targets else [numero]):
+                registrar_mensaje_chat(db, t, "operador", mensaje_final, cliente.id if cliente else None)
         except Exception as chat_err:
             print(f"[Chat Warning] Error al registrar en chat: {chat_err}")
         
         return {
             "success": True,
             "message": f"Mensaje enviado a {numero}",
-            "numero": numero
+            "numero": numero,
+            "destinatarios": targets
         }
     
     except HTTPException:
@@ -855,6 +881,67 @@ def marcar_historial_enviado(
         db.commit()
         
         return {"success": True, "message": "Mensaje marcado como enviado"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/historial/reintentar-fallidos", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def reintentar_mensajes_fallidos(
+    db: Session = Depends(get_db)
+):
+    """
+    Reintenta el envío de todos los mensajes con estado 'fallido' en el historial.
+    Procesa clientes con números múltiples o separados correctamente enviando a todos sus números.
+    """
+    try:
+        fallidos = db.query(models.WhatsAppHistorial).filter(
+            models.WhatsAppHistorial.estado == "fallido"
+        ).all()
+
+        if not fallidos:
+            return {
+                "success": True, 
+                "message": "No hay mensajes fallidos pendientes de reintento.", 
+                "total": 0, 
+                "reintentados": 0
+            }
+
+        total = len(fallidos)
+        reintentados = 0
+        errores = 0
+
+        for item in fallidos:
+            try:
+                numero = item.numero_destino
+                msg = item.mensaje
+                # send_whatsapp_message enviará a todos los números del destinatario
+                ok = whatsapp_service.send_whatsapp_message(numero, msg)
+                if ok:
+                    item.estado = "enviado"
+                    item.fecha_envio = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                    reintentados += 1
+                    db.commit()
+                    # Registrar en el chat para cada número extraído
+                    try:
+                        targets = whatsapp_service.extract_all_whatsapp_numbers(numero)
+                        for t in (targets if targets else [numero]):
+                            registrar_mensaje_chat(db, t, "operador", msg)
+                    except Exception:
+                        pass
+                    time.sleep(1.5)
+                else:
+                    errores += 1
+            except Exception as e_retry:
+                print(f"[Retry Error] Error reintentando mensaje {item.id}: {e_retry}")
+                errores += 1
+
+        return {
+            "success": True,
+            "message": f"Reintento finalizado. Exitosos: {reintentados}, Errores: {errores}",
+            "total": total,
+            "reintentados": reintentados,
+            "errores": errores
+        }
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
