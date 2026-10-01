@@ -187,6 +187,19 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
             except Exception:
                 pass
 
+        # 5. Si aún no está vinculado, comprobar si el mensaje contiene una cédula o celular registrado
+        if not cliente_id and mensaje:
+            try:
+                import sam_bot_service
+                cand_id = sam_bot_service.extraer_identificador_cliente(str(mensaje))
+                if cand_id:
+                    c = sam_bot_service.buscar_cliente_por_cedula_o_celular(cand_id, db)
+                    if c:
+                        cliente_id = c.id
+                        sam_bot_service.clientes_identificados_sesion[num_limpio] = c.id
+            except Exception:
+                pass
+
     # 1. Crear el nuevo mensaje
     nuevo_msg = models.WhatsAppMensajeChat(
         numero=num_limpio,
@@ -1010,12 +1023,36 @@ def webhook_mensaje_whatsapp(
                 identidad["metadata_ia"] = (
                     f"El cliente escribe desde el número celular registrado '{tel_real}'. "
                     f"Tu PRIMERA ACCIÓN OBLIGATORIA ante cualquier consulta, saludo o reclamo es ejecutar "
-                    f"'consultar_estado_cliente(telefono='{tel_real}')' para verificar su contrato, saldo y servicio. "
+                    f"'consultar_estado_cliente(identificador='{tel_real}')' para verificar su contrato, saldo y servicio. "
                     "Si la herramienta encuentra sus datos, trátalo con calidez por su primer nombre y "
                     "NO LE PIDAS CÉDULA NI TELÉFONO. "
                     "REGLA CRÍTICA: Si el usuario únicamente saluda ('hola', 'buenas'), responde exclusivamente con un saludo cálido y pregunta amablemente en qué le colaboras hoy. "
                     "PROHIBIDO cobrarle, mencionarle moras, saldos o enviarle cuentas bancarias en un simple saludo."
                 )
+
+        # C. Comprobar si el cliente ya fue identificado en la sesión o si proporcionó cédula/celular en el mensaje
+        cand_id = sam_bot_service.extraer_identificador_cliente(mensaje)
+        c_por_msg = None
+        if cand_id:
+            c_por_msg = sam_bot_service.buscar_cliente_por_cedula_o_celular(cand_id, db)
+        elif sam_bot_service.clientes_identificados_sesion.get(jid_destino):
+            c_id = sam_bot_service.clientes_identificados_sesion[jid_destino]
+            c_por_msg = db.query(models.Cliente).filter(models.Cliente.id == c_id).first()
+        elif payload.numero and sam_bot_service.clientes_identificados_sesion.get(payload.numero):
+            c_id = sam_bot_service.clientes_identificados_sesion[payload.numero]
+            c_por_msg = db.query(models.Cliente).filter(models.Cliente.id == c_id).first()
+
+        if c_por_msg:
+            sam_bot_service.clientes_identificados_sesion[jid_destino] = c_por_msg.id
+            if payload.numero:
+                sam_bot_service.clientes_identificados_sesion[payload.numero] = c_por_msg.id
+            deuda_c = sam_bot_service.obtener_deuda_total_cliente(c_por_msg)
+            identidad["metadata_ia"] = (
+                f"El cliente ha sido identificado exitosamente en la base de datos como '{c_por_msg.nombre}' "
+                f"(Cédula: {c_por_msg.cedula}, Celular registrado: {c_por_msg.celular}, Plan: {c_por_msg.plan or 'Internet'}, "
+                f"Total pendiente: ${deuda_c['total']:.2f}{deuda_c['desglose']}). "
+                f"Dirígete a él cordialmente por su primer nombre y responde directamente a su solicitud sin volver a pedirle cédula ni celular."
+            )
 
         # 3. Verificar si el bot está en pausa por intervención de un operador humano
         if sam_bot_service.esta_bot_pausado_por_operador(jid_destino) or (payload.numero and sam_bot_service.esta_bot_pausado_por_operador(payload.numero)):
@@ -1033,6 +1070,9 @@ def webhook_mensaje_whatsapp(
         if mensaje.lower() in ["cancelar", "salir", "menu", "menú", "inicio", "empezar de nuevo", "reset", "reiniciar"]:
             sam_bot_service.estados_skills[jid_destino] = None
             sam_bot_service.historial_conversaciones[jid_destino] = []
+            sam_bot_service.clientes_identificados_sesion.pop(jid_destino, None)
+            if payload.numero:
+                sam_bot_service.clientes_identificados_sesion.pop(payload.numero, None)
             response_text = "¡Listo! He reiniciado la conversación. ¿En qué te puedo colaborar hoy con tus servicios de Opsatel? 😊"
             registrar_mensaje_chat(db, jid_destino, "asistente", response_text)
             sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", response_text)

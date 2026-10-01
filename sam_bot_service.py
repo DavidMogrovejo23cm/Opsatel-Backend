@@ -315,6 +315,10 @@ historial_conversaciones = {}
 estados_skills = {}
 # Registro de última interacción por número para auto-expiración (TTL)
 ultimas_interacciones = {}
+# Memoria de clientes identificados en la sesión actual por número o JID de WhatsApp
+# Permite que si alguien escribe de un número externo y ya dio su cédula o celular,
+# el bot siga recordando a quién corresponde durante toda la conversación.
+clientes_identificados_sesion = {}
 
 # Límite de inactividad (TTL): 15 minutos en segundos
 TTL_INACTIVIDAD_SEGUNDOS = 900
@@ -373,17 +377,19 @@ def limpiar_sesion_si_expirada(numero: str):
     ultimo = ultimas_interacciones.get(numero)
     if ultimo and (ahora - ultimo > TTL_INACTIVIDAD_SEGUNDOS):
         estados_skills[numero] = None
+        clientes_identificados_sesion.pop(numero, None)
         if numero in historial_conversaciones:
             historial_conversaciones[numero] = []
     ultimas_interacciones[numero] = ahora
 
 def limpiar_todo_historial_conversaciones():
     """Limpia todo el historial de conversaciones y estados en memoria de SAM."""
-    global historial_conversaciones, estados_skills, ultimas_interacciones, pausas_operador
+    global historial_conversaciones, estados_skills, ultimas_interacciones, pausas_operador, clientes_identificados_sesion
     historial_conversaciones.clear()
     estados_skills.clear()
     ultimas_interacciones.clear()
     pausas_operador.clear()
+    clientes_identificados_sesion.clear()
     print("[SAM Chatbot] 🧹 Todo el historial y estados de conversación han sido limpiados en memoria.")
 
 
@@ -534,14 +540,15 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     ]):
         return "general"
 
-    # 5. Consultas explícitas de Pago / Saldo / Deuda personal
-    tiene_cedula = bool(re.search(r'\b\d{10}\b', msg_limpio))
+    # 5. Consultas explícitas de Pago / Saldo / Deuda personal o envío de Cédula/Celular
+    tiene_identificador = bool(re.search(r'\b\d{9,13}\b', msg_limpio)) or bool(re.search(r'(?:c[eé]dula|ruc|celular|tel[eé]fono|cel)\D{0,5}\d{7,13}', msg_limpio))
     es_pregunta_deuda = any(w in msg_limpio for w in [
         "cuanto debo", "cuánto debo", "mi saldo", "saldo pendiente", "mi deuda",
         "mi factura", "factura pendiente", "estado de cuenta", "cuanto tengo que pagar",
-        "cuánto tengo que pagar", "pago pendiente", "mi pago"
+        "cuánto tengo que pagar", "pago pendiente", "mi pago", "consultar saldo",
+        "saber mi saldo", "cuanto es mi saldo", "cuánto es mi saldo", "valor a pagar"
     ])
-    if tiene_cedula or es_pregunta_deuda:
+    if tiene_identificador or es_pregunta_deuda:
         return "consultar_pagos_y_saldos"
 
     # 6. Soporte técnico / fallas / lentitud / mal internet
@@ -843,6 +850,104 @@ def buscar_cliente_por_celular(numero_limpio: str, db: Session):
     return None
 
 
+def buscar_cliente_por_cedula(cedula_str: str, db: Session):
+    """
+    Busca un cliente por número de cédula o RUC en MySQL/PostgreSQL.
+    Soporta cédulas de 10 dígitos, cédulas de 9 dígitos (sin cero inicial común en exportaciones de Excel)
+    y RUCs de 13 dígitos. Limpia espacios, puntos y guiones.
+    """
+    if not cedula_str or not db:
+        return None
+    num_str = str(cedula_str).strip()
+    digits = re.sub(r'\D', '', num_str)
+    if not digits or len(digits) < 8:
+        return None
+
+    # Si es RUC (13 dígitos), la cédula base son los primeros 10 dígitos
+    base_ced = digits[:10] if len(digits) == 13 else digits
+
+    # Generar variantes con y sin cero a la izquierda para Ecuador
+    variantes = [base_ced]
+    if len(base_ced) == 9:
+        variantes.append("0" + base_ced)
+    elif len(base_ced) == 10 and base_ced.startswith("0"):
+        variantes.append(base_ced[1:])
+    if len(digits) == 13 and digits not in variantes:
+        variantes.append(digits)
+
+    # 1. Búsqueda directa SQL
+    try:
+        from sqlalchemy import func, or_
+        col_ced_clean = func.replace(func.replace(func.replace(models.Cliente.cedula, ' ', ''), '-', ''), '.', '')
+        filtros = []
+        for v in variantes:
+            filtros.append(models.Cliente.cedula == v)
+            filtros.append(col_ced_clean == v)
+            filtros.append(models.Cliente.cedula.like(f"%{v}%"))
+
+        cliente = db.query(models.Cliente).filter(or_(*filtros)).first()
+        if cliente:
+            return cliente
+    except Exception as e:
+        print(f"[SAM Chatbot] Aviso buscando cliente por cédula en SQL: {e}")
+
+    # 2. Búsqueda en memoria escaneando clientes de la BD si SQL no coincidió por formatos extraños
+    try:
+        clientes = db.query(models.Cliente).all()
+        for c in clientes:
+            if c.cedula:
+                c_clean = re.sub(r'\D', '', str(c.cedula))
+                if c_clean in variantes:
+                    return c
+                if len(c_clean) >= 9 and any(v == c_clean or v.endswith(c_clean) or c_clean.endswith(v) for v in variantes):
+                    return c
+    except Exception:
+        pass
+
+    return None
+
+
+def buscar_cliente_por_cedula_o_celular(identificador: str, db: Session):
+    """
+    Busca al cliente ya sea por su NÚMERO DE CÉDULA o por su NÚMERO DE CELULAR.
+    Cualquiera de los dos sirve mientras esté registrado en la base de datos.
+    Permite identificar a un cliente incluso si escribe desde un número de WhatsApp completamente externo.
+    """
+    if not identificador or not db:
+        return None
+
+    num_str = str(identificador).strip()
+    digits = re.sub(r'\D', '', num_str)
+    if not digits or len(digits) < 6:
+        return None
+
+    # En Ecuador los números celulares suelen empezar con 09 o 5939 o 9 (de 9 a 12 dígitos)
+    es_probable_celular = (
+        digits.startswith("09")
+        or digits.startswith("5939")
+        or (len(digits) == 9 and digits.startswith("9"))
+    )
+
+    if es_probable_celular:
+        # Priorizar búsqueda por celular, luego intentar por cédula
+        cli = buscar_cliente_por_celular(identificador, db)
+        if cli:
+            return cli
+        cli = buscar_cliente_por_cedula(identificador, db)
+        if cli:
+            return cli
+    else:
+        # Priorizar búsqueda por cédula, luego intentar por celular
+        cli = buscar_cliente_por_cedula(identificador, db)
+        if cli:
+            return cli
+        cli = buscar_cliente_por_celular(identificador, db)
+        if cli:
+            return cli
+
+    return None
+
+
 def buscar_cliente_por_nombre(nombre_buscar: str, db: Session):
     """
     Busca de forma exhaustiva en la tabla General de Clientes (models.Cliente):
@@ -900,20 +1005,86 @@ def buscar_cliente_por_nombre(nombre_buscar: str, db: Session):
 
     return None, []
 
-def extraer_cedula(texto: str) -> str:
+def extraer_identificador_cliente(texto: str) -> str:
     """
-    Intenta extraer un número de cédula de 10 dígitos del texto.
-    Limpia espacios, guiones y puntos antes de buscar la secuencia.
+    Extrae un número de cédula (9 a 13 dígitos) o celular (8 a 13 dígitos) del texto del mensaje.
+    Soporta formatos con espacios, guiones o precedidos por palabras clave
+    (ej: "mi cédula es 0105905251", "mi cel 0987149097", "0105905251", "098-714-9097").
     """
     if not texto:
         return ""
-    # Remover guiones, espacios y puntos
+
+    # 1. Búsqueda explícita tras palabras clave de cédula, celular, teléfono o contrato
+    patron_clave = re.search(
+        r'(?:c[eé]dula|c\.?i\.?|ruc|celular|tel[eé]fono|cel|n[uú]mero|contrato)\D{0,10}(\d[\d\s\-\.]{7,15}\d)',
+        texto,
+        re.IGNORECASE
+    )
+    if patron_clave:
+        extraido = re.sub(r'\D', '', patron_clave.group(1))
+        if 8 <= len(extraido) <= 13:
+            return extraido
+
+    # 2. Búsqueda de cualquier secuencia de 9 a 13 dígitos contiguos
+    match_secuencia = re.search(r'\b\d{9,13}\b', texto)
+    if match_secuencia:
+        return match_secuencia.group(0)
+
+    # 3. Limpiar espacios, puntos y guiones si el mensaje contiene dígitos formateados
     limpio = re.sub(r'[\s\-.]', '', texto)
-    # Buscar una secuencia de exactamente 10 dígitos en la cadena limpia
-    match = re.search(r'\d{10}', limpio)
-    if match:
-        return match.group(0)
+    match_limpio = re.search(r'\d{9,13}', limpio)
+    if match_limpio:
+        return match_limpio.group(0)
+
     return ""
+
+
+def extraer_cedula(texto: str) -> str:
+    """Extrae un identificador (cédula o celular) del texto. Mantiene compatibilidad con llamadas existentes."""
+    return extraer_identificador_cliente(texto)
+
+
+def obtener_cliente_sesion(numero: str, db: Session, mensaje: str = ""):
+    """
+    Obtiene el cliente asociado a la conversación actual:
+    1. Si en el mensaje actual el usuario envió una cédula o celular registrado, lo busca y asocia.
+    2. Si en la sesión ya se identificó previamente al cliente, lo recupera por ID.
+    3. Si el número telefónico desde donde escribe pertenece a un cliente registrado, lo vincula.
+    4. Si es un administrador con número telefónico registrado, busca por su teléfono.
+    """
+    if not db:
+        return None
+
+    # 1. Si el mensaje actual contiene una cédula o celular registrado
+    if mensaje:
+        cand = extraer_identificador_cliente(mensaje)
+        if cand:
+            c = buscar_cliente_por_cedula_o_celular(cand, db)
+            if c:
+                clientes_identificados_sesion[numero] = c.id
+                return c
+
+    # 2. Si ya está registrado en la memoria de la sesión
+    c_id = clientes_identificados_sesion.get(numero)
+    if c_id:
+        c = db.query(models.Cliente).filter(models.Cliente.id == c_id).first()
+        if c:
+            return c
+
+    # 3. Búsqueda por el número telefónico de WhatsApp
+    c = buscar_cliente_por_celular(numero, db)
+    if c:
+        clientes_identificados_sesion[numero] = c.id
+        return c
+
+    # 4. Verificar si es número administrador con teléfono propio
+    adm = es_numero_administrador(numero, db)
+    if adm and adm.numero:
+        c = buscar_cliente_por_celular(adm.numero, db)
+        if c:
+            return c
+
+    return None
 
 def obtener_deuda_total_cliente(cliente) -> dict:
     """
@@ -970,37 +1141,33 @@ def obtener_deuda_total_cliente(cliente) -> dict:
     }
 
 def procesar_consulta_pago(numero: str, mensaje: str, contexto: str, db: Session, ya_solicitado: bool = False) -> str:
-    """Procesa consultas de saldo y pagos usando datos 100% reales de MySQL de forma natural, concisa y humana"""
+    """Procesa consultas de saldo y pagos usando datos 100% reales de MySQL por Cédula o Celular de forma natural, concisa y humana"""
     # 1. Cancelar flujo si el usuario lo pide
     if mensaje.strip().lower() in ["cancelar", "salir", "cancel", "no", "menu", "menú"]:
         estados_skills[numero] = None
+        clientes_identificados_sesion.pop(numero, None)
         return "Entendido, con gusto te ayudo con cualquier otra consulta sobre Opsatel 😊"
 
-    # 2. Comprobar si el mensaje actual contiene una cédula de 10 dígitos
-    cedula_extraida = extraer_cedula(mensaje)
+    # 2. Comprobar si el mensaje actual contiene una cédula (9-13 dígitos) o celular registrado
+    ident_extraido = extraer_identificador_cliente(mensaje)
     cliente = None
 
-    if cedula_extraida:
-        cliente = db.query(models.Cliente).filter(models.Cliente.cedula == cedula_extraida).first()
-        if not cliente:
-            ced_alt = cedula_extraida[1:] if cedula_extraida.startswith("0") else ("0" + cedula_extraida)
-            cliente = db.query(models.Cliente).filter(models.Cliente.cedula == ced_alt).first()
-
-        if not cliente:
+    if ident_extraido:
+        cliente = buscar_cliente_por_cedula_o_celular(ident_extraido, db)
+        if cliente:
+            clientes_identificados_sesion[numero] = cliente.id
+        else:
             estados_skills[numero] = None
-            return f"No encontré ningún contrato con la cédula **{cedula_extraida}** en el sistema. Por favor confírmame tu número para ayudarte 😊"
+            return f"No encontré ningún contrato registrado con la cédula o celular **{ident_extraido}** en el sistema de OPSATEL. Por favor verifica que los dígitos sean correctos o indícame tu cédula/celular del titular para ayudarte 😊"
 
-    # 3. Si no hay cédula, verificar si el número telefónico de quien escribe pertenece a un cliente registrado
+    # 3. Si no vino en el mensaje, verificar si ya está identificado en la sesión o por la línea telefónica
     if not cliente:
-        cliente = buscar_cliente_por_celular(numero, db)
-        if not cliente:
-            adm = es_numero_administrador(numero, db)
-            if adm and adm.numero:
-                cliente = buscar_cliente_por_celular(adm.numero, db)
+        cliente = obtener_cliente_sesion(numero, db, mensaje)
 
-    # 4. Si el cliente fue identificado (por cédula o por su número telefónico registrado)
+    # 4. Si el cliente fue identificado (por cédula o celular en mensaje, en sesión o por su línea telefónica)
     if cliente:
         estados_skills[numero] = None
+        clientes_identificados_sesion[numero] = cliente.id
         deuda = obtener_deuda_total_cliente(cliente)
         total_pendiente = deuda["total"]
         desglose = deuda["desglose"]
@@ -1055,9 +1222,9 @@ Directrices estrictas:
                 except Exception:
                     return f"El valor total pendiente de *{cliente_nom.nombre}* es de *${total_nom:.2f}*{desglose_nom} (Estado: {cliente_nom.estado})."
 
-    # 6. Si no hay datos suficientes, pedir la cédula amablemente
+    # 6. Si no hay datos suficientes, pedir la cédula o celular registrado amablemente
     estados_skills[numero] = "consultar_pagos_y_saldos"
-    return "Con mucho gusto te ayudo a consultar tu saldo en OPSATEL 😊 Por favor indícame tu número de cédula (10 dígitos) para buscar tu contrato en el sistema."
+    return "Con mucho gusto te ayudo a consultar tu saldo en OPSATEL 😊 Por favor indícame tu número de cédula o tu número de celular registrado para buscar tu contrato en el sistema."
 
 # -------------------------------------------------------------
 # SKILL: SOLICITUD DE CUENTAS BANCARIAS Y MEDIOS DE PAGO (IMAGEN Y DATOS)
@@ -1086,19 +1253,7 @@ def procesar_cuentas_pago(numero: str, mensaje: str, contexto: str, db: Session)
     cliente = None
     if db:
         try:
-            cedula_extraida = extraer_cedula(mensaje)
-            if cedula_extraida:
-                cliente = db.query(models.Cliente).filter(models.Cliente.cedula == cedula_extraida).first()
-                if not cliente:
-                    ced_alt = cedula_extraida[1:] if cedula_extraida.startswith("0") else ("0" + cedula_extraida)
-                    cliente = db.query(models.Cliente).filter(models.Cliente.cedula == ced_alt).first()
-
-            if not cliente:
-                cliente = buscar_cliente_por_celular(numero, db)
-                if not cliente:
-                    adm = es_numero_administrador(numero, db)
-                    if adm and adm.numero:
-                        cliente = buscar_cliente_por_celular(adm.numero, db)
+            cliente = obtener_cliente_sesion(numero, db, mensaje)
         except Exception as e_db:
             print(f"[SAM Chatbot] Aviso buscando cliente en BD para cuentas de pago: {e_db}")
             cliente = None
@@ -1471,8 +1626,8 @@ DIRECTRICES DE ATENCIÓN TÉCNICA (SÉ PRECISO, CÁLIDO Y HUMANO):
 """
 
 def procesar_soporte_tecnico(numero: str, mensaje: str, contexto: str, db: Session) -> str:
-    # 1. Buscar cliente por número de celular
-    cliente = buscar_cliente_por_celular(numero, db)
+    # 1. Buscar cliente por sesión, mensaje o número de celular
+    cliente = obtener_cliente_sesion(numero, db, mensaje)
 
     # 2. Ejecutar diagnóstico interno en tiempo real (MikroTik, Potencia Óptica y Cortes)
     diag = ejecutar_diagnostico_cliente(cliente, db)
@@ -1565,11 +1720,7 @@ def procesar_chat_general(numero: str, mensaje: str, contexto: str, db: Session 
     if db:
         try:
             # 1. Verificar si el usuario que escribe ya es un cliente registrado
-            cliente = buscar_cliente_por_celular(numero, db)
-            if not cliente:
-                adm = es_numero_administrador(numero, db)
-                if adm and adm.numero:
-                    cliente = buscar_cliente_por_celular(adm.numero, db)
+            cliente = obtener_cliente_sesion(numero, db, mensaje)
 
             if cliente and cliente.nombre:
                 nombre_cliente = cliente.nombre
@@ -2010,6 +2161,7 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
     if msg_limpio in ["cancelar", "salir", "menu", "menú", "inicio", "empezar de nuevo", "reset", "reiniciar"]:
         estados_skills[numero] = None
         historial_conversaciones[numero] = []
+        clientes_identificados_sesion.pop(numero, None)
         response_text = "¡Listo! He reiniciado la conversación. ¿En qué te puedo colaborar hoy con tus servicios de Opsatel? 😊"
         guardar_mensaje_historial(numero, "assistant", response_text)
         try:
@@ -2045,9 +2197,9 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
             print(f"[SAM Chatbot] 🔄 Desenganche de tema: Cambiando de '{skill_previo}' a '{intencion_detectada}'")
             skill_activo = intencion_detectada
             estados_skills[numero] = None
-        # Si estaba consultando pagos: solo continuar en el skill si ingresó cédula de 10 dígitos
+        # Si estaba consultando pagos: continuar en el skill si ingresó cédula o celular
         elif skill_previo == "consultar_pagos_y_saldos":
-            if extraer_cedula(mensaje):
+            if extraer_identificador_cliente(mensaje):
                 skill_activo = "consultar_pagos_y_saldos"
                 ya_solicitado = True
             else:

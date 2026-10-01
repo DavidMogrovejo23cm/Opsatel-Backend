@@ -4,10 +4,13 @@ Define el esquema JSON compatible con Groq/OpenAI y las funciones
 ejecutoras que interactúan con MySQL, LibreQoS y OLT Daemon.
 """
 
+from fastapi import param_functions
+from fastapi import param_functions
 import json
 import logging
 import re
 from typing import Dict, Any, Optional
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 import models
@@ -24,13 +27,23 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "consultar_estado_cliente",
-            "description": "Busca cliente en MySQL por celular o cédula. Retorna nombre amigable, estado financiero, saldo total consolidado (Internet + IPTV + Adicionales), desglose de deuda, plan, IP, ONT ID y puerto GPON.",
+            "description": "Busca cliente en MySQL por NÚMERO DE CÉDULA (10 dígitos o RUC) o NÚMERO DE CELULAR. Ambos son 100% válidos para identificar al cliente y consultar contratos, saldos y servicio. Retorna nombre amigable, estado financiero, saldo total consolidado (Internet + IPTV + Adicionales), desglose de deuda, plan, IP, ONT ID y puerto GPON.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "telefono": {"type": "string", "description": "Celular o cédula del cliente (ej: '0995796562')."}
-                },
-                "required": ["telefono"]
+                    "identificador": {
+                        "type": "string",
+                        "description": "Número de cédula o número de celular del cliente (ej: '0105905251', '0995796562'). Cualquiera de los dos sirve para identificarlo."
+                    },
+                    "telefono": {
+                        "type": "string",
+                        "description": "Alias para identificador (número de celular o cédula)."
+                    },
+                    "cedula": {
+                        "type": "string",
+                        "description": "Alias para identificador (número de cédula del cliente)."
+                    }
+                }
             }
         }
     },
@@ -181,65 +194,36 @@ def normalizar_telefono(telefono: str) -> str:
     return digitos
 
 
-def consultar_estado_cliente(telefono: str, db: Session) -> Dict[str, Any]:
+def consultar_estado_cliente(
+    telefono: str = "",
+    db: Session = None,
+    identificador: str = "",
+    cedula: str = ""
+) -> Dict[str, Any]:
     """
-    Busca al cliente en MySQL por número telefónico y extrae su estado financiero,
-    plan, nodo, IP y datos técnicos de ONT.
+    Busca al cliente en MySQL por NÚMERO DE CÉDULA (10 dígitos o RUC) o NÚMERO DE CELULAR
+    y extrae su estado financiero, plan, nodo, IP y datos técnicos de ONT.
+    Cualquiera de los dos sirve para identificarlo en la base de datos.
     """
-    tel_limpio = normalizar_telefono(telefono)
-    if not tel_limpio:
+    valor = str(identificador or cedula or telefono or "").strip()
+    if not valor:
         return {
             "success": False,
             "encontrado": False,
-            "mensaje": "Número de teléfono no provisto o inválido."
+            "mensaje": "Número de cédula o teléfono no provisto o inválido."
         }
 
     try:
-        from sqlalchemy import func, or_
-        digits = re.sub(r'\D', '', str(telefono or ""))
-        if not digits or len(digits) < 6:
-            return {
-                "success": True,
-                "encontrado": False,
-                "mensaje": f"El número '{telefono}' es demasiado corto o inválido para buscar en la base de datos."
-            }
-
-        ultimos_8 = digits[-8:] if len(digits) >= 8 else digits
-        ultimos_9 = digits[-9:] if len(digits) >= 9 else digits
-
-        # 1. Búsqueda SQL directa limpiando espacios, guiones y puntos en models.Cliente.celular
-        col_clean = func.replace(func.replace(func.replace(models.Cliente.celular, ' ', ''), '-', ''), '.', '')
-        cliente = db.query(models.Cliente).filter(
-            or_(
-                col_clean.like(f"%{ultimos_8}%"),
-                col_clean.like(f"%{ultimos_9}%"),
-                col_clean == digits,
-                models.Cliente.celular.like(f"%{ultimos_8}%"),
-                models.Cliente.celular.like(f"%{ultimos_9}%")
-            )
-        ).first()
-
-        # 2. Si no se encontró por celular y tiene 10 dígitos, intentar por cédula
-        if not cliente and len(digits) == 10:
-            cliente = db.query(models.Cliente).filter(models.Cliente.cedula == digits).first()
-
-        # 3. Búsqueda exhaustiva en memoria eliminando caracteres especiales de cada celular en la BD
-        if not cliente:
-            todos_clientes = db.query(models.Cliente).all()
-            for c in todos_clientes:
-                if c.celular:
-                    c_digits = re.sub(r'\D', '', str(c.celular))
-                    if c_digits and (c_digits == digits or (len(c_digits) >= 8 and c_digits[-8:] == ultimos_8)):
-                        cliente = c
-                        break
+        from sam_bot_service import buscar_cliente_por_cedula_o_celular
+        cliente = buscar_cliente_por_cedula_o_celular(valor, db)
 
         if not cliente:
             return {
                 "success": True,
                 "encontrado": False,
                 "mensaje": (
-                    f"No se encontró ningún cliente registrado en la base de datos con el celular o cédula '{telefono}'. "
-                    f"Por favor solicite al usuario que proporcione el número celular registrado o el número de cédula del titular del servicio."
+                    f"No se encontró ningún cliente registrado en la base de datos con la cédula o celular '{valor}'. "
+                    f"Por favor solicita amablemente al usuario que proporcione su número de cédula (10 dígitos o RUC) o el número celular registrado del titular del servicio."
                 )
             }
 
@@ -335,6 +319,8 @@ def consultar_estado_cliente(telefono: str, db: Session) -> Dict[str, Any]:
             "nombre": nombre_completo,
             "primer_nombre": primer_nombre,
             "nombre_amigable": nombre_amigable,
+            "cedula": cliente.cedula or "",
+            "celular": cliente.celular or "",
             "estado_financiero": "EN_MORA" if es_mora else "AL_DIA",
             "total_pendiente": round(total_real, 2),
             "saldo_pendiente": round(total_real, 2),
@@ -1067,8 +1053,8 @@ def ejecutar_herramienta(nombre_herramienta: str, argumentos: Dict[str, Any], db
     
     match nombre_herramienta:
         case "consultar_estado_cliente":
-            telefono = str(argumentos.get("telefono", "")).strip()
-            return consultar_estado_cliente(telefono=telefono, db=db)
+            identificador = str(argumentos.get("identificador") or argumentos.get("cedula") or argumentos.get("telefono") or argumentos.get("numero") or "").strip()
+            return consultar_estado_cliente(identificador=identificador, db=db)
             
         case "consultar_saturacion_libreqos":
             ip_cliente = str(argumentos.get("ip_cliente", "")).strip()

@@ -117,11 +117,14 @@ def resolver_identidad_whatsapp(numero_raw: str, jid_original: str = "") -> Dict
         telefono_limpio = solo_digitos
         es_lid = False
         metadata_ia = (
-            f"El cliente escribe desde el número celular registrado '{telefono_limpio}'. "
-            f"Tu PRIMERA ACCIÓN OBLIGATORIA ante cualquier consulta, saludo o reclamo es ejecutar "
-            f"'consultar_estado_cliente(telefono='{telefono_limpio}')' para verificar su contrato, saldo y servicio. "
-            "Si la herramienta encuentra sus datos, trátalo con calidez por su primer nombre y "
-            "NO LE PIDAS CÉDULA NI TELÉFONO. "
+            f"El cliente escribe desde la línea telefónica '{telefono_limpio}'. "
+            f"Puedes identificar al cliente ya sea por su NÚMERO DE CÉDULA (10 dígitos o RUC) o por su NÚMERO DE CELULAR registrado. "
+            f"Cualquiera de los dos sirve mientras esté en la base de datos. "
+            f"Si el usuario indica una cédula o número celular en su mensaje (ej. 'mi cédula es...', 'mi número es...', o envía los dígitos), "
+            f"ejecuta prioritariamente 'consultar_estado_cliente(identificador=...)' con ese dato. "
+            f"Si no proporciona ningún dato en su mensaje, ejecuta 'consultar_estado_cliente(identificador='{telefono_limpio}')' para verificar si esta línea está registrada. "
+            f"Si la herramienta encuentra sus datos, trátalo con calidez por su primer nombre y NO LE PIDAS CÉDULA NI TELÉFONO. "
+            f"Si no está registrado con ese número y escribe para consultar saldo o servicios, solicítale amablemente su número de cédula o su número celular registrado del titular. "
             "REGLA CRÍTICA: Si el usuario únicamente saluda ('hola', 'buenas'), responde exclusivamente con un saludo cálido y pregunta amablemente en qué le colaboras hoy. "
             "PROHIBIDO cobrarle, mencionarle moras, saldos o enviarle cuentas bancarias en un simple saludo."
         )
@@ -130,8 +133,9 @@ def resolver_identidad_whatsapp(numero_raw: str, jid_original: str = "") -> Dict
         es_lid = True
         metadata_ia = (
             f"El usuario te escribe desde un identificador de WhatsApp (LID: '{jid_destino}') que oculta temporalmente su número. "
-            "Si no posees su teléfono en el historial, solicítale amablemente su número de cédula o su celular registrado de contrato "
-            "para ubicar su ficha en el sistema."
+            "Si proporciona su número de cédula o celular en su mensaje, ejecuta 'consultar_estado_cliente(identificador=...)'. "
+            "Si no posees datos en el historial ni en el mensaje, solicítale amablemente su número de cédula o su celular registrado de contrato "
+            "para ubicar su contrato en el sistema."
         )
 
     return {
@@ -263,14 +267,27 @@ def procesar_mensaje_con_herramientas(
                     logger.error(f"[Chatbot SAM] Error decodificando argumentos JSON: {arguments_str}")
                     arguments = {}
 
-                # Si la función es consultar_estado_cliente y no enviaron teléfono, autocompletar solo si es número real (no LID)
-                if function_name == "consultar_estado_cliente" and not arguments.get("telefono"):
-                    import re
-                    solo_dig = re.sub(r'\D', '', str(numero or ""))
-                    if solo_dig and 8 <= len(solo_dig) <= 13 and "@lid" not in str(numero).lower():
-                        arguments["telefono"] = numero
-                    else:
-                        arguments["telefono"] = ""
+                # Si la función es consultar_estado_cliente, autocompletar con cédula/celular del mensaje o del remitente
+                if function_name == "consultar_estado_cliente":
+                    argumentos = None
+                    ident = str(argumentos.get("identificador") or argumentos.get("cedula") or argumentos.get("telefono") or argumentos.get("numero") or "").strip()
+                    # Si el usuario escribió explícitamente una cédula o celular en el mensaje actual, priorizarlo (caso de escribir desde número externo)
+                    try:
+                        from sam_bot_service import extraer_identificador_cliente
+                        cand_msg = extraer_identificador_cliente(mensaje)
+                    except Exception:
+                        cand_msg = ""
+
+                    if cand_msg:
+                        ident = cand_msg
+                    elif not ident:
+                        solo_dig = re.sub(r'\D', '', str(numero or ""))
+                        if solo_dig and 8 <= len(solo_dig) <= 13 and "@lid" not in str(numero).lower():
+                            ident = numero
+                        else:
+                            ident = ""
+                    argumentos["identificador"] = ident
+                    argumentos["telefono"] = ident
 
                 logger.info(f"[Chatbot SAM] Ejecutando tool '{function_name}' con args: {arguments}")
                 
