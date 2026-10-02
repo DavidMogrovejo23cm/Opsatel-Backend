@@ -663,5 +663,73 @@ def eliminar_balance(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error al eliminar balance: {str(e)}")
 
 
+# ========================================================================
+# ELIMINAR VALORES PAGADOS DE CLIENTES EXTRAS SOLAMENTE
+# ========================================================================
+@router.post("/reset-pagos-extras", dependencies=[Depends(require_role(["administrador"]))])
+def reset_pagos_clientes_extras(db: Session = Depends(get_db)):
+    """
+    Elimina y restablece a CERO únicamente los valores pagados y el historial de pagos
+    de los CLIENTES EXTRAS.
+    
+    SEGURIDAD:
+    - NO elimina ningún cliente extra (se conservan todos sus datos).
+    - NO toca clientes principales ni sus deudas/pagos.
+    - NO altera egresos, finanzas generales ni balance.
+    """
+    try:
+        # 1. Vaciar historial de pagos de clientes extras
+        try:
+            db.query(models.PagoExtra).delete()
+        except Exception as err_pago:
+            print(f"Aviso eliminando PagoExtra: {err_pago}")
 
+        # 2. Restablecer valores de pagos y restaurar saldos en cada ClienteExtra
+        meses = [
+            "enero", "febrero", "marzo", "abril", "mayo", "junio",
+            "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+        ]
 
+        clientes_extras = db.query(models.ClienteExtra).all()
+        for c in clientes_extras:
+            valor_mensual = float(c.valor or 0)
+            limite_ingreso_idx = 0
+            if c.fecha_ingreso:
+                try:
+                    str_fecha = str(c.fecha_ingreso).strip()
+                    if "-" in str_fecha:
+                        parts = str_fecha.split("-")
+                        m_num = int(parts[1])
+                        limite_ingreso_idx = max(0, min(11, m_num - 1))
+                    elif "/" in str_fecha:
+                        parts = str_fecha.split("/")
+                        m_num = int(parts[1])
+                        limite_ingreso_idx = max(0, min(11, m_num - 1))
+                except Exception:
+                    limite_ingreso_idx = 0
+
+            c.total_pagado = 0.00
+            total_deuda = 0.00
+
+            for i, m in enumerate(meses):
+                setattr(c, f"{m}_pago", 0.00)
+                setattr(c, f"{m}_fecha_pago", None)
+                setattr(c, f"{m}_banco", None)
+                setattr(c, f"{m}_factura", None)
+                setattr(c, f"{m}_cod", None)
+
+                if i >= limite_ingreso_idx:
+                    setattr(c, f"{m}_saldo", valor_mensual)
+                    total_deuda += valor_mensual
+                else:
+                    setattr(c, f"{m}_saldo", 0.00)
+
+            c.saldo_pendiente = total_deuda
+
+        db.commit()
+        return {
+            "message": f"Se han eliminado exitosamente los valores pagados de {len(clientes_extras)} clientes extras. Ningún cliente extra fue borrado y los clientes principales no fueron afectados."
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar valores pagados de clientes extras: {str(e)}")
