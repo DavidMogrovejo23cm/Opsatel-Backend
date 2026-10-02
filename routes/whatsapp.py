@@ -252,8 +252,11 @@ def send_global_broadcast_task(
     nodo: Optional[str],
     db_session_factory,
     estado: Optional[str] = "ACTIVO",
-    delay_min: float = 4.0,
-    delay_max: float = 7.5
+    delay_min: float = 30.0,
+    delay_max: float = 120.0,
+    batch_size: int = 10,
+    batch_pause_min: float = 300.0,
+    batch_pause_max: float = 600.0
 ):
     db = db_session_factory()
     import time
@@ -324,17 +327,25 @@ def send_global_broadcast_task(
         
         clientes = query.all()
         alcance_label = f"{estado_label} ({nodo_label})"
-        print(f"[Broadcast Task] Iniciando difusión masiva con protección anti-baneo a {len(clientes)} clientes ({alcance_label}). Pausa: {delay_min}-{delay_max}s.")
+        # Parámetros de pausas y lotes
+        delay_a = float(delay_min) if delay_min and float(delay_min) >= 1.0 else 30.0
+        delay_b = float(delay_max) if delay_max and float(delay_max) >= delay_a else max(delay_a, 120.0)
+        tamano_lote = int(batch_size) if batch_size and int(batch_size) > 0 else 10
+        pausa_lote_a = float(batch_pause_min) if batch_pause_min and float(batch_pause_min) >= 1.0 else 300.0
+        pausa_lote_b = float(batch_pause_max) if batch_pause_max and float(batch_pause_max) >= pausa_lote_a else max(pausa_lote_a, 600.0)
+
+        total_clientes = len(clientes)
+        print(f"[Broadcast Task] Iniciando difusión masiva con protección anti-baneo a {total_clientes} clientes ({alcance_label}). Lotes: {tamano_lote}. Intervalo por mensaje: {delay_a:.1f}-{delay_b:.1f}s. Pausa entre lotes: {pausa_lote_a/60:.1f}-{pausa_lote_b/60:.1f} min.")
         
         # Registrar campaña de difusión en historial
         difusion_registro = models.WhatsAppDifusionHistorial(
             tipo="difusion_masiva",
             alcance=alcance_label,
             mensaje=mensaje,
-            total_destinatarios=len(clientes),
+            total_destinatarios=total_clientes,
             total_exitosos=0,
             total_fallidos=0,
-            estado="en_proceso" if len(clientes) > 0 else "completado",
+            estado="en_proceso" if total_clientes > 0 else "completado",
             fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S"),
             fecha_creacion=datetime.now(ECUADOR_TZ)
         )
@@ -343,10 +354,6 @@ def send_global_broadcast_task(
 
         exitosos = 0
         fallidos = 0
-
-        # Rango seguro de pausas anti-baneo
-        delay_a = float(delay_min) if delay_min and float(delay_min) >= 1.0 else 4.0
-        delay_b = float(delay_max) if delay_max and float(delay_max) >= delay_a else max(delay_a, 7.5)
 
         for idx, cliente in enumerate(clientes):
             numero = (cliente.celular or "").strip()
@@ -385,10 +392,19 @@ def send_global_broadcast_task(
                 difusion_registro.total_fallidos = fallidos
             db.commit()
 
-            # Pausa aleatoria anti-baneo por cada mensaje
-            if idx < len(clientes) - 1:
-                delay_sec = random.uniform(delay_a, delay_b)
-                time.sleep(delay_sec)
+            # Lógica de pausas entre clientes y descanso entre lotes de 10
+            if idx < total_clientes - 1:
+                # Comprobar si completó un lote de 10 clientes (o tamano_lote)
+                if (idx + 1) % tamano_lote == 0:
+                    descanso_sec = random.uniform(pausa_lote_a, pausa_lote_b)
+                    descanso_min = descanso_sec / 60.0
+                    print(f"[Broadcast Task] 🛑 Lote de {tamano_lote} clientes completado ({idx + 1}/{total_clientes}). Pausa de descanso anti-bloqueo: {descanso_min:.2f} minutos ({int(descanso_sec)}s) antes del siguiente grupo...")
+                    time.sleep(descanso_sec)
+                else:
+                    # Pausa aleatoria dentro del lote (entre 30 y 120 segundos)
+                    delay_sec = random.uniform(delay_a, delay_b)
+                    print(f"[Broadcast Task] Mensaje {idx + 1}/{total_clientes} enviado ({'Éxito' if success else 'Fallo'}). Pausa de {delay_sec:.1f}s...")
+                    time.sleep(delay_sec)
 
         if difusion_registro:
             difusion_registro.estado = "completado"
@@ -1024,20 +1040,23 @@ def enviar_whatsapp_global(
     if not payload.mensaje:
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío.")
     
-    # Encolar la tarea en background con estado y tiempos de espera configurables
+    # Encolar la tarea en background con lotes de 10, pausas de 30-120s y descansos de 5-10min
     background_tasks.add_task(
         send_global_broadcast_task,
         payload.mensaje,
         payload.nodo,
         SessionLocal,
         payload.estado or "ACTIVO",
-        payload.delay_min if payload.delay_min is not None else 4.0,
-        payload.delay_max if payload.delay_max is not None else 7.5
+        payload.delay_min if payload.delay_min is not None else 30.0,
+        payload.delay_max if payload.delay_max is not None else 120.0,
+        payload.batch_size if payload.batch_size is not None else 10,
+        payload.batch_pause_min if payload.batch_pause_min is not None else 300.0,
+        payload.batch_pause_max if payload.batch_pause_max is not None else 600.0
     )
     
     return {
         "success": True,
-        "message": "Difusión masiva iniciada en segundo plano con protección anti-bloqueo."
+        "message": "Difusión masiva iniciada en segundo plano con protección anti-bloqueo por lotes de 10 clientes."
     }
 
 from pydantic import BaseModel

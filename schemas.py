@@ -745,8 +745,11 @@ class WhatsAppGlobalSend(BaseModel):
     mensaje: str
     nodo: Optional[str] = None
     estado: Optional[str] = "ACTIVO"
-    delay_min: Optional[float] = 4.0
-    delay_max: Optional[float] = 7.5
+    delay_min: Optional[float] = 30.0
+    delay_max: Optional[float] = 120.0
+    batch_size: Optional[int] = 10
+    batch_pause_min: Optional[float] = 300.0  # 5 minutos
+    batch_pause_max: Optional[float] = 600.0  # 10 minutos
 
 class WhatsAppAdministradorCreate(BaseModel):
     numero: str
