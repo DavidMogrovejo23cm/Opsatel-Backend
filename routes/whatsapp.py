@@ -1147,11 +1147,36 @@ def webhook_mensaje_whatsapp(
         elif payload.numero and sam_bot_service.clientes_identificados_sesion.get(payload.numero):
             c_id = sam_bot_service.clientes_identificados_sesion[payload.numero]
             c_por_msg = db.query(models.Cliente).filter(models.Cliente.id == c_id).first()
+        elif tel_real and sam_bot_service.clientes_identificados_sesion.get(tel_real):
+            c_id = sam_bot_service.clientes_identificados_sesion[tel_real]
+            c_por_msg = db.query(models.Cliente).filter(models.Cliente.id == c_id).first()
+
+        # D. Si aún no está en memoria de sesión, consultar en MySQL si este chat ya tiene un cliente_id vinculado históricamente
+        if not c_por_msg:
+            nums_hist_cliente = [jid_destino]
+            if tel_real:
+                nums_hist_cliente.extend([tel_real, f"{tel_real}@c.us"])
+            if payload.numero and payload.numero not in nums_hist_cliente:
+                nums_hist_cliente.append(payload.numero)
+
+            prev_chat_con_cid = db.query(models.WhatsAppMensajeChat.cliente_id).filter(
+                models.WhatsAppMensajeChat.numero.in_(nums_hist_cliente),
+                models.WhatsAppMensajeChat.cliente_id.isnot(None)
+            ).order_by(models.WhatsAppMensajeChat.id.desc()).first()
+
+            if prev_chat_con_cid and prev_chat_con_cid[0]:
+                c_por_msg = db.query(models.Cliente).filter(models.Cliente.id == prev_chat_con_cid[0]).first()
+
+        # E. Si aún no se encontró y tenemos tel_real, buscar directamente en BD por celular
+        if not c_por_msg and tel_real:
+            c_por_msg = sam_bot_service.buscar_cliente_por_celular(tel_real, db)
 
         if c_por_msg:
             sam_bot_service.clientes_identificados_sesion[jid_destino] = c_por_msg.id
             if payload.numero:
                 sam_bot_service.clientes_identificados_sesion[payload.numero] = c_por_msg.id
+            if tel_real:
+                sam_bot_service.clientes_identificados_sesion[tel_real] = c_por_msg.id
             deuda_c = sam_bot_service.obtener_deuda_total_cliente(c_por_msg)
             identidad["metadata_ia"] = (
                 f"El cliente ha sido identificado exitosamente en la base de datos como '{c_por_msg.nombre}' "
@@ -1162,14 +1187,42 @@ def webhook_mensaje_whatsapp(
 
         # 3. Verificar si el bot está en pausa por intervención de un operador humano
         if sam_bot_service.esta_bot_pausado_por_operador(jid_destino) or (payload.numero and sam_bot_service.esta_bot_pausado_por_operador(payload.numero)):
-            registrar_mensaje_chat(db, jid_destino, "cliente", mensaje, nombre_remitente=payload.nombre or "")
+            registrar_mensaje_chat(db, jid_destino, "cliente", mensaje, cliente_id=c_por_msg.id if c_por_msg else None, nombre_remitente=payload.nombre or "")
             return {"success": True, "response": "", "pausado": True}
 
-        # 4. Obtener historial previo de conversación (antes de registrar el mensaje entrante actual)
-        historial_previo = list(sam_bot_service.historial_conversaciones.get(jid_destino, []))
+        # 4. Obtener historial previo de conversación (recuperación híbrida persistente: Base de Datos MySQL + RAM)
+        numeros_filtro = [jid_destino]
+        if tel_real:
+            numeros_filtro.extend([tel_real, f"{tel_real}@c.us"])
+        if payload.numero and payload.numero not in numeros_filtro:
+            numeros_filtro.append(payload.numero)
 
-        # Registrar mensaje del cliente en el historial persistente de chat
-        registrar_mensaje_chat(db, jid_destino, "cliente", mensaje, nombre_remitente=payload.nombre or "")
+        msgs_previos_db = db.query(models.WhatsAppMensajeChat).filter(
+            models.WhatsAppMensajeChat.numero.in_(numeros_filtro)
+        ).order_by(models.WhatsAppMensajeChat.id.desc()).limit(12).all()
+
+        if msgs_previos_db:
+            historial_previo = []
+            for m in reversed(msgs_previos_db):
+                rol_formato = "user" if m.rol == "cliente" else "assistant"
+                historial_previo.append({"role": rol_formato, "content": m.mensaje})
+        else:
+            historial_previo = list(sam_bot_service.historial_conversaciones.get(jid_destino, []))
+
+        # Registrar mensaje entrante del cliente en el historial persistente de chat
+        cid_vinculado = c_por_msg.id if c_por_msg else None
+        nuevo_msg_guardado = registrar_mensaje_chat(
+            db, jid_destino, "cliente", mensaje,
+            cliente_id=cid_vinculado,
+            nombre_remitente=payload.nombre or ""
+        )
+        if nuevo_msg_guardado and nuevo_msg_guardado.cliente_id and not c_por_msg:
+            c_por_msg = db.query(models.Cliente).filter(models.Cliente.id == nuevo_msg_guardado.cliente_id).first()
+            if c_por_msg:
+                sam_bot_service.clientes_identificados_sesion[jid_destino] = c_por_msg.id
+                if tel_real:
+                    sam_bot_service.clientes_identificados_sesion[tel_real] = c_por_msg.id
+
         sam_bot_service.guardar_mensaje_historial(jid_destino, "user", mensaje)
 
         # 5. Comando explícito de reinicio / cancelación
@@ -1179,8 +1232,10 @@ def webhook_mensaje_whatsapp(
             sam_bot_service.clientes_identificados_sesion.pop(jid_destino, None)
             if payload.numero:
                 sam_bot_service.clientes_identificados_sesion.pop(payload.numero, None)
+            if tel_real:
+                sam_bot_service.clientes_identificados_sesion.pop(tel_real, None)
             response_text = "¡Listo! He reiniciado la conversación. ¿En qué te puedo colaborar hoy con tus servicios de Opsatel? 😊"
-            registrar_mensaje_chat(db, jid_destino, "asistente", response_text)
+            registrar_mensaje_chat(db, jid_destino, "asistente", response_text, cliente_id=c_por_msg.id if c_por_msg else None)
             sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", response_text)
             whatsapp_service.send_whatsapp_message(jid_destino, response_text)
             return {"success": True, "response": response_text}
@@ -1202,7 +1257,7 @@ def webhook_mensaje_whatsapp(
         if es_cmd_admin:
             contexto = sam_bot_service.obtener_contexto_conversacion(jid_destino, mensaje)
             response_text = sam_bot_service.procesar_comando_administrador(jid_destino, mensaje, contexto, db, admin_obj)
-            registrar_mensaje_chat(db, jid_destino, "asistente", response_text)
+            registrar_mensaje_chat(db, jid_destino, "asistente", response_text, cliente_id=c_por_msg.id if c_por_msg else None)
             sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", response_text)
             whatsapp_service.send_whatsapp_message(jid_destino, response_text)
             return {"success": True, "response": response_text}
@@ -1212,14 +1267,15 @@ def webhook_mensaje_whatsapp(
         # antes de ejecutar cualquier reinicio o generación de ticket
         response_text = procesar_mensaje_con_herramientas(
             mensaje=mensaje,
-            numero=tel_real,
+            numero=tel_real or jid_destino,
             db=db,
             historial_mensajes=historial_previo,
-            metadata_identidad=identidad["metadata_ia"]
+            metadata_identidad=identidad["metadata_ia"],
+            cliente_id=c_por_msg.id if c_por_msg else None
         )
 
         # 8. Registrar respuesta del asistente y despachar por WhatsApp
-        registrar_mensaje_chat(db, jid_destino, "asistente", response_text)
+        registrar_mensaje_chat(db, jid_destino, "asistente", response_text, cliente_id=c_por_msg.id if c_por_msg else None)
         sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", response_text)
         whatsapp_service.send_whatsapp_message(jid_destino, response_text)
 

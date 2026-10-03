@@ -13,6 +13,7 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from groq import Groq
 
+import models
 from ai_tools import TOOLS_SCHEMA, ejecutar_herramienta
 from system_prompt import SYSTEM_PROMPT
 
@@ -152,6 +153,7 @@ def procesar_mensaje_con_herramientas(
     db: Session,
     historial_mensajes: Optional[List[Dict[str, Any]]] = None,
     metadata_identidad: Optional[str] = None,
+    cliente_id: Optional[int] = None,
     max_tool_iterations: int = 4
 ) -> str:
     """
@@ -169,19 +171,36 @@ def procesar_mensaje_con_herramientas(
         db: Sesión activa de base de datos SQLAlchemy.
         historial_mensajes: Conversación previa en formato [{"role": "user"|"assistant", "content": "..."}].
         metadata_identidad: Instrucción contextual sobre la resolución del LID o celular.
+        cliente_id: ID del cliente en BD si ya fue identificado previamente.
         max_tool_iterations: Límite de ejecuciones secuenciales de herramientas por turno.
     
     Returns:
         Texto final de respuesta redactado por SAM para enviar al cliente.
     """
-    client = obtener_cliente_groq()
-
     # Directriz de identidad contextual para Groq
     contexto_remitente = metadata_identidad or (
         f"El cliente está enviando un mensaje desde el número '{numero}'. "
         "La identidad, titularidad y estado del cliente se determinan exclusivamente por su registro en la BASE DE DATOS "
         "usando la herramienta 'consultar_estado_cliente'. NO te fíes de nombres de perfiles o contactos de WhatsApp."
     )
+
+    try:
+        client = obtener_cliente_groq()
+    except Exception as e_groq_init:
+        logger.warning(f"[Chatbot SAM] Groq API no disponible ({e_groq_init}). Intentando fallback con proveedores secundarios...")
+        try:
+            import sam_bot_service
+            prompt_fb = f"Contexto: {contexto_remitente}\n\nHistorial:\n"
+            if historial_mensajes:
+                for h in historial_mensajes[-8:]:
+                    prompt_fb += f"{h.get('role', 'user')}: {h.get('content', '')}\n"
+            prompt_fb += f"Usuario: {mensaje}\nAsistente:"
+            resp_fb = sam_bot_service.generar_respuesta_ia(prompt=prompt_fb, system_prompt=SYSTEM_PROMPT)
+            if resp_fb:
+                return resp_fb
+        except Exception:
+            pass
+        return "¡Hola! Gracias por comunicarte con Opsatel. ¿En qué te podemos colaborar el día de hoy con tus servicios? 😊"
 
     # Construcción de la lista inicial de mensajes
     messages: List[Dict[str, Any]] = [
@@ -192,13 +211,13 @@ def procesar_mensaje_con_herramientas(
         }
     ]
 
-    # Incorporar historial previo de la conversación si se proporciona (máx 3 turnos para ahorro de tokens)
+    # Incorporar historial previo de la conversación (hasta 10 mensajes / 5 turnos completos para memoria real)
     if historial_mensajes:
-        for msg in historial_mensajes[-3:]:
+        for msg in historial_mensajes[-10:]:
             rol = msg.get("role", "user")
             contenido = msg.get("content", "")
             if rol in ["user", "assistant"] and contenido:
-                messages.append({"role": rol, "content": str(contenido)[:350]})
+                messages.append({"role": rol, "content": str(contenido)[:600]})
 
     # Agregar el mensaje actual del cliente solo si no fue ya incluido
     if not messages or messages[-1].get("content") != mensaje:
@@ -220,15 +239,14 @@ def procesar_mensaje_con_herramientas(
                         messages=messages,
                         tools=TOOLS_SCHEMA,
                         tool_choice="auto",
-                        temperature=0.4,
-                        max_tokens=400
+                        temperature=0.3,
+                        max_tokens=450
                     )
                     model_to_use = cand
                     _active_groq_model = cand
                     break
                 except Exception as e_cand:
                     err_msg = str(e_cand).lower()
-                    # Manejo ágil de Rate Limit (429 TPM): rotación instantánea a modelo alternativo
                     if "429" in err_msg or "rate_limit" in err_msg or "tokens" in err_msg:
                         logger.warning(f"[Chatbot SAM] Modelo '{cand}' saturó tokens (429). Rotando inmediatamente a modelo alternativo...")
                     elif any(k in err_msg for k in ["404", "does not exist", "access", "tool calling", "not supported", "400"]):
@@ -256,7 +274,7 @@ def procesar_mensaje_con_herramientas(
             # Anexar el mensaje del asistente con las tool_calls al historial
             messages.append(response_message)
 
-            # Ejecutar cada herramienta solicitada
+            # Ejecutar cada herramienta solicitada con protección robusta contra excepciones
             for tool_call in tool_calls:
                 function_name = tool_call.function.name
                 arguments_str = tool_call.function.arguments or "{}"
@@ -267,11 +285,10 @@ def procesar_mensaje_con_herramientas(
                     logger.error(f"[Chatbot SAM] Error decodificando argumentos JSON: {arguments_str}")
                     arguments = {}
 
-                # Si la función es consultar_estado_cliente, autocompletar con cédula/celular del mensaje o del remitente
+                # Si la función es consultar_estado_cliente, autocompletar con cédula/celular del mensaje, cliente_id o del remitente
                 if function_name == "consultar_estado_cliente":
-                    argumentos = None
-                    ident = str(argumentos.get("identificador") or argumentos.get("cedula") or argumentos.get("telefono") or argumentos.get("numero") or "").strip()
-                    # Si el usuario escribió explícitamente una cédula o celular en el mensaje actual, priorizarlo (caso de escribir desde número externo)
+                    ident = str(arguments.get("identificador") or arguments.get("cedula") or arguments.get("telefono") or arguments.get("numero") or "").strip()
+                    # Si el usuario escribió explícitamente una cédula o celular en el mensaje actual, priorizarlo
                     try:
                         from sam_bot_service import extraer_identificador_cliente
                         cand_msg = extraer_identificador_cliente(mensaje)
@@ -284,19 +301,35 @@ def procesar_mensaje_con_herramientas(
                         solo_dig = re.sub(r'\D', '', str(numero or ""))
                         if solo_dig and 8 <= len(solo_dig) <= 13 and "@lid" not in str(numero).lower():
                             ident = numero
-                        else:
-                            ident = ""
-                    argumentos["identificador"] = ident
-                    argumentos["telefono"] = ident
+                        elif cliente_id:
+                            c_reg = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+                            if c_reg:
+                                ident = c_reg.cedula or c_reg.celular or str(cliente_id)
+
+                    arguments["identificador"] = ident
+                    arguments["telefono"] = ident
+
+                # Autocompletar cliente_id para herramientas que lo requieran
+                if function_name in ["verificar_conexion_y_potencia", "generar_ticket_soporte"]:
+                    cid_val = arguments.get("cliente_id")
+                    if (not cid_val or int(cid_val) == 0) and cliente_id:
+                        arguments["cliente_id"] = cliente_id
 
                 logger.info(f"[Chatbot SAM] Ejecutando tool '{function_name}' con args: {arguments}")
                 
                 # Ejecutar la lógica real del backend usando el Router/Dispatcher
-                resultado = ejecutar_herramienta(
-                    nombre_herramienta=function_name,
-                    argumentos=arguments,
-                    db=db
-                )
+                try:
+                    resultado = ejecutar_herramienta(
+                        nombre_herramienta=function_name,
+                        argumentos=arguments,
+                        db=db
+                    )
+                except Exception as e_exec_tool:
+                    logger.error(f"[Chatbot SAM] Error ejecutando herramienta {function_name}: {e_exec_tool}")
+                    resultado = {
+                        "success": False,
+                        "error": f"Error ejecutando consulta en el sistema: {str(e_exec_tool)}"
+                    }
 
                 # Agregar la respuesta de la herramienta con rol 'tool' y el ID correspondiente
                 messages.append({
@@ -314,7 +347,7 @@ def procesar_mensaje_con_herramientas(
 
     # Si por alguna razón el ciclo de tools no pudo cerrar, solicitar respuesta final de texto natural
     try:
-        # Filtrar llamadas a herramientas huérfanas si quedaron en messages
+        # Asegurar que no queden llamadas a herramientas sin respuesta 'tool' para evitar errores 400
         clean_messages = []
         for m in messages:
             if isinstance(m, dict) and m.get("role") == "tool" and not m.get("content"):
@@ -326,7 +359,7 @@ def procesar_mensaje_con_herramientas(
                 final_completion = client.chat.completions.create(
                     model=cand_fin,
                     messages=clean_messages,
-                    temperature=0.5,
+                    temperature=0.3,
                     max_tokens=450
                 )
                 txt_res = (final_completion.choices[0].message.content or "").strip()
