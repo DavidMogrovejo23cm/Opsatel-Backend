@@ -38,6 +38,9 @@ try:
             if kex not in pref_kex:
                 pref_kex.append(kex)
         paramiko.Transport._preferred_kex = tuple(pref_kex)
+
+        if hasattr(paramiko.Transport, "_key_info") and hasattr(paramiko, "RSAKey"):
+            paramiko.Transport._key_info["ssh-rsa"] = paramiko.RSAKey
 except Exception as _ssh_compat_err:
     logging.warning(f"No se pudieron registrar algoritmos preferidos SSH en Paramiko: {_ssh_compat_err}")
 
