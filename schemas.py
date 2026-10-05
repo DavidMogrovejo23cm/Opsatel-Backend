@@ -1,6 +1,6 @@
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel, EmailStr, field_validator
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 from datetime import datetime
 
 class ClienteCreate(BaseModel):
@@ -149,11 +149,12 @@ class ClienteUpdateGeneral(BaseModel):
     comentarios: Optional[str] = None
     observaciones: Optional[str] = None
     notas_pago: Optional[str] = None
-    pago_mensual: Optional[float] = None
-    total_pago: Optional[float] = None
-    saldo: Optional[float] = None
+    pago_mensual: Optional[Union[float, str]] = None
+    total: Optional[Union[float, str]] = None
+    total_pago: Optional[Union[float, str]] = None
+    saldo: Optional[Union[float, str]] = None
     tercera_edad: Optional[bool] = None
-    precio_plan_especial: Optional[float] = None
+    precio_plan_especial: Optional[Union[float, str]] = None
     mantenimiento: Optional[bool] = None
     # IPTV (Nuevo req v1.3)
     iptv_activar: Optional[bool] = None
@@ -162,6 +163,19 @@ class ClienteUpdateGeneral(BaseModel):
     iptv_bouquets: Optional[str] = None
     iptv_exp_date: Optional[str] = None
     iptv_max_conn: Optional[int] = None
+
+    @field_validator('pago_mensual', 'total', 'total_pago', 'saldo', 'precio_plan_especial', mode='before')
+    @classmethod
+    def parse_numeric_general(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        try:
+            cleaned = str(v).replace('$', '').replace(',', '.').strip()
+            return float(cleaned) if cleaned else None
+        except Exception:
+            return None
     iptv_outputs: Optional[str] = None
     iptv_notes: Optional[str] = None
     iptv_member_id: Optional[int] = None

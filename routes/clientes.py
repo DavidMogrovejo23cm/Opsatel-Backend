@@ -191,12 +191,15 @@ def auto_fix_initial_balances(db: Session):
         print(f"Error en auto_fix_initial_balances: {e}")
 
 
-def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
+def sync_cliente_balances(cliente: models.Cliente, db: Session = None, keep_total_pago: bool = False):
     if getattr(cliente, 'cortesia_total', False):
         cliente.total_pago = 0.00
         cliente.saldo = 0.00
         cliente.plus = "0"
         cliente.adicional = ""
+        return
+
+    if keep_total_pago and cliente.total_pago is not None:
         return
 
     plus = try_float(cliente.plus)
@@ -1198,11 +1201,90 @@ def actualizar_cliente_general(
         except Exception as lq_err:
             print(f"Aviso LibreQoS en finiquito: {lq_err}")
 
+    global _stats_cache
+
+    # 1. Mapeo y ajuste preciso si se editó PENDIENTE (total_pago)
+    is_total_pago_edited = False
+    if data.total_pago is not None:
+        nuevo_tot_pago = round(float(data.total_pago), 2)
+        cliente.total_pago = nuevo_tot_pago
+        is_total_pago_edited = True
+        if nuevo_tot_pago == 0:
+            cliente.saldo = 0.0
+            cliente.plus = ""
+            cliente.adicional = ""
+            if str(cliente.estado or '').strip().upper() in ["MOROSO", "SUSPENDIDO"]:
+                cliente.estado = "Activo"
+        else:
+            plus_val = try_float(cliente.plus)
+            adic_val = try_float(cliente.adicional)
+            cliente.saldo = round(nuevo_tot_pago - plus_val - adic_val, 2)
+
+    # 2. Mapeo si se editó 'total' o 'pago_mensual'
+    nuevo_pago_mensual = None
+    if data.pago_mensual is not None:
+        nuevo_pago_mensual = round(float(data.pago_mensual), 2)
+    elif data.total is not None:
+        nuevo_pago_mensual = round(float(data.total), 2)
+
+    if nuevo_pago_mensual is not None:
+        cliente.pago_mensual = nuevo_pago_mensual
+
+        # Sincronizar con el historial de pagos (models.Pago) para que el Balance mensual cuadre de inmediato
+        try:
+            now_dt = datetime.now()
+            current_month_str = now_dt.strftime("%Y-%m")
+            pago_existente = db.query(models.Pago).filter(
+                models.Pago.cliente_id == id,
+                models.Pago.anulado == False,
+                models.Pago.estado == "Completado"
+            ).order_by(models.Pago.fecha_pago.desc()).first()
+
+            is_same_month = False
+            if pago_existente and pago_existente.fecha_pago:
+                p_mes = pago_existente.fecha_pago.strftime("%Y-%m") if hasattr(pago_existente.fecha_pago, 'strftime') else str(pago_existente.fecha_pago)[:7]
+                if p_mes == current_month_str or (pago_existente.mes_correspondiente and pago_existente.mes_correspondiente[:7] == current_month_str):
+                    is_same_month = True
+
+            p_plus = min(try_float(cliente.plus_pagado) or try_float(cliente.plus), nuevo_pago_mensual)
+            p_adic = min(try_float(cliente.adicional_pagado) or try_float(cliente.adicional), max(0.0, nuevo_pago_mensual - p_plus))
+            p_net = max(0.0, round(nuevo_pago_mensual - p_plus - p_adic, 2))
+
+            if is_same_month and pago_existente:
+                pago_existente.monto = nuevo_pago_mensual
+                pago_existente.monto_internet = p_net
+                pago_existente.monto_plus = p_plus
+                pago_existente.monto_adicional = p_adic
+            elif nuevo_pago_mensual > 0:
+                metodo_act = cliente.bank if (cliente.bank and str(cliente.bank).strip()) else "Efectivo"
+                nuevo_pago_rec = models.Pago(
+                    cliente_id=id,
+                    monto=nuevo_pago_mensual,
+                    monto_internet=p_net,
+                    monto_plus=p_plus,
+                    monto_adicional=p_adic,
+                    metodo_pago=metodo_act,
+                    mes_correspondiente=current_month_str,
+                    fecha_pago=now_dt,
+                    estado="Completado",
+                    anulado=False
+                )
+                db.add(nuevo_pago_rec)
+        except Exception as p_err:
+            print(f"Aviso sincronización pago en balance: {p_err}")
+
+    # 3. Si se editó saldo directamente y no vino total_pago explícito
+    if data.saldo is not None and not is_total_pago_edited:
+        cliente.saldo = round(float(data.saldo), 2)
+
+    # 4. Asignar los demás campos que vienen en data
     for var, value in vars(data).items():
-        if value is not None:
+        if value is not None and var not in ['total', 'pago_mensual', 'total_pago', 'saldo']:
             setattr(cliente, var, value)
-            
-    sync_cliente_balances(cliente, db)
+
+    # 5. Sincronizar balances manteniendo la coherencia de total_pago
+    sync_cliente_balances(cliente, db, keep_total_pago=is_total_pago_edited)
+    _stats_cache = None
     db.commit()
 
     # Encolar tareas en LibreQoS basadas en los cambios detectados

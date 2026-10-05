@@ -1331,6 +1331,9 @@ def historial_clientes(db: Session = Depends(get_db)):
             except Exception:
                 proporcional = tarifa_mensual
         
+        tot_pago_val = float(c.total_pago or 0)
+        deuda_actual = tot_pago_val if tot_pago_val > 0 else saldo
+        
         res.append({
             "id": c.id,
             "nombre": c.nombre,
@@ -1338,7 +1341,7 @@ def historial_clientes(db: Session = Depends(get_db)):
             "plan": c.plan,
             "tarifa_mensual": tarifa_mensual,
             "proporcional": proporcional,
-            "saldo_total": saldo,
+            "saldo_total": deuda_actual,
             "estado": c.estado,
             "instalation_date": c.instalation_date,
             "bank": c.bank
