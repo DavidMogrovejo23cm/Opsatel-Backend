@@ -23,6 +23,24 @@ except ImportError:
     NETMIKO_AVAILABLE = False
     logging.warning("Netmiko no instalado. Instala: pip install netmiko")
 
+# Habilitar compatibilidad con host keys y algoritmos SSH legacy (ssh-rsa) para OLTs Huawei
+try:
+    import paramiko
+    if hasattr(paramiko, "Transport"):
+        pref_keys = list(getattr(paramiko.Transport, "_preferred_keys", ()))
+        for k in ["ssh-rsa", "rsa-sha2-512", "rsa-sha2-256"]:
+            if k not in pref_keys:
+                pref_keys.append(k)
+        paramiko.Transport._preferred_keys = tuple(pref_keys)
+
+        pref_kex = list(getattr(paramiko.Transport, "_preferred_kex", ()))
+        for kex in ["diffie-hellman-group-exchange-sha256", "diffie-hellman-group-exchange-sha1", "diffie-hellman-group14-sha1"]:
+            if kex not in pref_kex:
+                pref_kex.append(kex)
+        paramiko.Transport._preferred_kex = tuple(pref_kex)
+except Exception as _ssh_compat_err:
+    logging.warning(f"No se pudieron registrar algoritmos preferidos SSH en Paramiko: {_ssh_compat_err}")
+
 logger = logging.getLogger(__name__)
 
 # ============================================================================
@@ -175,6 +193,8 @@ class OLTInterface:
             'auth_timeout': 20,
             'session_timeout': 300,  # 5 minutos — mantener sesión viva entre tareas
             'conn_timeout': self.timeout,
+            'disable_sha2_fix': True,
+            'disabled_algorithms': {'pubkeys': ['rsa-sha2-512', 'rsa-sha2-256']},
         }
 
     def connect(self, force_reconnect: bool = False) -> bool:
