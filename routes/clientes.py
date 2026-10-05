@@ -204,7 +204,8 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None):
     adicional = try_float(cliente.adicional)
     
     # PENDIENTE (total_pago) es la suma de TODAS las deudas pendientes (Internet + IPTV Plus + Adicional)
-    cliente.total_pago = max(0.0, saldo + plus + adicional)
+    # Permite valores negativos si el cliente cuenta con saldo a favor / excedente global
+    cliente.total_pago = round(saldo + plus + adicional, 2)
 
 @router.get("/pendientes-count")
 def get_pendientes_count(db: Session = Depends(get_db)):
@@ -1391,11 +1392,13 @@ def registrar_pago(
         turno_id = turno.id if turno else None
 
         # Extraemos montos reales pagados (Cash)
-        m_total_cash = float(pago_data.monto)
-        m_adic_cash = try_float(pago_data.adicional)
-        m_plus_cash = try_float(pago_data.plus)
-        if min(m_total_cash, m_adic_cash, m_plus_cash) < 0:
-            raise HTTPException(status_code=400, detail="Los montos de pago no pueden ser negativos")
+        m_total_cash = float(pago_data.monto or 0)
+        if m_total_cash < 0:
+            raise HTTPException(status_code=400, detail="El monto total de pago no puede ser negativo")
+
+        # Aseguramos que los componentes pagados en efectivo no sean negativos
+        m_adic_cash = max(0.0, try_float(pago_data.adicional))
+        m_plus_cash = max(0.0, try_float(pago_data.plus))
 
         componentes_cash = m_plus_cash + m_adic_cash
         if componentes_cash > m_total_cash + 0.01:
@@ -1403,11 +1406,11 @@ def registrar_pago(
                 status_code=400,
                 detail="La suma de Plus y Adicional no puede superar el monto total recibido"
             )
-        m_internet_cash = round(m_total_cash - componentes_cash, 2)
+        m_internet_cash = round(max(0.0, m_total_cash - componentes_cash), 2)
 
         # Validar que no haya NaN
         import math
-        if math.isnan(m_total_cash) or math.isnan(m_internet_cash):
+        if math.isnan(m_total_cash) or math.isnan(m_internet_cash) or math.isnan(m_plus_cash) or math.isnan(m_adic_cash):
             raise HTTPException(status_code=400, detail="Monto inválido (NaN)")
 
         deuda_internet = m_internet_cash + (pago_data.descuento_internet or 0.0)
