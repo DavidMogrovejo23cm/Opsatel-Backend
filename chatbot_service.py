@@ -32,6 +32,7 @@ FALLBACK_MODELS = [
 ]
 
 _active_groq_model = None
+_live_models_cache = []
 
 
 def resolver_modelo_groq(client: Groq) -> str:
@@ -39,7 +40,7 @@ def resolver_modelo_groq(client: Groq) -> str:
     Resuelve dinámicamente un modelo de Groq activo y compatible con Tool Calling.
     Filtra modelos incompatibles (whisper, compound, safeguards, etc.).
     """
-    global _active_groq_model
+    global _active_groq_model, _live_models_cache
     if _active_groq_model:
         return _active_groq_model
 
@@ -58,6 +59,7 @@ def resolver_modelo_groq(client: Groq) -> str:
                 "compound", "whisper", "guard", "safeguard", "embed", "tts", "audio", "vision", "orpheus", "allam"
             ])
         ]
+        _live_models_cache = live_ids
         logger.info(f"[Chatbot SAM] Modelos compatibles reportados en cuenta Groq: {live_ids}")
         for pref in FALLBACK_MODELS:
             if pref in live_ids:
@@ -225,7 +227,15 @@ def procesar_mensaje_con_herramientas(
 
     # Resolver modelo dinámicamente según permisos de la cuenta
     model_to_use = resolver_modelo_groq(client)
-    candidatos_modelos = [model_to_use] + [m for m in FALLBACK_MODELS if m != model_to_use]
+    candidatos_modelos = [model_to_use]
+    if _live_models_cache:
+        candidatos_modelos += [m for m in FALLBACK_MODELS if m != model_to_use and m in _live_models_cache]
+        # Agregar también otros modelos live si quedan muy pocos candidatos
+        for m in _live_models_cache:
+            if m not in candidatos_modelos:
+                candidatos_modelos.append(m)
+    else:
+        candidatos_modelos += [m for m in FALLBACK_MODELS if m != model_to_use]
 
     # Ciclo de ejecución de herramientas (Soporta múltiples pasos: ej. consultar cliente -> consultar saturación -> responder)
     for iteracion in range(max_tool_iterations):
@@ -248,7 +258,8 @@ def procesar_mensaje_con_herramientas(
                 except Exception as e_cand:
                     err_msg = str(e_cand).lower()
                     if "429" in err_msg or "rate_limit" in err_msg or "tokens" in err_msg:
-                        logger.warning(f"[Chatbot SAM] Modelo '{cand}' saturó tokens (429). Rotando inmediatamente a modelo alternativo...")
+                        logger.warning(f"[Chatbot SAM] Modelo '{cand}' saturó tokens (429). Rotando a modelo alternativo con pequeña pausa...")
+                        time.sleep(1.2)
                     elif any(k in err_msg for k in ["404", "does not exist", "access", "tool calling", "not supported", "400"]):
                         logger.warning(f"[Chatbot SAM] Modelo '{cand}' incompatible ({e_cand}). Rotando a modelo alternativo...")
                     else:
@@ -350,9 +361,22 @@ def procesar_mensaje_con_herramientas(
         # Asegurar que no queden llamadas a herramientas sin respuesta 'tool' para evitar errores 400
         clean_messages = []
         for m in messages:
-            if isinstance(m, dict) and m.get("role") == "tool" and not m.get("content"):
-                continue
-            clean_messages.append(m)
+            if hasattr(m, 'model_dump'):
+                m_dict = m.model_dump(exclude_none=True)
+            elif hasattr(m, '__dict__'):
+                m_dict = m.__dict__
+            else:
+                m_dict = dict(m)
+
+            role = m_dict.get("role")
+            if role == "tool":
+                continue  # Saltar respuestas de herramientas para el fallback natural
+            
+            # Limpiar tool_calls del asistente para que Groq no espere una respuesta de tool
+            if role == "assistant" and "tool_calls" in m_dict:
+                del m_dict["tool_calls"]
+            
+            clean_messages.append(m_dict)
 
         for cand_fin in candidatos_modelos:
             try:
