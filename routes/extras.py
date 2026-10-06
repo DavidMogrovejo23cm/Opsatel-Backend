@@ -500,13 +500,29 @@ def upload_database_extras(
             # Asignar meses a columnas del modelo
             total_pagado_calc = 0.0
             for m_low, m_info in meses_data.items():
-                setattr(db_cliente, f"{m_low}_factura", m_info['factura'])
-                setattr(db_cliente, f"{m_low}_fecha_a_pagar", m_info['fecha_a_pagar'])
-                setattr(db_cliente, f"{m_low}_fecha_pago", m_info['fecha_pago'])
-                setattr(db_cliente, f"{m_low}_pago", m_info['pago'])
-                setattr(db_cliente, f"{m_low}_banco", m_info['banco'])
-                setattr(db_cliente, f"{m_low}_cod", m_info['cod'])
-                setattr(db_cliente, f"{m_low}_saldo", m_info['saldo'])
+                # Update month fields, accumulating pagos and saldos, preserving existing info when appropriate
+                existing_factura = getattr(db_cliente, f"{m_low}_factura")
+                if not existing_factura and m_info['factura']:
+                    db_cliente.__setattr__(f"{m_low}_factura", m_info['factura'])
+                existing_fecha_a_pagar = getattr(db_cliente, f"{m_low}_fecha_a_pagar")
+                if not existing_fecha_a_pagar and m_info['fecha_a_pagar']:
+                    db_cliente.__setattr__(f"{m_low}_fecha_a_pagar", m_info['fecha_a_pagar'])
+                existing_fecha_pago = getattr(db_cliente, f"{m_low}_fecha_pago")
+                if not existing_fecha_pago and m_info['fecha_pago']:
+                    db_cliente.__setattr__(f"{m_low}_fecha_pago", m_info['fecha_pago'])
+                # Accumulate pago
+                prev_pago = getattr(db_cliente, f"{m_low}_pago") or 0.0
+                db_cliente.__setattr__(f"{m_low}_pago", prev_pago + m_info['pago'])
+                # Update banco and cod if not set
+                existing_banco = getattr(db_cliente, f"{m_low}_banco")
+                if not existing_banco and m_info['banco']:
+                    db_cliente.__setattr__(f"{m_low}_banco", m_info['banco'])
+                existing_cod = getattr(db_cliente, f"{m_low}_cod")
+                if not existing_cod and m_info['cod']:
+                    db_cliente.__setattr__(f"{m_low}_cod", m_info['cod'])
+                # Accumulate saldo
+                prev_saldo = getattr(db_cliente, f"{m_low}_saldo") or 0.0
+                db_cliente.__setattr__(f"{m_low}_saldo", prev_saldo + m_info['saldo'])
                 total_pagado_calc += m_info['pago']
 
             db_cliente.total_pagado = total_pagado_calc
