@@ -11,6 +11,8 @@ load_dotenv()
 from sqlalchemy.orm import Session
 import models
 # pyrefly: ignore [missing-import]
+from database import SessionLocal
+
 from rapidfuzz import fuzz, process
 import whatsapp_service
 
@@ -19,6 +21,20 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+# ---- New constants for IA response style ----
+SYSTEM_PROMPT_BASE = (
+    "Responde en máximo 2 frases, tono amigable y persuasivo, usa emojis y un llamado a la acción. "
+    "Sé conciso, directo y evita información innecesaria."
+)
+
+# Plantillas de respuesta rápida que la IA puede devolver mediante marcador <TEMPLATE:clave>
+PLANTILLAS = {
+    "saldo": "Tu saldo es **{saldo} €**. 📈",
+    "pago": "Puedes pagar aquí: {link} 💳",
+    "factura": "Tu última factura: {numero_factura} - {monto} €. 📄",
+}
+
 
 client_gemini = None
 client_anthropic = None
@@ -76,6 +92,33 @@ def obtener_fecha_hora_ecuador() -> str:
         return f"{dia_nom.capitalize()} {ahora_ec.day} de {mes_nom} de {ahora_ec.year}, {hora_str} (Ecuador)"
     except Exception:
         return "Ecuador"
+
+def obtener_datos_cliente(cliente_id: int) -> dict:
+    """Obtiene información esencial del cliente desde la base de datos.
+    Devuelve dict con claves: nombre, saldo, plan, correo, celular.
+    """
+    db = SessionLocal()
+    try:
+        cli = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+        if not cli:
+            return {}
+        return {
+            "nombre": cli.nombre,
+            "saldo": float(cli.saldo or 0),
+            "plan": cli.plan,
+            "correo": cli.correo,
+            "celular": cli.celular,
+        }
+    finally:
+        db.close()
+
+def construir_prompt(mensaje_raw: str, cliente_id: int) -> str:
+    """Construye el prompt para la IA insertando datos del cliente.
+    Usa datos JSON del cliente.
+    """
+    datos = obtener_datos_cliente(cliente_id)
+    datos_json = json.dumps(datos, ensure_ascii=False)
+    return f"Datos del cliente: {datos_json}\n{mensaje_raw}"
 
 def limpiar_respuesta_ia(texto: str) -> str:
     """
@@ -215,13 +258,23 @@ def hay_proveedor_ia() -> bool:
         get_anthropic_client()
     )
 
-def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float = 0.5, system_prompt: str = "") -> str:
+def generar_respuesta_ia(prompt: str, max_tokens: int = 500, temperature: float = 0.5, system_prompt: str = SYSTEM_PROMPT_BASE) -> str:
+    """Genera texto usando los proveedores disponibles en orden de prioridad:
+    1. Groq (Ultra-rápido, gratuito, ideal para VPS)
+    2. Google Gemini
+    3. OpenAI
+    4. Anthropic Claude
+
+    El parámetro `system_prompt` por defecto aplica el estilo de respuesta breve y atractiva.
+    """
     """
     Genera texto usando los proveedores disponibles en orden de prioridad:
     1. Groq (Ultra-rápido, gratuito, ideal para VPS)
     2. Google Gemini
     3. OpenAI
     4. Anthropic Claude
+    
+    El parámetro `system_prompt` por defecto aplica el estilo de respuesta breve y atractiva.
     """
     global GEMINI_MODEL
 

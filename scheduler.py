@@ -152,7 +152,7 @@ def enviar_whatsapp_programado():
                     db.commit()
 
                     # Pequeña pausa prudencial para simular comportamiento orgánico
-                    time.sleep(random.uniform(2.0, 4.0))
+                    whatsapp_service.apply_rate_limit()
 
                 except Exception as e:
                     fallidos += 1

@@ -1,7 +1,41 @@
 import os
 import requests
 import re
+import random
 import time
+
+# ---------------------------------------------------------------------------
+# Anti‑ban rate limiting for WhatsApp mass sending
+# ---------------------------------------------------------------------------
+# Estado global del limitador: tiempo de inicio del lote actual y contador de mensajes
+_batch_start_time: float | None = None
+_messages_in_batch: int = 0
+
+def apply_rate_limit() -> None:
+    """Aplica pausas aleatorias para evitar bloqueos de WhatsApp.
+    - Dentro de un lote de hasta 10 mensajes se espera entre 20‑150 s.
+    - Tras completar un lote se espera entre 5‑10 min antes de iniciar el siguiente.
+    """
+    global _batch_start_time, _messages_in_batch
+    now = time.time()
+    if _batch_start_time is None:
+        _batch_start_time = now
+    if _messages_in_batch >= 10:
+        # Fin de lote: pausa larga
+        wait_seconds = random.uniform(300, 600)  # 5‑10 min
+        target_time = _batch_start_time + wait_seconds
+        sleep_seconds = max(0.0, target_time - now)
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+        # Reiniciar lote
+        _batch_start_time = time.time()
+        _messages_in_batch = 0
+    else:
+        # Pausa normal entre mensajes del mismo lote
+        wait_seconds = random.uniform(20, 150)
+        time.sleep(wait_seconds)
+        _messages_in_batch += 1
+
 from dotenv import load_dotenv
 
 load_dotenv()
