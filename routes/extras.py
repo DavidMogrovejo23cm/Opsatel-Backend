@@ -458,8 +458,8 @@ def upload_database_extras(
                         first_active_month_idx = months_order.index(m_name)
 
             # Si el valor está en 0 o vacío, deducir el precio mensual de los meses
-            if valor_raw == 0.0 and month_fees:
-                valor_raw = max(set(month_fees), key=month_fees.count)
+            # if valor_raw == 0.0 and month_fees:
+                # valor_raw = max(set(month_fees), key=month_fees.count)
 
             # Determinar fecha_ingreso para cálculo de deudas
             if first_active_month_idx is not None:
