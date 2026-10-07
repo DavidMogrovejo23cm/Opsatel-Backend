@@ -764,6 +764,9 @@ class WhatsAppGlobalSend(BaseModel):
     batch_size: Optional[int] = 10
     batch_pause_min: Optional[float] = 300.0  # 5 minutos
     batch_pause_max: Optional[float] = 600.0  # 10 minutos
+    desde_id: Optional[int] = None
+    hasta_id: Optional[int] = None
+    limite_mensajes: Optional[int] = None
 
 class WhatsAppAdministradorCreate(BaseModel):
     numero: str

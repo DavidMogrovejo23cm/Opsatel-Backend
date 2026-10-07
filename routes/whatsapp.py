@@ -256,7 +256,10 @@ def send_global_broadcast_task(
     delay_max: float = 120.0,
     batch_size: int = 10,
     batch_pause_min: float = 300.0,
-    batch_pause_max: float = 600.0
+    batch_pause_max: float = 600.0,
+    desde_id: Optional[int] = None,
+    hasta_id: Optional[int] = None,
+    limite_mensajes: Optional[int] = None
 ):
     db = db_session_factory()
     import time
@@ -324,9 +327,29 @@ def send_global_broadcast_task(
             nodo_label = f"Nodo: {nodo_clean}"
         else:
             nodo_label = "Todos los nodos"
+
+        # Filtro por ID inicial (Continuar desde ID X)
+        if desde_id is not None and int(desde_id) > 0:
+            query = query.filter(models.Cliente.id >= int(desde_id))
+        if hasta_id is not None and int(hasta_id) > 0:
+            query = query.filter(models.Cliente.id <= int(hasta_id))
+
+        query = query.order_by(models.Cliente.id.asc())
+
+        if limite_mensajes is not None and int(limite_mensajes) > 0:
+            query = query.limit(int(limite_mensajes))
         
         clientes = query.all()
-        alcance_label = f"{estado_label} ({nodo_label})"
+
+        rango_info = ""
+        if desde_id and int(desde_id) > 0:
+            rango_info += f" desde ID {desde_id}"
+        if hasta_id and int(hasta_id) > 0:
+            rango_info += f" hasta ID {hasta_id}"
+        if limite_mensajes and int(limite_mensajes) > 0:
+            rango_info += f" [Límite: {limite_mensajes}]"
+
+        alcance_label = f"{estado_label} ({nodo_label}){rango_info}".strip()
         # Parámetros de pausas y lotes
         delay_a = float(delay_min) if delay_min and float(delay_min) >= 1.0 else 30.0
         delay_b = float(delay_max) if delay_max and float(delay_max) >= delay_a else max(delay_a, 120.0)
@@ -1051,12 +1074,19 @@ def enviar_whatsapp_global(
         payload.delay_max if payload.delay_max is not None else 120.0,
         payload.batch_size if payload.batch_size is not None else 10,
         payload.batch_pause_min if payload.batch_pause_min is not None else 300.0,
-        payload.batch_pause_max if payload.batch_pause_max is not None else 600.0
+        payload.batch_pause_max if payload.batch_pause_max is not None else 600.0,
+        payload.desde_id,
+        payload.hasta_id,
+        payload.limite_mensajes
     )
     
+    msg_detalle = "Difusión masiva iniciada en segundo plano con protección anti-bloqueo."
+    if payload.limite_mensajes:
+        msg_detalle = f"Difusión iniciada en segundo plano para {payload.limite_mensajes} clientes (iniciando desde ID {payload.desde_id or 'primer registro'})."
+
     return {
         "success": True,
-        "message": "Difusión masiva iniciada en segundo plano con protección anti-bloqueo por lotes de 10 clientes."
+        "message": msg_detalle
     }
 
 from pydantic import BaseModel
