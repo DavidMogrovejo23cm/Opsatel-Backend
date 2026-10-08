@@ -297,13 +297,16 @@ class LibreQoSAdapter:
         reload_cmd = f"cd {self.libreqos_path}/src && sudo python3 LibreQoS.py"
         return self._execute(reload_cmd, cmd_timeout=180)
 
-    def clean_duplicates_csv(self) -> Dict[str, Any]:
+    def clean_duplicates_csv(self, db_clients_by_ip: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Lee ShapedDevices.csv, realiza un backup en el servidor remoto,
-        elimina filas duplicadas (por IPv4 y por Circuit ID) dejando 1 sola entrada limpia
-        y recarga LibreQoS.
+        elimina filas duplicadas (por IPv4).
+        
+        Si db_clients_by_ip se provee:
+        - Si la IP coincide con un cliente en BD: usa el ID real, nombre y velocidades del plan de Opsatel.
+        - Si la IP no coincide en BD (IP libre o equipo externo): se mantiene tal como estaba en el CSV.
         """
-        logger.info(f"Iniciando limpieza de duplicados en {self.csv_path}...")
+        logger.info(f"Iniciando limpieza y normalización de duplicados en {self.csv_path}...")
         
         # 1. Leer contenido actual
         res = self._execute(f"cat {self.csv_path}")
@@ -320,13 +323,14 @@ class LibreQoSAdapter:
         if not lines:
             raise LibreQoSCommandError("El archivo ShapedDevices.csv está vacío.")
 
-        header = lines[0]
-        rows = lines[1:]
+        header = "Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min,Upload Min,Download Max,Upload Max,Comment"
+        rows = lines[1:] if len(lines) > 1 else []
         
-        seen_ips = {}
-        seen_ids = set()
+        seen_ips = set()
         total_prev = 0
         duplicates_found = 0
+        enriched_count = 0
+        unmatched_count = 0
 
         clean_rows = []
         for line in rows:
@@ -339,28 +343,34 @@ class LibreQoSAdapter:
             cid = parts[0].strip() if len(parts) > 0 else ""
             ip = parts[6].strip() if len(parts) > 6 else ""
 
-            is_dup = False
-            if ip and ip in seen_ips:
-                is_dup = True
-            if cid and cid in seen_ids:
-                is_dup = True
-
-            if is_dup:
-                duplicates_found += 1
-                # Si encontramos un duplicado, conservamos la versión más completa/reciente
-                if ip:
-                    seen_ips[ip] = line_str
+            if not ip:
+                # Línea sin IP válida, mantener si tiene datos
+                clean_rows.append(line_str)
                 continue
 
-            if ip:
-                seen_ips[ip] = line_str
-            if cid:
-                seen_ids.add(cid)
-            clean_rows.append(line_str)
+            if ip in seen_ips:
+                duplicates_found += 1
+                continue
 
-        # Si se usó diccionario para priorizar la última ocurrencia
-        final_rows = list(dict.fromkeys(clean_rows))
-        clean_csv_text = header + "\n" + "\n".join(final_rows) + "\n"
+            seen_ips.add(ip)
+
+            # Verificar si coincide con la Base de Datos
+            if db_clients_by_ip and ip in db_clients_by_ip:
+                db_client = db_clients_by_ip[ip]
+                # Reconstruir la línea con la información oficial de la BD
+                c_id = db_client["client_id"]
+                c_name = self._sanitize_name(db_client["name"])
+                c_down = db_client["download"]
+                c_up = db_client["upload"]
+                new_line = f"{c_id},{c_name},{c_id},{c_id},,,{ip},,2,2,{c_down},{c_up},"
+                clean_rows.append(new_line)
+                enriched_count += 1
+            else:
+                # No se encontró en la BD: se mantiene intacta en el CSV
+                clean_rows.append(line_str)
+                unmatched_count += 1
+
+        clean_csv_text = header + "\n" + "\n".join(clean_rows) + "\n"
 
         # 4. Escribir archivo limpio usando base64 para evitar problemas con comillas y caracteres
         import base64
@@ -373,12 +383,14 @@ class LibreQoSAdapter:
         # 5. Recargar LibreQoS
         reload_res = self.apply_config()
 
-        logger.info(f"✓ Limpieza completada: {total_prev} registros anteriores, {len(final_rows)} registros únicos, {duplicates_found} duplicados eliminados.")
+        logger.info(f"✓ Limpieza completada: {total_prev} anteriores, {len(clean_rows)} únicos ({enriched_count} sincronizados con BD, {unmatched_count} conservados intactos), {duplicates_found} duplicados eliminados.")
         return {
             "success": reload_res.success,
             "total_previous": total_prev,
-            "total_clean": len(final_rows),
+            "total_clean": len(clean_rows),
             "duplicates_removed": duplicates_found,
+            "enriched_from_db": enriched_count,
+            "unmatched_preserved": unmatched_count,
             "backup_file": f"{self.csv_path}.bak_{timestamp}",
             "reload_stdout": reload_res.stdout[:500] if reload_res.stdout else "",
             "reload_stderr": reload_res.stderr[:500] if reload_res.stderr else ""
