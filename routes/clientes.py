@@ -1282,6 +1282,10 @@ def actualizar_cliente_general(
         if value is not None and var not in ['total', 'pago_mensual', 'total_pago', 'saldo']:
             setattr(cliente, var, value)
 
+    # Si 'cod' tiene algún valor escrito y no se especificó 'facturas', poner automáticamente facturas = "SI"
+    if data.cod is not None and str(data.cod).strip() != "" and data.facturas is None:
+        cliente.facturas = "SI"
+
     # 5. Sincronizar balances manteniendo la coherencia de total_pago
     sync_cliente_balances(cliente, db, keep_total_pago=is_total_pago_edited)
     _stats_cache = None
@@ -1439,6 +1443,9 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
                 base_screens = (plan_info.pantallas if (plan_info and plan_info.pantallas is not None) else 0)
                 cliente.plus = str(max(0, (value - base_screens) * 2))
 
+    if data.cod is not None and str(data.cod).strip() != "" and data.facturas is None:
+        cliente.facturas = "SI"
+
     if data.saldo is not None:
         cliente.saldo = float(data.saldo)
     elif cliente.mantenimiento and not was_mantenimiento:
@@ -1553,7 +1560,10 @@ def registrar_pago(
         if pago_data.payment_date is not None and not str(cliente.payment_date or "").strip():
             cliente.payment_date = pago_data.payment_date
         if pago_data.bank is not None: cliente.bank = pago_data.bank
-        if pago_data.cod is not None: cliente.cod = pago_data.cod
+        if pago_data.cod is not None:
+            cliente.cod = pago_data.cod
+            if str(pago_data.cod).strip() != "" and pago_data.facturas is None:
+                cliente.facturas = "SI"
         if pago_data.bank_plus is not None: cliente.bank_plus = pago_data.bank_plus
         if pago_data.notas_pago is not None: cliente.notas_pago = pago_data.notas_pago
 
