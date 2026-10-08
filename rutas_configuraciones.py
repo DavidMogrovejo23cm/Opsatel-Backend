@@ -400,7 +400,25 @@ def set_suspension_corte_config(data: SuspensionConfigRequest):
         "hora_corte": data.hora_corte,
         "auto_suspension_enabled": data.auto_suspension_enabled
     })
+    try:
+        from scheduler import reprogramar_job_suspension
+        reprogramar_job_suspension()
+    except Exception as e:
+        print(f"Aviso reprogramando scheduler: {e}")
+
     return {"message": "Configuración de suspensión por fecha guardada exitosamente"}
+
+@router.post("/suspension-corte/ejecutar-corte-manual")
+def ejecutar_corte_manual_ahora(current_user: models.Usuario = Depends(require_role(["administrador"]))):
+    """
+    Ejecuta manualmente el corte masivo de morosos en MikroTik en este instante.
+    """
+    try:
+        from scheduler import suspension_automatica_por_mora
+        suspension_automatica_por_mora(force_run=True)
+        return {"message": "Proceso de suspensión por corte ejecutado exitosamente en MikroTik."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al ejecutar corte manual: {str(e)}")
 
 
 # --- Clientes Exentos de Corte (Excepciones) ---

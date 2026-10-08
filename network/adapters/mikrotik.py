@@ -400,4 +400,123 @@ class MikroTikAdapter:
             }
 
 
+def is_nodo_sayausi(nodo_val) -> bool:
+    if not nodo_val:
+        return False
+    import unicodedata
+    s = unicodedata.normalize('NFD', str(nodo_val)).encode('ascii', 'ignore').decode('utf-8').upper()
+    return "SAYAUS" in s
+
+
+def suspender_cliente_mikrotik_backend(cliente, db) -> Dict[str, Any]:
+    """
+    Agrega la IP del cliente a la lista de corte en MikroTik sin tocar LibreQoS.
+    - Sayausí: CLIENTES_SUSPENDIDOS_POR_PAGOS
+    - Baños / otros: CLIENTES_SUSPENDIDOS_POR_PAGO
+    """
+    if not cliente or not cliente.ip:
+        return {"success": False, "error": "Cliente sin IP registrada"}
+
+    import models
+    is_sayausi = is_nodo_sayausi(cliente.nodo)
+    list_name = "CLIENTES_SUSPENDIDOS_POR_PAGOS" if is_sayausi else "CLIENTES_SUSPENDIDOS_POR_PAGO"
+
+    olt_configs = db.query(models.OLTConfig).filter(
+        models.OLTConfig.active == True,
+        models.OLTConfig.mikrotik_host != None
+    ).all()
+
+    if not olt_configs:
+        logger.warning(f"No hay MikroTik activo configurado para suspender a {cliente.nombre} ({cliente.ip})")
+        return {"success": False, "error": "No hay MikroTik activo configurado"}
+
+    target_olt = None
+    for olt in olt_configs:
+        if olt.nodo_asociado and str(olt.nodo_asociado).strip().upper() == str(cliente.nodo or "").strip().upper():
+            target_olt = olt
+            break
+    if not target_olt:
+        for olt in olt_configs:
+            if is_sayausi and olt.nodo_asociado and "SAYAUS" in str(olt.nodo_asociado).upper():
+                target_olt = olt
+                break
+            elif not is_sayausi and olt.nodo_asociado and "BAN" in str(olt.nodo_asociado).upper():
+                target_olt = olt
+                break
+    if not target_olt:
+        target_olt = olt_configs[0]
+
+    try:
+        with MikroTikAdapter(
+            host=target_olt.mikrotik_host,
+            username=target_olt.mikrotik_username,
+            password=target_olt.mikrotik_password,
+            port=target_olt.mikrotik_port or 8728
+        ) as mt:
+            mt.add_to_address_list(
+                address=cliente.ip,
+                comment=cliente.nombre or f"Cliente #{cliente.id}",
+                list_name=list_name
+            )
+        logger.info(f"✓ Cliente {cliente.nombre} ({cliente.ip}) suspendido en MikroTik '{list_name}' ({target_olt.mikrotik_host})")
+        return {"success": True, "list_name": list_name, "host": target_olt.mikrotik_host}
+    except Exception as e:
+        logger.error(f"Error MikroTik al suspender a {cliente.nombre} ({cliente.ip}): {e}")
+        return {"success": False, "error": str(e)}
+
+
+def reactivar_cliente_mikrotik_backend(cliente, db) -> Dict[str, Any]:
+    """
+    Remueve la IP del cliente de las listas de corte de MikroTik al registrar el pago.
+    No toca LibreQoS (mantiene el tráfico de red fluido).
+    """
+    if not cliente or not cliente.ip:
+        return {"success": False, "error": "Cliente sin IP registrada"}
+
+    import models
+    is_sayausi = is_nodo_sayausi(cliente.nodo)
+    list_name = "CLIENTES_SUSPENDIDOS_POR_PAGOS" if is_sayausi else "CLIENTES_SUSPENDIDOS_POR_PAGO"
+    alt_list = "CLIENTES_SUSPENDIDOS_POR_PAGO" if is_sayausi else "CLIENTES_SUSPENDIDOS_POR_PAGOS"
+
+    olt_configs = db.query(models.OLTConfig).filter(
+        models.OLTConfig.active == True,
+        models.OLTConfig.mikrotik_host != None
+    ).all()
+
+    if not olt_configs:
+        logger.warning(f"No hay MikroTik activo configurado para reactivar a {cliente.nombre} ({cliente.ip})")
+        return {"success": False, "error": "No hay MikroTik activo configurado"}
+
+    target_olts = []
+    for olt in olt_configs:
+        if olt.nodo_asociado and str(olt.nodo_asociado).strip().upper() == str(cliente.nodo or "").strip().upper():
+            target_olts.append(olt)
+    if not target_olts:
+        for olt in olt_configs:
+            if is_sayausi and olt.nodo_asociado and "SAYAUS" in str(olt.nodo_asociado).upper():
+                target_olts.append(olt)
+            elif not is_sayausi and olt.nodo_asociado and "BAN" in str(olt.nodo_asociado).upper():
+                target_olts.append(olt)
+    if not target_olts:
+        target_olts = olt_configs
+
+    success = False
+    for target_olt in target_olts:
+        try:
+            with MikroTikAdapter(
+                host=target_olt.mikrotik_host,
+                username=target_olt.mikrotik_username,
+                password=target_olt.mikrotik_password,
+                port=target_olt.mikrotik_port or 8728
+            ) as mt:
+                mt.remove_from_address_list(cliente.ip, list_name)
+                mt.remove_from_address_list(cliente.ip, alt_list)
+            logger.info(f"✓ Cliente {cliente.nombre} ({cliente.ip}) REACTIVADO en MikroTik ({target_olt.mikrotik_host})")
+            success = True
+        except Exception as e:
+            logger.error(f"Error MikroTik al reactivar a {cliente.nombre} ({cliente.ip}) en {target_olt.mikrotik_host}: {e}")
+
+    return {"success": success}
+
+
 

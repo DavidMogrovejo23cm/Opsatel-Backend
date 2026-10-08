@@ -830,11 +830,9 @@ def suspender_cliente_mikrotik(id: int, db: Session = Depends(get_db), current_u
     Agrega al cliente a la lista de suspendidos en MikroTik:
     - Baños: list=CLIENTES_SUSPENDIDOS_POR_PAGO
     - Sayausí: list=CLIENTES_SUSPENDIDOS_POR_PAGOS
-    Comando ejecutado en MikroTik:
-    /ip firewall address-list add address={ip} comment="{nombre}" list={list_name}
+    NOTA: No suspende de LibreQoS.
     """
-    from sqlalchemy import or_ as _or
-    from network.adapters.mikrotik import MikroTikAdapter, MikroTikAdapterError
+    from network.adapters.mikrotik import suspender_cliente_mikrotik_backend
 
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
     if not cliente:
@@ -843,64 +841,66 @@ def suspender_cliente_mikrotik(id: int, db: Session = Depends(get_db), current_u
     if not cliente.ip:
         raise HTTPException(status_code=400, detail=f"El cliente '{cliente.nombre}' no tiene una IP asignada para suspender en MikroTik.")
 
-    # Determinar si es Sayausí o Baños
-    is_sayausi = is_nodo_sayausi(cliente.nodo)
-    list_name = "CLIENTES_SUSPENDIDOS_POR_PAGOS" if is_sayausi else "CLIENTES_SUSPENDIDOS_POR_PAGO"
+    res = suspender_cliente_mikrotik_backend(cliente, db)
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=f"Error MikroTik al suspender servicio: {res.get('error')}")
 
-    # Buscar OLT / MikroTik Config activa para el nodo
-    olt_config = db.query(models.OLTConfig).filter(
-        _or(
-            models.OLTConfig.nodo_asociado == cliente.nodo,
-            models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
-            models.OLTConfig.nodo_asociado == None
-        ),
-        models.OLTConfig.active == True
-    ).first()
+    cliente.estado = "Suspendido"
+    db.commit()
 
-    if not olt_config or not olt_config.mikrotik_host:
-        raise HTTPException(status_code=503, detail=f"No hay MikroTik activo o configurado para el nodo '{cliente.nodo}'.")
+    import observability as obs
+    obs.log_audit_event_async(
+        accion="SUSPENDER_CLIENTE_MIKROTIK",
+        modulo="clientes",
+        usuario=current_user.username,
+        entidad_tipo="Cliente",
+        entidad_id=str(cliente.id),
+        detalles=f"Cliente {cliente.nombre} ({cliente.ip}) agregado a list '{res.get('list_name')}' en MikroTik {res.get('host')}"
+    )
 
-    try:
-        with MikroTikAdapter(
-            host=olt_config.mikrotik_host,
-            username=olt_config.mikrotik_username,
-            password=olt_config.mikrotik_password,
-            port=olt_config.mikrotik_port or 8728
-        ) as mt:
-            mt.add_to_address_list(
-                address=cliente.ip,
-                comment=cliente.nombre or f"Cliente #{cliente.id}",
-                list_name=list_name
-            )
+    return {
+        "success": True,
+        "message": f"Servicio suspendido exitosamente para '{cliente.nombre}' (IP: {cliente.ip}) en MikroTik '{res.get('list_name')}'.",
+        "estado": cliente.estado,
+        "list_name": res.get("list_name"),
+        "ip": cliente.ip
+    }
 
-        # Actualizar estado del cliente a Suspendido
-        cliente.estado = "Suspendido"
-        db.commit()
+@router.post("/{id}/reactivar-mikrotik", dependencies=[Depends(require_role(["administrador", "tecnico", "secretario"]))])
+def reactivar_cliente_mikrotik(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """
+    Remueve al cliente de la lista de suspendidos en MikroTik y actualiza su estado a 'Activo'.
+    No altera LibreQoS.
+    """
+    from network.adapters.mikrotik import reactivar_cliente_mikrotik_backend
 
-        # Auditoría
-        import observability as obs
-        obs.log_audit_event_async(
-            accion="SUSPENDER_CLIENTE_MIKROTIK",
-            modulo="clientes",
-            usuario=current_user.username,
-            entidad_tipo="Cliente",
-            entidad_id=str(cliente.id),
-            detalles=f"Cliente {cliente.nombre} ({cliente.ip}) agregado a list '{list_name}' en MikroTik {olt_config.mikrotik_host}"
-        )
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-        return {
-            "success": True,
-            "message": f"Servicio suspendido exitosamente para '{cliente.nombre}' (IP: {cliente.ip}) en MikroTik '{list_name}'.",
-            "estado": cliente.estado,
-            "list_name": list_name,
-            "ip": cliente.ip
-        }
-    except MikroTikAdapterError as mt_err:
-        logger.error(f"Error MikroTik al suspender cliente {cliente.id}: {mt_err}")
-        raise HTTPException(status_code=500, detail=f"Error MikroTik ({olt_config.mikrotik_host}): {str(mt_err)}")
-    except Exception as e:
-        logger.error(f"Error al suspender cliente {cliente.id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error al suspender servicio: {str(e)}")
+    if not cliente.ip:
+        raise HTTPException(status_code=400, detail=f"El cliente '{cliente.nombre}' no tiene una IP asignada.")
+
+    res = reactivar_cliente_mikrotik_backend(cliente, db)
+    cliente.estado = "Activo"
+    db.commit()
+
+    import observability as obs
+    obs.log_audit_event_async(
+        accion="REACTIVAR_CLIENTE_MIKROTIK",
+        modulo="clientes",
+        usuario=current_user.username,
+        entidad_tipo="Cliente",
+        entidad_id=str(cliente.id),
+        detalles=f"Cliente {cliente.nombre} ({cliente.ip}) reactivado y removido de listas de suspensión en MikroTik"
+    )
+
+    return {
+        "success": True,
+        "message": f"Servicio reactivado exitosamente para '{cliente.nombre}' (IP: {cliente.ip}) en MikroTik.",
+        "estado": cliente.estado,
+        "ip": cliente.ip
+    }
 
 @router.get("/test-db")
 def test_database_tables(db: Session = Depends(get_db)):
@@ -1233,6 +1233,12 @@ def actualizar_cliente_general(
             cliente.adicional = ""
             if str(cliente.estado or '').strip().upper() in ["MOROSO", "SUSPENDIDO"]:
                 cliente.estado = "Activo"
+                if cliente.ip:
+                    try:
+                        from network.adapters.mikrotik import reactivar_cliente_mikrotik_backend
+                        reactivar_cliente_mikrotik_backend(cliente, db)
+                    except Exception as mt_err:
+                        logger.error(f"Error MikroTik al reactivar cliente {cliente.id}: {mt_err}")
         else:
             plus_val = try_float(cliente.plus)
             adic_val = try_float(cliente.adicional)
@@ -1599,43 +1605,15 @@ def registrar_pago(
             prev_internet = try_float(cliente.internet_payment)
             cliente.internet_payment = str(round(prev_internet + m_internet_cash, 2))
 
-        # 5. Reactivación automática si corresponde (remueve de MikroTik y pasa a Activo)
-        if cliente.estado in ["Moroso", "Suspendido"] and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
+        # 5. Reactivación automática inmediata al saldar deuda (remueve de MikroTik y pasa a Activo)
+        if str(cliente.estado or "").strip().capitalize() in ["Moroso", "Suspendido"] and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
             cliente.estado = "Activo"
-            # Remover de MikroTik Address List por Nodo
             if cliente.ip:
                 try:
-                    from network.adapters.mikrotik import MikroTikAdapter
-                    from sqlalchemy import or_ as _or
-                    is_sayausi = is_nodo_sayausi(cliente.nodo)
-                    list_name = "CLIENTES_SUSPENDIDOS_POR_PAGOS" if is_sayausi else "CLIENTES_SUSPENDIDOS_POR_PAGO"
-
-                    olt_config = db.query(models.OLTConfig).filter(
-                        _or(
-                            models.OLTConfig.nodo_asociado == cliente.nodo,
-                            models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
-                            models.OLTConfig.nodo_asociado == None
-                        ),
-                        models.OLTConfig.active == True
-                    ).first()
-
-                    if olt_config and olt_config.mikrotik_host:
-                        with MikroTikAdapter(
-                            host=olt_config.mikrotik_host,
-                            username=olt_config.mikrotik_username,
-                            password=olt_config.mikrotik_password,
-                            port=olt_config.mikrotik_port or 8728
-                        ) as mt:
-                            mt.remove_from_address_list(cliente.ip, list_name)
+                    from network.adapters.mikrotik import reactivar_cliente_mikrotik_backend
+                    reactivar_cliente_mikrotik_backend(cliente, db)
                 except Exception as mt_err:
                     logger.error(f"Error MikroTik al reactivar cliente {cliente.id} ({cliente.ip}): {mt_err}")
-
-            try:
-                from services.libreqos_manager import LibreQoSManager
-                correlation_id = f"auto_res_{id}_{int(datetime.now().timestamp())}"
-                LibreQoSManager.enqueue_job("RESUME", id, db, correlation_id, "AUTO_REACTIVATION_PAYMENT")
-            except Exception as lq_err:
-                print(f"Error al encolar LibreQoS tras reactivación automática: {lq_err}")
 
         sync_cliente_balances(cliente, db)
         db.commit()
@@ -1704,14 +1682,15 @@ def confirmar_pago(
     
     pago.estado = "Completado"
     
-    if cliente.estado == "Suspendido" and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
+    # Reactivación inmediata al confirmar transferencia si salda la deuda
+    if str(cliente.estado or "").strip().capitalize() in ["Moroso", "Suspendido"] and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
         cliente.estado = "Activo"
-        try:
-            from services.libreqos_manager import LibreQoSManager
-            correlation_id = f"auto_res_{id}_{int(datetime.now().timestamp())}"
-            LibreQoSManager.enqueue_job("RESUME", id, db, correlation_id, "AUTO_REACTIVATION_PAYMENT_CONFIRM")
-        except Exception as lq_err:
-            print(f"Error al encolar LibreQoS tras reactivación automática: {lq_err}")
+        if cliente.ip:
+            try:
+                from network.adapters.mikrotik import reactivar_cliente_mikrotik_backend
+                reactivar_cliente_mikrotik_backend(cliente, db)
+            except Exception as mt_err:
+                logger.error(f"Error MikroTik al reactivar cliente {cliente.id} ({cliente.ip}): {mt_err}")
              
     sync_cliente_balances(cliente, db)
     db.commit()

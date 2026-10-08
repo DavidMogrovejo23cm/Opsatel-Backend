@@ -300,10 +300,10 @@ def suspension_automatica_por_mora(force_run: bool = False):
       - Baños: CLIENTES_SUSPENDIDOS_POR_PAGO
       - Sayausí: CLIENTES_SUSPENDIDOS_POR_PAGOS
     Y cambia el estado del cliente a 'Moroso'.
+    NOTA: No altera ni suspende en LibreQoS, el corte se gestiona exclusivamente en MikroTik.
     """
     from config_manager import get_config
-    from network.adapters.mikrotik import MikroTikAdapter
-    from sqlalchemy import or_ as _or
+    from network.adapters.mikrotik import suspender_cliente_mikrotik_backend
 
     config_sys = get_config()
     enabled = config_sys.get("auto_suspension_enabled", True)
@@ -323,7 +323,6 @@ def suspension_automatica_por_mora(force_run: bool = False):
     print(f"[Scheduler] Iniciando proceso de suspensión por corte de fecha (Día {dia_corte})...")
     db = SessionLocal()
     try:
-        from services.libreqos_manager import LibreQoSManager
         hoy_str = ahora.strftime("%Y-%m-%d")
 
         clientes = db.query(models.Cliente).filter(
@@ -350,7 +349,7 @@ def suspension_automatica_por_mora(force_run: bool = False):
             # Verificar prórroga de pago
             if c.fecha_prorroga:
                 try:
-                    if c.fecha_prorroga >= hoy_str:
+                    if str(c.fecha_prorroga).strip() >= hoy_str:
                         print(f"[Scheduler] Omitiendo suspensión del cliente {c.id} ({c.nombre}) debido a prórroga activa hasta {c.fecha_prorroga}")
                         continue
                 except Exception as e:
@@ -360,51 +359,45 @@ def suspension_automatica_por_mora(force_run: bool = False):
             c.estado = "Moroso"
             count += 1
 
-            # 1. Agregar a MikroTik Address List por Nodo
+            # 1. Suspender exclusivamente en MikroTik
             if c.ip:
                 try:
-                    is_sayausi = is_nodo_sayausi(c.nodo)
-                    list_name = "CLIENTES_SUSPENDIDOS_POR_PAGOS" if is_sayausi else "CLIENTES_SUSPENDIDOS_POR_PAGO"
-
-                    olt_config = db.query(models.OLTConfig).filter(
-                        _or(
-                            models.OLTConfig.nodo_asociado == c.nodo,
-                            models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
-                            models.OLTConfig.nodo_asociado == None
-                        ),
-                        models.OLTConfig.active == True
-                    ).first()
-
-                    if olt_config and olt_config.mikrotik_host:
-                        with MikroTikAdapter(
-                            host=olt_config.mikrotik_host,
-                            username=olt_config.mikrotik_username,
-                            password=olt_config.mikrotik_password,
-                            port=olt_config.mikrotik_port or 8728
-                        ) as mt:
-                            mt.add_to_address_list(
-                                address=c.ip,
-                                comment=c.nombre or f"Cliente #{c.id}",
-                                list_name=list_name
-                            )
+                    res_mt = suspender_cliente_mikrotik_backend(c, db)
+                    if not res_mt.get("success"):
+                        print(f"[Scheduler] Aviso MikroTik al suspender a {c.nombre} ({c.ip}): {res_mt.get('error')}")
                 except Exception as mt_err:
                     print(f"[Scheduler] Error MikroTik al suspender a {c.nombre} ({c.ip}): {mt_err}")
 
-            # 2. LibreQoS Sync
-            try:
-                correlation_id = f"auto_susp_{c.id}_{int(datetime.now().timestamp())}"
-                LibreQoSManager.enqueue_job("SUSPEND", c.id, db, correlation_id, "SYSTEM_AUTO_SUSPENSION")
-            except Exception as lq_err:
-                print(f"[Scheduler] Error LibreQoS al suspender a {c.nombre}: {lq_err}")
-
         db.commit()
-        print(f"[Scheduler] Suspensión automática por fecha completada. Clientes marcados como Moroso: {count}")
+        print(f"[Scheduler] Suspensión automática por fecha completada. Clientes marcados como Moroso y suspendidos en MikroTik: {count}")
     except Exception as e:
         db.rollback()
         print(f"[Scheduler] Error en suspensión automática por mora: {str(e)}")
         traceback.print_exc()
     finally:
         db.close()
+
+def reprogramar_job_suspension():
+    """
+    Reprograma el trabajo de corte automático en el scheduler según la hora configurada en config.json.
+    """
+    global scheduler
+    if scheduler is not None and scheduler.running:
+        try:
+            from config_manager import get_config
+            cfg = get_config()
+            hora_str = str(cfg.get("hora_corte", "01:00"))
+            parts = hora_str.split(":")
+            h = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 1
+            m = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+
+            scheduler.reschedule_job(
+                'suspension_automatica_por_mora',
+                trigger=CronTrigger(hour=h, minute=m, second=0)
+            )
+            print(f"[Scheduler] [OK] Job de suspensión reprogramado para las {h:02d}:{m:02d} diariamente.")
+        except Exception as e:
+            print(f"[Scheduler] Error al reprogramar job de suspensión: {e}")
 
 def iniciar_scheduler():
     """
@@ -417,6 +410,13 @@ def iniciar_scheduler():
         print("[Scheduler] Ya está corriendo")
         return
     
+    from config_manager import get_config
+    cfg = get_config()
+    hora_str = str(cfg.get("hora_corte", "01:00"))
+    parts = hora_str.split(":")
+    h = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 1
+    m = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+
     scheduler = BackgroundScheduler(timezone=ECUADOR_TZ)
     
     # 1. Envío automático de WhatsApp (cada minuto)
@@ -446,17 +446,17 @@ def iniciar_scheduler():
         replace_existing=True
     )
 
-    # 4. Suspensión automática por mora (Todos los días a las 01:00 AM)
+    # 4. Suspensión automática por mora (Hora configurada)
     scheduler.add_job(
         suspension_automatica_por_mora,
-        trigger=CronTrigger(hour=1, minute=0, second=0),
+        trigger=CronTrigger(hour=h, minute=m, second=0),
         id='suspension_automatica_por_mora',
         name='Suspensión automática por mora',
         replace_existing=True
     )
     
     scheduler.start()
-    print("[Scheduler] [OK] Scheduler iniciado correctamente")
+    print(f"[Scheduler] [OK] Scheduler iniciado correctamente (Suspensión programada a las {h:02d}:{m:02d})")
 
 def detener_scheduler():
     """
@@ -466,3 +466,4 @@ def detener_scheduler():
     if scheduler is not None and scheduler.running:
         scheduler.shutdown()
         print("[Scheduler] [OK] Scheduler detenido")
+
