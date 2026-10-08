@@ -296,3 +296,113 @@ class LibreQoSAdapter:
         """Recarga LibreQoS (compatibilidad con código existente)."""
         reload_cmd = f"cd {self.libreqos_path}/src && sudo python3 LibreQoS.py"
         return self._execute(reload_cmd, cmd_timeout=180)
+
+    def clean_duplicates_csv(self) -> Dict[str, Any]:
+        """
+        Lee ShapedDevices.csv, realiza un backup en el servidor remoto,
+        elimina filas duplicadas (por IPv4 y por Circuit ID) dejando 1 sola entrada limpia
+        y recarga LibreQoS.
+        """
+        logger.info(f"Iniciando limpieza de duplicados en {self.csv_path}...")
+        
+        # 1. Leer contenido actual
+        res = self._execute(f"cat {self.csv_path}")
+        if not res.success or not res.stdout.strip():
+            raise LibreQoSCommandError(f"No se pudo leer ShapedDevices.csv o está vacío: {res.stderr}")
+
+        # 2. Hacer backup en el servidor
+        timestamp = int(time.time())
+        backup_cmd = f"cp {self.csv_path} {self.csv_path}.bak_{timestamp}"
+        self._execute(backup_cmd)
+
+        # 3. Parsear y deduplicar
+        lines = res.stdout.strip().splitlines()
+        if not lines:
+            raise LibreQoSCommandError("El archivo ShapedDevices.csv está vacío.")
+
+        header = lines[0]
+        rows = lines[1:]
+        
+        seen_ips = {}
+        seen_ids = set()
+        total_prev = 0
+        duplicates_found = 0
+
+        clean_rows = []
+        for line in rows:
+            line_str = line.strip()
+            if not line_str:
+                continue
+            total_prev += 1
+            parts = line_str.split(",")
+            # Estructura: Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,...
+            cid = parts[0].strip() if len(parts) > 0 else ""
+            ip = parts[6].strip() if len(parts) > 6 else ""
+
+            is_dup = False
+            if ip and ip in seen_ips:
+                is_dup = True
+            if cid and cid in seen_ids:
+                is_dup = True
+
+            if is_dup:
+                duplicates_found += 1
+                # Si encontramos un duplicado, conservamos la versión más completa/reciente
+                if ip:
+                    seen_ips[ip] = line_str
+                continue
+
+            if ip:
+                seen_ips[ip] = line_str
+            if cid:
+                seen_ids.add(cid)
+            clean_rows.append(line_str)
+
+        # Si se usó diccionario para priorizar la última ocurrencia
+        final_rows = list(dict.fromkeys(clean_rows))
+        clean_csv_text = header + "\n" + "\n".join(final_rows) + "\n"
+
+        # 4. Escribir archivo limpio usando base64 para evitar problemas con comillas y caracteres
+        import base64
+        b64_content = base64.b64encode(clean_csv_text.encode('utf-8')).decode('ascii')
+        write_cmd = f"echo '{b64_content}' | base64 -d > {self.csv_path}"
+        write_res = self._execute(write_cmd)
+        if not write_res.success:
+            raise LibreQoSCommandError(f"Error escribiendo ShapedDevices.csv limpio: {write_res.stderr}")
+
+        # 5. Recargar LibreQoS
+        reload_res = self.apply_config()
+
+        logger.info(f"✓ Limpieza completada: {total_prev} registros anteriores, {len(final_rows)} registros únicos, {duplicates_found} duplicados eliminados.")
+        return {
+            "success": reload_res.success,
+            "total_previous": total_prev,
+            "total_clean": len(final_rows),
+            "duplicates_removed": duplicates_found,
+            "backup_file": f"{self.csv_path}.bak_{timestamp}",
+            "reload_stdout": reload_res.stdout[:500] if reload_res.stdout else "",
+            "reload_stderr": reload_res.stderr[:500] if reload_res.stderr else ""
+        }
+
+    def write_full_csv(self, csv_content: str) -> Dict[str, Any]:
+        """
+        Sobrescribe ShapedDevices.csv con nuevo contenido, creando backup y recargando LibreQoS.
+        """
+        timestamp = int(time.time())
+        self._execute(f"cp {self.csv_path} {self.csv_path}.bak_{timestamp}")
+
+        import base64
+        b64_content = base64.b64encode(csv_content.encode('utf-8')).decode('ascii')
+        write_cmd = f"echo '{b64_content}' | base64 -d > {self.csv_path}"
+        write_res = self._execute(write_cmd)
+        if not write_res.success:
+            raise LibreQoSCommandError(f"Error escribiendo ShapedDevices.csv: {write_res.stderr}")
+
+        reload_res = self.apply_config()
+        return {
+            "success": reload_res.success,
+            "backup_file": f"{self.csv_path}.bak_{timestamp}",
+            "reload_stdout": reload_res.stdout[:500] if reload_res.stdout else "",
+            "reload_stderr": reload_res.stderr[:500] if reload_res.stderr else ""
+        }
+

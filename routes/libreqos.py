@@ -157,6 +157,110 @@ def run_manual_sync(server_id: int, background_tasks: BackgroundTasks, db: Sessi
     background_tasks.add_task(run_sync)
     return {"success": True, "detail": f"Reconciliación para '{server.name}' iniciada en segundo plano."}
 
+@router.post("/servers/{server_id}/clean-duplicates", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
+def clean_server_duplicates(server_id: int, db: Session = Depends(get_db)):
+    """Limpia filas duplicadas en ShapedDevices.csv del servidor, dejando 1 sola por IP y recargando LibreQoS."""
+    server = db.query(LibreQoSServer).filter(LibreQoSServer.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Servidor LibreQoS no encontrado.")
+
+    try:
+        with LibreQoSAdapter(server) as adapter:
+            res = adapter.clean_duplicates_csv()
+            server.status = "ONLINE"
+            server.last_check = datetime.utcnow()
+            server.last_error = None
+            db.commit()
+            return {
+                "success": True,
+                "server_name": server.name,
+                "total_previous": res["total_previous"],
+                "total_clean": res["total_clean"],
+                "duplicates_removed": res["duplicates_removed"],
+                "backup_file": res["backup_file"],
+                "message": f"✓ Limpieza exitosa en {server.name}: {res['duplicates_removed']} duplicados eliminados. Quedaron {res['total_clean']} clientes únicos."
+            }
+    except Exception as e:
+        server.last_error = str(e)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Error al limpiar duplicados en {server.name}: {str(e)}")
+
+@router.post("/servers/{server_id}/regenerate", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
+def regenerate_server_shaped_devices(server_id: int, db: Session = Depends(get_db)):
+    """Regenera ShapedDevices.csv completo desde la base de datos de Opsatel con los planes actuales."""
+    server = db.query(LibreQoSServer).filter(LibreQoSServer.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Servidor LibreQoS no encontrado.")
+
+    # 1. Obtener clientes que pertenecen a este servidor según OLTConfig
+    clientes = db.query(models.Cliente).join(
+        models.OLTConfig, models.OLTConfig.nodo_asociado == models.Cliente.nodo
+    ).filter(
+        models.OLTConfig.libreqos_server_id == server.id,
+        models.OLTConfig.active == True,
+        models.Cliente.estado == "Activo",
+        models.Cliente.ip != None
+    ).all()
+
+    # Si no se encontraron por OLT, o si es un nodo directo, buscar clientes cuyos nodos coincidan
+    if not clientes:
+        # Intento secundario: clientes activos con IP
+        clientes = db.query(models.Cliente).filter(
+            models.Cliente.estado == "Activo",
+            models.Cliente.ip != None
+        ).all()
+
+    seen_ips = set()
+    csv_lines = [
+        "Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min,Upload Min,Download Max,Upload Max,Comment"
+    ]
+
+    count_added = 0
+    for c in clientes:
+        ip = (c.ip or "").strip()
+        if not ip or ip in seen_ips:
+            continue
+        seen_ips.add(ip)
+
+        down, up = LibreQoSManager.calculate_speeds(c, db)
+        safe_name = (c.nombre or f"Cliente_{c.id}").replace(",", " ").replace('"', '').replace("'", "").strip()
+        line = f"{c.id},{safe_name},{c.id},{c.id},,,{ip},,2,2,{down},{up},"
+        csv_lines.append(line)
+        count_added += 1
+
+        # Actualizar estado QoS en BD
+        state = LibreQoSManager.get_or_create_qos_state(c.id, db)
+        state.libreqos_server_id = server.id
+        state.ip = ip
+        state.download_mbps = down
+        state.upload_mbps = up
+        state.status = "APPLIED"
+        state.last_applied_at = datetime.utcnow()
+        state.last_verified_at = datetime.utcnow()
+
+    db.commit()
+
+    full_csv = "\n".join(csv_lines) + "\n"
+
+    try:
+        with LibreQoSAdapter(server) as adapter:
+            res = adapter.write_full_csv(full_csv)
+            server.status = "ONLINE"
+            server.last_check = datetime.utcnow()
+            server.last_error = None
+            db.commit()
+            return {
+                "success": True,
+                "server_name": server.name,
+                "total_clients": count_added,
+                "backup_file": res["backup_file"],
+                "message": f"✓ Regeneración completa en {server.name}: {count_added} clientes aprovisionados con sus planes actuales."
+            }
+    except Exception as e:
+        server.last_error = str(e)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Error al regenerar ShapedDevices.csv en {server.name}: {str(e)}")
+
 @router.get("/jobs", response_model=List[LibreQoSJobResponse], dependencies=[Depends(require_role(["administrador", "tecnico"]))])
 def get_jobs(status: Optional[str] = None, db: Session = Depends(get_db)):
     """Obtiene el historial/cola de trabajos."""
