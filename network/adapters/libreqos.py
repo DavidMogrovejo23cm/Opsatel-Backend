@@ -302,9 +302,12 @@ class LibreQoSAdapter:
         Lee ShapedDevices.csv, realiza un backup en el servidor remoto,
         elimina filas duplicadas (por IPv4).
         
-        Si db_clients_by_ip se provee:
-        - Si la IP coincide con un cliente en BD: usa el ID real, nombre y velocidades del plan de Opsatel.
-        - Si la IP no coincide en BD (IP libre o equipo externo): se mantiene tal como estaba en el CSV.
+        Garantiza que:
+        1. No existan IPs duplicadas.
+        2. Cada circuito tenga parámetros de ancho de banda consistentes y únicos,
+           eliminando la advertencia "had different bandwidth parameters than other devices on this circuit".
+        3. Si la IP coincide con un cliente en BD: usa el ID real, nombre y velocidades del plan de Opsatel.
+        4. Si la IP no coincide en BD (IP libre o equipo externo): se mantiene con su propio Circuit ID único.
         """
         logger.info(f"Iniciando limpieza y normalización de duplicados en {self.csv_path}...")
         
@@ -327,6 +330,9 @@ class LibreQoSAdapter:
         rows = lines[1:] if len(lines) > 1 else []
         
         seen_ips = set()
+        used_circuit_ids = {}  # circuit_id -> (down_min, up_min, down_max, up_max)
+        next_custom_id = 900000
+
         total_prev = 0
         duplicates_found = 0
         enriched_count = 0
@@ -338,13 +344,27 @@ class LibreQoSAdapter:
             if not line_str:
                 continue
             total_prev += 1
-            parts = line_str.split(",")
-            # Estructura: Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,...
-            cid = parts[0].strip() if len(parts) > 0 else ""
-            ip = parts[6].strip() if len(parts) > 6 else ""
+            parts = [p.strip() for p in line_str.split(",")]
+            # Asegurar longitud mínima
+            while len(parts) < 13:
+                parts.append("")
+
+            # Estructura: Circuit ID(0), Circuit Name(1), Device ID(2), Device Name(3), Parent Node(4), MAC(5), IPv4(6), IPv6(7), Down Min(8), Up Min(9), Down Max(10), Up Max(11), Comment(12)
+            cid = parts[0]
+            cname = parts[1]
+            dev_id = parts[2]
+            dev_name = parts[3]
+            parent = parts[4]
+            mac = parts[5]
+            ip = parts[6]
+            ipv6 = parts[7]
+            down_min = parts[8] or "2"
+            up_min = parts[9] or "2"
+            down_max = parts[10] or "100"
+            up_max = parts[11] or "50"
+            comment = parts[12]
 
             if not ip:
-                # Línea sin IP válida, mantener si tiene datos
                 clean_rows.append(line_str)
                 continue
 
@@ -357,17 +377,39 @@ class LibreQoSAdapter:
             # Verificar si coincide con la Base de Datos
             if db_clients_by_ip and ip in db_clients_by_ip:
                 db_client = db_clients_by_ip[ip]
-                # Reconstruir la línea con la información oficial de la BD
-                c_id = db_client["client_id"]
+                c_id = str(db_client["client_id"])
                 c_name = self._sanitize_name(db_client["name"])
-                c_down = db_client["download"]
-                c_up = db_client["upload"]
-                new_line = f"{c_id},{c_name},{c_id},{c_id},,,{ip},,2,2,{c_down},{c_up},"
-                clean_rows.append(new_line)
+                c_down = str(db_client["download"])
+                c_up = str(db_client["upload"])
+                
+                # Si este Circuit ID ya existe para otra IP de este mismo cliente, usamos los mismos anchos de banda
+                if c_id in used_circuit_ids:
+                    prev_down_min, prev_up_min, prev_down_max, prev_up_max = used_circuit_ids[c_id]
+                    final_line = f"{c_id},{c_name},{c_id}_{len(clean_rows)},{c_id}_{len(clean_rows)},{parent},{mac},{ip},{ipv6},{prev_down_min},{prev_up_min},{prev_down_max},{prev_up_max},{comment}"
+                else:
+                    used_circuit_ids[c_id] = ("2", "2", c_down, c_up)
+                    final_line = f"{c_id},{c_name},{c_id},{c_id},{parent},{mac},{ip},{ipv6},2,2,{c_down},{c_up},{comment}"
+
+                clean_rows.append(final_line)
                 enriched_count += 1
             else:
-                # No se encontró en la BD: se mantiene intacta en el CSV
-                clean_rows.append(line_str)
+                # No se encontró en la BD:
+                # Si el Circuit ID original colisiona con otro circuito ya usado, asignarle un ID único
+                if not cid or cid in used_circuit_ids:
+                    while str(next_custom_id) in used_circuit_ids:
+                        next_custom_id += 1
+                    final_cid = str(next_custom_id)
+                    next_custom_id += 1
+                else:
+                    final_cid = cid
+
+                used_circuit_ids[final_cid] = (down_min, up_min, down_max, up_max)
+                final_dev_id = dev_id if dev_id else final_cid
+                final_dev_name = dev_name if dev_name else final_cid
+                final_cname = self._sanitize_name(cname if cname else f"IP_{ip.replace('.', '_')}")
+
+                final_line = f"{final_cid},{final_cname},{final_dev_id},{final_dev_name},{parent},{mac},{ip},{ipv6},{down_min},{up_min},{down_max},{up_max},{comment}"
+                clean_rows.append(final_line)
                 unmatched_count += 1
 
         clean_csv_text = header + "\n" + "\n".join(clean_rows) + "\n"
