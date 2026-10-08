@@ -267,12 +267,23 @@ def listar_clientes(db: Session = Depends(get_db)):
         from libreqos_models import ClientQoSState
         data = db.query(models.Cliente).all()
         
-        # Mapear estados QoS de manera eficiente
+        # Mapear estados QoS de manera eficiente y asegurar consistencia de facturas = 'SI' para clientes con cod
         qos_map = {state.cliente_id: state.status for state in db.query(ClientQoSState).all()}
         
+        has_updates = False
         for c in data:
             # Asociar el estado QoS al objeto
             c.qos_status = qos_map.get(c.id, "NOT_CONFIGURED")
+            if c.cod and str(c.cod).strip() != "" and str(c.cod).strip().upper() != "NONE":
+                if str(c.facturas or "").strip().upper() != "SI":
+                    c.facturas = "SI"
+                    has_updates = True
+
+        if has_updates:
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
             
         return data
     except Exception as e:
@@ -1106,6 +1117,13 @@ def obtener_cliente(id: int, db: Session = Depends(get_db)):
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    if cliente.cod and str(cliente.cod).strip() != "" and str(cliente.cod).strip().upper() != "NONE":
+        if str(cliente.facturas or "").strip().upper() != "SI":
+            cliente.facturas = "SI"
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
     return cliente
 
 @router.patch("/{id}", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
