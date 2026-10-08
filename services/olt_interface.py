@@ -1897,6 +1897,22 @@ class OLTInterface:
                 'error': str(e)
             }
     
+    @staticmethod
+    def _extract_mac_from_response(response: str) -> Optional[str]:
+        if not response:
+            return None
+        # 1. Standard Huawei format: xxxx-xxxx-xxxx or xxxx.xxxx.xxxx
+        m = re.search(r'\b([0-9a-fA-F]{4}[-.:][0-9a-fA-F]{4}[-.:][0-9a-fA-F]{4})\b', response)
+        if m:
+            raw_mac = re.sub(r'[-.:]', '', m.group(1))
+            return ":".join(raw_mac[i:i+2].upper() for i in range(0, 12, 2))
+        # 2. Colon or hyphen separated format: xx:xx:xx:xx:xx:xx or xx-xx-xx-xx-xx-xx
+        m2 = re.search(r'\b([0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2}[:-][0-9a-fA-F]{2})\b', response)
+        if m2:
+            raw_mac = re.sub(r'[:-]', '', m2.group(1))
+            return ":".join(raw_mac[i:i+2].upper() for i in range(0, 12, 2))
+        return None
+
     def get_mac_from_service_port(self, service_port: str) -> Optional[str]:
         """
         Obtiene la dirección MAC del dispositivo conectado detrás de un service-port.
@@ -1908,12 +1924,8 @@ class OLTInterface:
             logger.info(f"[OLTInterface] Obteniendo MAC del service-port {service_port}...")
             response = self.send_command(command, delay_factor=0.5)
             
-            # Buscar formato xxxx-xxxx-xxxx (ej: e484-2b46-42d0)
-            mac_match = re.search(r'([0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4})', response)
-            if mac_match:
-                raw_mac = mac_match.group(1).replace('-', '') # e4842b4642d0
-                # Convertir a formato XX:XX:XX:XX:XX:XX
-                formatted_mac = ":".join(raw_mac[i:i+2].upper() for i in range(0, len(raw_mac), 2))
+            formatted_mac = self._extract_mac_from_response(response)
+            if formatted_mac:
                 logger.info(f"[OLTInterface] MAC encontrada para service-port {service_port}: {formatted_mac}")
                 return formatted_mac
                 
@@ -1921,6 +1933,32 @@ class OLTInterface:
             return None
         except Exception as e:
             logger.error(f"[OLTInterface] Error obteniendo MAC del service-port {service_port}: {e}")
+            return None
+
+    def get_mac_from_port_ont(self, gpon_port: str, ont_id: str) -> Optional[str]:
+        """
+        Obtiene la dirección MAC del dispositivo conectado en un puerto GPON y ONT ID.
+        Ejecuta: display mac-address port {gpon_port} ont {ont_id}
+        """
+        try:
+            self._ensure_config_mode()
+            # Formato estándar: display mac-address port 0/0/15 ont 2
+            clean_gpon = str(gpon_port).strip()
+            if "/" not in clean_gpon:
+                clean_gpon = f"0/0/{clean_gpon}"
+            command = f"display mac-address port {clean_gpon} ont {ont_id}"
+            logger.info(f"[OLTInterface] Obteniendo MAC de port {clean_gpon} ont {ont_id}...")
+            response = self.send_command(command, delay_factor=0.5)
+            
+            formatted_mac = self._extract_mac_from_response(response)
+            if formatted_mac:
+                logger.info(f"[OLTInterface] MAC encontrada para port {clean_gpon} ont {ont_id}: {formatted_mac}")
+                return formatted_mac
+                
+            logger.warning(f"[OLTInterface] No se encontró MAC para port {clean_gpon} ont {ont_id}")
+            return None
+        except Exception as e:
+            logger.error(f"[OLTInterface] Error obteniendo MAC de port {gpon_port} ont {ont_id}: {e}")
             return None
 
     def reset_ont(self, gpon_port: str, ont_id: str) -> bool:

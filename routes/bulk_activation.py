@@ -464,20 +464,29 @@ def refresh_client_ip(
 ):
     """
     Fuerza el refresco y asignación correcta de IP estática de un cliente desde su pool.
-    Normaliza los nombres de nodo y actualiza el MikroTik de forma interactiva.
+    Aprende la MAC real del router conectado detrás del ONT/Bridge desde la OLT
+    y actualiza MikroTik de forma determinista sin seleccionar leases de otros clientes.
     """
     cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado.")
 
     # Conectar al MikroTik (Usando OLT configurada para el nodo del cliente)
-    olt_config = db.query(models.OLTConfig).filter(
-        or_(
-            models.OLTConfig.nodo_asociado == cliente.nodo,
-            models.OLTConfig.nodo_asociado == None
-        ),
-        models.OLTConfig.active == True
-    ).first()
+    from network.adapters.mikrotik import is_nodo_sayausi
+    nodo = getattr(cliente, "nodo", None)
+    if nodo:
+        is_sayausi_nodo = is_nodo_sayausi(nodo)
+        olt_config = db.query(models.OLTConfig).filter(
+            models.OLTConfig.active == True,
+            or_(
+                models.OLTConfig.nodo_asociado == nodo,
+                models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi_nodo else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
+                models.OLTConfig.nodo_asociado == None,
+                models.OLTConfig.nodo_asociado == ""
+            )
+        ).first()
+    else:
+        olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
     
     if not olt_config or not olt_config.mikrotik_host:
         raise HTTPException(status_code=500, detail="MikroTik no configurado para el nodo del cliente.")
@@ -487,33 +496,48 @@ def refresh_client_ip(
     from network.adapters.mikrotik import MikroTikAdapter
     from services.olt_interface import OLTInterface
 
-    # Intentar obtener la MAC real en caliente conectando a la OLT
+    # Intentar obtener la MAC real del router conectado detrás del ONT/Bridge en la OLT
     real_client_mac = None
-    if cliente.service_port:
-        try:
-            olt = OLTInterface(
-                host=olt_config.host,
-                port=olt_config.port or 23,
-                username=olt_config.username or "admin",
-                password=olt_config.password or ""
-            )
-            olt.connect()
-            # Intentar aprender la MAC real del cliente (3 intentos)
-            for mac_attempt in range(3):
-                time.sleep(1)
+    gpon_port_str = str(cliente.puerto or "")
+    if "/" not in gpon_port_str:
+        match_p = re.search(r"\d+", gpon_port_str)
+        if match_p:
+            frame = "1" if is_nodo_sayausi(cliente.nodo) else "0"
+            gpon_port_str = f"0/{frame}/{match_p.group()}"
+    ont_id_str = str(cliente.id_port or "").strip()
+
+    try:
+        olt = OLTInterface(
+            host=olt_config.host,
+            port=olt_config.port or 23,
+            username=olt_config.username or "admin",
+            password=olt_config.password or ""
+        )
+        olt.connect()
+        # Reintentar lectura de MAC en OLT (hasta 5 intentos con 1.5s entre reintentos)
+        for mac_attempt in range(5):
+            if mac_attempt > 0:
+                time.sleep(1.5)
+            if cliente.service_port:
                 real_client_mac = olt.get_mac_from_service_port(str(cliente.service_port))
-                if real_client_mac:
-                    break
-        except Exception as olt_err:
-            logger.warning(f"No se pudo consultar la MAC en la OLT para cliente {cliente.id}: {olt_err}")
-        finally:
-            try:
-                olt.disconnect()
-            except Exception:
-                pass
+            if not real_client_mac and gpon_port_str and ont_id_str:
+                real_client_mac = olt.get_mac_from_port_ont(gpon_port_str, ont_id_str)
+            if real_client_mac:
+                logger.info(f"[refresh-ip] MAC del router aprendida desde la OLT: {real_client_mac}")
+                cliente.mac = real_client_mac
+                db.commit()
+                break
+    except Exception as olt_err:
+        logger.warning(f"No se pudo consultar la MAC en la OLT para cliente {cliente.id}: {olt_err}")
+    finally:
+        try:
+            olt.disconnect()
+        except Exception:
+            pass
 
     mt_mac = real_client_mac or cliente.mac or ""
     client_code = str(cliente.id).zfill(6)
+    clean_mac = mt_mac.replace(":", "").replace("-", "").upper() if mt_mac else ""
     lease_found = None
 
     # Determinar los servidores DHCP candidatos basados en el puerto GPON
@@ -539,7 +563,7 @@ def refresh_client_ip(
         )
         mt.connect()
 
-        # Obtener todos los leases dinámicos activos
+        # Obtener leases dinámicos
         dynamic_leases = []
         for srv in dhcp_servers_to_try:
             try:
@@ -555,16 +579,16 @@ def refresh_client_ip(
             except Exception:
                 dynamic_leases = []
 
-        # 1. Buscar por MAC aprendida o del cliente
-        if mt_mac:
-            clean_mac = mt_mac.replace(":", "").replace("-", "").upper()
+        # 1. Buscar coincidencia exacta por MAC aprendida / registrada
+        if clean_mac:
             for dl in dynamic_leases:
                 dl_mac = dl.get('mac-address', '').replace(":", "").replace("-", "").upper()
                 if dl_mac == clean_mac:
                     lease_found = dl
+                    logger.info(f"[refresh-ip] Match dinámico exacto por MAC: {dl.get('address')} ({dl_mac})")
                     break
 
-        # 2. Buscar por comentario si ya es estático o por el ID en el client-id
+        # 2. Buscar por comentario si ya fue convertido a estático o por ID
         if not lease_found:
             for dl in dynamic_leases:
                 comment = dl.get('comment', '')
@@ -573,44 +597,32 @@ def refresh_client_ip(
                     lease_found = dl
                     break
 
-        # 3. Buscar por Hostname coincidente
-        if not lease_found and cliente.nombre:
-            clean_host = cliente.nombre.lower().strip()
-            for dl in dynamic_leases:
-                if dl.get('host-name', '').lower().strip() == clean_host:
-                    lease_found = dl
-                    break
-
-        # 4. Fallback por descarte de un solo lease dinámico en el servidor
-        if not lease_found and len(dynamic_leases) == 1:
-            lease_found = dynamic_leases[0]
-
-        # 5. Fallback por descarte (primer lease de router genérico)
-        if not lease_found and dynamic_leases:
-            routers_leases = [
-                dl for dl in dynamic_leases 
-                if any(term in dl.get('host-name', '').lower() for term in ['rtkgw', 'archer', 'tplink', 'merkusys', 'huawei', 'netis', 'tenda', 'dlink', 'deco'])
-            ]
-            if routers_leases:
-                lease_found = routers_leases[0]
-            else:
-                lease_found = dynamic_leases[0]
-
+        # 3. Buscar en TODOS los leases (estáticos y dinámicos) por MAC o comentario
         if not lease_found:
-            # Si no hay ningún lease dinámico, buscar entre TODOS los leases (dinámicos y estáticos)
             all_leases = mt.api.get_resource('/ip/dhcp-server/lease').get()
             for l in all_leases:
                 comment = l.get('comment', '')
                 l_mac = l.get('mac-address', '').replace(":", "").replace("-", "").upper()
-                if client_code in comment or (mt_mac and l_mac == mt_mac.replace(":", "").replace("-", "").upper()):
+                if (clean_mac and l_mac == clean_mac) or (client_code in comment):
                     lease_found = l
+                    logger.info(f"[refresh-ip] Match en leases estáticos/activos: {l.get('address')} ({l_mac})")
                     break
 
         if not lease_found:
-            raise HTTPException(status_code=404, detail=f"No se encontró un Lease DHCP en el MikroTik para el cliente {client_code} (MAC: {mt_mac or 'No leída'}).")
+            mac_info = f"MAC aprendida en OLT: {mt_mac}" if mt_mac else "La OLT aún no registra tráfico MAC en el service-port"
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontró un Lease DHCP en MikroTik para el cliente {client_code} ({mac_info}). Verifique que el router esté encendido y conectado por cable Ethernet al puerto LAN de la ONT/Bridge."
+            )
 
         lease_id = lease_found.get('.id') or lease_found.get('id')
         lease_ip = lease_found.get('address')
+        lease_mac_real = lease_found.get('mac-address')
+
+        # Persistir MAC si vino del lease
+        if lease_mac_real and not real_client_mac:
+            cliente.mac = lease_mac_real
+            db.commit()
 
         # 2. Lógica de asignación de IP robusta (Normalizando acentos, espacios y mayúsculas en memoria)
         def clean_node(name):
@@ -665,18 +677,17 @@ def refresh_client_ip(
         cliente.ip = target_ip
         db.commit()
 
-        # Actualizar la IP si difiere
-        if target_ip and target_ip != lease_ip:
-            mt.update_lease_ip(lease_id, target_ip)
-        
         # Siempre forzar a que sea estático por seguridad para fijar la IP
         try:
             mt.make_lease_static(lease_id)
         except Exception as mt_static_err:
-            # Si ya es estático, puede lanzar un error que ignoramos de forma segura
             logger.info(f"Ignorando error al hacer static (probablemente ya lo era): {mt_static_err}")
+
+        # Actualizar la IP si difiere
+        if target_ip and target_ip != lease_ip:
+            mt.update_lease_ip(lease_id, target_ip)
         
-        # Actualizar comentario si no tiene el formato estándar
+        # Actualizar comentario con formato estándar
         standard_comment = f"{client_code} - {cliente.nombre}"
         if lease_found.get('comment') != standard_comment:
             mt.update_lease_comment(lease_id, standard_comment)
@@ -686,9 +697,15 @@ def refresh_client_ip(
         return {
             "status": "ok",
             "ip": target_ip,
+            "mac": lease_mac_real or mt_mac,
             "message": f"IP del cliente refrescada y asignada con éxito: {target_ip}"
         }
 
+    except HTTPException:
+        if 'mt' in locals():
+            try: mt.disconnect()
+            except: pass
+        raise
     except Exception as e:
         if 'mt' in locals():
             try: mt.disconnect()

@@ -879,30 +879,11 @@ class TaskProcessor:
                                 models.Cliente.id == task.cliente_id
                             ).first()
 
-                            # Intentar aprender la MAC del cliente directamente desde el service-port en la OLT
                             service_port_val = validated_payload.get('service_port') or (result.get('service_port') if 'result' in locals() else None)
-                            real_client_mac = None
-                            if service_port_val:
-                                log_mt(f"[MikroTik] Intentando aprender la MAC real del cliente desde el service-port {service_port_val} en la OLT...")
-                                mac_attempts = max(1, int(os.getenv("OLT_MAC_LEARN_ATTEMPTS", "1")))
-                                for mac_attempt in range(1, mac_attempts + 1):
-                                    try:
-                                        if mac_attempt > 1:
-                                            _time.sleep(1)
-                                        real_client_mac = olt.get_mac_from_service_port(str(service_port_val))
-                                        if real_client_mac:
-                                            log_mt(f"[MikroTik] ¡MAC real aprendida desde la OLT!: {real_client_mac}")
-                                            break
-                                    except Exception as mac_err:
-                                        log_mt(f"[MikroTik] Intento {mac_attempt} de lectura de MAC fallido: {mac_err}")
-                            
-                            if real_client_mac:
-                                mt_mac = real_client_mac
-                            else:
-                                mt_mac = validated_payload.get('mac', '')
-                                log_mt(f"[MikroTik] No se pudo aprender la MAC real, usando MAC de la ONT ({mt_mac}) como fallback")
-
                             gpon_port = validated_payload.get('gpon_port', '0/0/0')
+                            ont_id_val = str(validated_payload.get('ont_id', '1'))
+                            provision_type = str(validated_payload.get('provision_type', 'ont')).lower()
+                            real_client_mac = None
 
                             # Extraer número de puerto GPON (ej: "0/0/15" -> 15)
                             gpon_parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
@@ -911,17 +892,16 @@ class TaskProcessor:
                             except (ValueError, IndexError):
                                 port_idx = 0
 
-                            # En tu MikroTik, el puerto 15 usa "dhcp16". Intentaremos ambas variantes: dhcp{puerto+1} y dhcp{puerto}
                             dhcp_servers_to_try = [
                                 f"dhcp{port_idx + 1}",
                                 f"dhcp{port_idx}",
                                 f"dhcp-{port_idx + 1}",
                                 f"dhcp-{port_idx}",
                             ]
-                            if mt_cliente.nodo:
+                            if mt_cliente and mt_cliente.nodo:
                                 dhcp_servers_to_try.append(f"dhcp-{mt_cliente.nodo.lower()}")
 
-                            if mt_cliente and mt_mac:
+                            if mt_cliente:
                                 comment = f"{str(mt_cliente.id).zfill(6)} - {mt_cliente.nombre}"
                                 log_mt(f"[MikroTik] Conectando a MikroTik {olt_cfg.mikrotik_host}:{olt_cfg.mikrotik_port or 8728}...")
 
@@ -931,16 +911,37 @@ class TaskProcessor:
                                     password=olt_cfg.mikrotik_password,
                                     port=olt_cfg.mikrotik_port or 8728
                                 ) as mt:
-                                    log_mt("[MikroTik] Conexión establecida. Iniciando búsqueda del lease...")
+                                    log_mt("[MikroTik] Conexión establecida. Iniciando sincronización de MAC y búsqueda de lease...")
                                     lease = None
-                                    clean_mac = mt_mac.replace(':', '').replace('-', '').upper()
 
-                                    # Polling corto: la activación OLT no debe quedar bloqueada
-                                    # esperando DHCP; refresh-ip puede completar después.
-                                    lease_attempts = max(1, int(os.getenv("OLT_LEASE_POLL_ATTEMPTS", "1")))
+                                    # Polling adaptativo para dar tiempo al router conectado al bridge a levantar enlace y pedir DHCP
+                                    lease_attempts = max(8, int(os.getenv("OLT_LEASE_POLL_ATTEMPTS", "8")))
                                     for poll_attempt in range(1, lease_attempts + 1):
-                                        log_mt(f"[MikroTik] Buscando lease dinámico (Intento {poll_attempt}/{lease_attempts})...")
-                                        
+                                        # 1. Si aún no tenemos la MAC real del router, consultarla en la OLT
+                                        if not real_client_mac:
+                                            try:
+                                                if service_port_val:
+                                                    real_client_mac = olt.get_mac_from_service_port(str(service_port_val))
+                                                if not real_client_mac and gpon_port and ont_id_val:
+                                                    real_client_mac = olt.get_mac_from_port_ont(gpon_port, ont_id_val)
+                                                if real_client_mac:
+                                                    log_mt(f"[MikroTik] ¡MAC del router aprendida en OLT!: {real_client_mac}")
+                                                    mt_cliente.mac = real_client_mac
+                                                    self.db.commit()
+                                            except Exception as olt_mac_err:
+                                                logger.debug(f"Intento {poll_attempt} de lectura de MAC en OLT: {olt_mac_err}")
+
+                                        # Determinar MAC objetivo para buscar en MikroTik
+                                        target_search_mac = ""
+                                        if real_client_mac:
+                                            target_search_mac = real_client_mac.replace(':', '').replace('-', '').upper()
+                                        elif provision_type == 'ont':
+                                            ont_raw_mac = validated_payload.get('mac', '')
+                                            if ont_raw_mac:
+                                                target_search_mac = ont_raw_mac.replace(':', '').replace('-', '').upper()
+
+                                        log_mt(f"[MikroTik] Buscando lease dinámico (Intento {poll_attempt}/{lease_attempts} | MAC OLT: {real_client_mac or 'Esperando tráfico'})...")
+
                                         # Obtener leases de los servidores candidatos
                                         dynamic_leases = []
                                         for srv in dhcp_servers_to_try:
@@ -951,24 +952,22 @@ class TaskProcessor:
                                             except Exception:
                                                 pass
 
-                                        # Si no encontramos filtrando, intentar obtener todos los dinámicos como fallback
                                         if not dynamic_leases:
                                             try:
                                                 dynamic_leases = mt.get_dynamic_leases()
                                             except Exception:
                                                 dynamic_leases = []
 
-                                        log_mt(f"[MikroTik] Total leases dinámicos encontrados en consulta: {len(dynamic_leases)}")
+                                        # A. Buscar coincidencia exacta por MAC aprendida / del cliente
+                                        if target_search_mac:
+                                            for dl in dynamic_leases:
+                                                dl_mac = dl.get('mac-address', '').replace(':', '').replace('-', '').upper()
+                                                if dl_mac == target_search_mac:
+                                                    lease = dl
+                                                    log_mt(f"[MikroTik] Match exacto por MAC exitoso: {dl.get('address')} ({dl_mac})")
+                                                    break
 
-                                        # 1. Buscar por MAC
-                                        for dl in dynamic_leases:
-                                            dl_mac = dl.get('mac-address', '').replace(':', '').replace('-', '').upper()
-                                            if dl_mac == clean_mac:
-                                                lease = dl
-                                                log_mt(f"[MikroTik] Match por MAC exitoso: {dl.get('address')}")
-                                                break
-
-                                        # 2. Buscar por Client ID
+                                        # B. Buscar por Client ID
                                         if not lease:
                                             for dl in dynamic_leases:
                                                 if dl.get('client-id') == str(mt_cliente.id):
@@ -976,49 +975,26 @@ class TaskProcessor:
                                                     log_mt(f"[MikroTik] Match por Client ID exitoso: {dl.get('address')}")
                                                     break
 
-                                        # 3. Buscar por Hostname
-                                        if not lease and mt_cliente.nombre:
-                                            clean_host = mt_cliente.nombre.lower().strip()
-                                            for dl in dynamic_leases:
-                                                if dl.get('host-name', '').lower().strip() == clean_host:
-                                                    lease = dl
-                                                    log_mt(f"[MikroTik] Match por Hostname exitoso: {dl.get('address')}")
-                                                    break
-
-                                        # 4. Fallback crítico: Si no hay match directo pero hay EXACTAMENTE UN lease dinámico 
-                                        #    activo en el servidor del puerto GPON respectivo (ej: dhcp16), asumimos que es ese cliente.
-                                        if not lease and len(dynamic_leases) == 1:
-                                            lease = dynamic_leases[0]
-                                            log_mt(f"[MikroTik] Match por descarte: Único lease dinámico en el servidor del puerto: {lease.get('address')}")
-
-                                        # 5. Fallback por si hay múltiples pero uno es del rango/servidor correcto y tiene estado 'bound'
-                                        if not lease and dynamic_leases:
-                                            routers_leases = [
-                                                dl for dl in dynamic_leases 
-                                                if any(term in dl.get('host-name', '').lower() for term in ['rtkgw', 'archer', 'tplink', 'merkusys', 'huawei', 'netis', 'tenda', 'dlink', 'deco'])
-                                            ]
-                                            if routers_leases:
-                                                lease = routers_leases[0]
-                                                log_mt(f"[MikroTik] Match por descarte (Router detectado): {lease.get('address')} ({lease.get('host-name')})")
-                                            else:
-                                                lease = dynamic_leases[0]
-                                                log_mt(f"[MikroTik] Match por descarte (Primer lease dinámico disponible): {lease.get('address')}")
-
                                         if lease:
                                             _time.sleep(1)
                                             break
 
-                                        _time.sleep(0.2)
+                                        _time.sleep(1.5)
 
                                     if not lease:
-                                        log_mt(f"[MikroTik] [ADVERTENCIA] No se encontró lease dinámico para MAC {mt_mac}; se puede reintentar desde refresh-ip.")
+                                        log_mt(f"[MikroTik] [AVISO] No se detectó lease DHCP en MikroTik (MAC: {real_client_mac or 'Aún no aprendida en OLT'}). El técnico podrá refrescar la IP en el modal de verificación.")
                                     else:
                                         # Soporte para .id (RouterOS estándar) y id
                                         lease_id = lease.get('.id') or lease.get('id')
                                         lease_ip = lease.get('address', '')
                                         lease_server = lease.get('server', 'unknown')
+                                        lease_mac_found = lease.get('mac-address', '')
                                         
-                                        log_mt(f"[MikroTik] Lease dinámico encontrado. ID: {lease_id} | IP: {lease_ip} | Server: {lease_server}")
+                                        if lease_mac_found and not mt_cliente.mac:
+                                            mt_cliente.mac = lease_mac_found
+                                            self.db.commit()
+
+                                        log_mt(f"[MikroTik] Lease dinámico encontrado. ID: {lease_id} | IP: {lease_ip} | MAC: {lease_mac_found} | Server: {lease_server}")
 
                                         # Convertir a estático
                                         log_mt(f"[MikroTik] Convirtiendo lease {lease_id} a estático...")
