@@ -742,6 +742,7 @@ class CajaNap(Base):
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String(100), unique=True, index=True)
     nodo_id = Column(Integer, ForeignKey("nodos.id"), nullable=True)
+    ubicacion = Column(String(255), nullable=True)
 
 class ClienteEliminado(Base):
     """Historial de auditoría para clientes eliminados"""

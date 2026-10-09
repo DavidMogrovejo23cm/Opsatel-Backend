@@ -308,7 +308,7 @@ def _enrich_caja(caja, db):
 
 @router.post("/cajas-nap", response_model=schemas.CajaNapResponse)
 def create_caja_nap(caja: schemas.CajaNapBase, db: Session = Depends(get_db)):
-    db_caja = models.CajaNap(nombre=caja.nombre, nodo_id=caja.nodo_id)
+    db_caja = models.CajaNap(nombre=caja.nombre, nodo_id=caja.nodo_id, ubicacion=caja.ubicacion)
     db.add(db_caja)
     try:
         db.commit()
