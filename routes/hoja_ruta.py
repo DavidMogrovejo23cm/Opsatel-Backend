@@ -63,6 +63,7 @@ def actualizar_hoja_ruta(id: int, data: schemas.HojaRutaUpdate, db: Session = De
         # 1. Permisos para cambiar el estado: Solo administradores
         # Usamos getattr por seguridad si hay problemas de recarga de schemas
         new_estado = getattr(data, 'estado', None)
+        estado_previo = db_hoja.estado
         if new_estado is not None and new_estado != db_hoja.estado:
             if not is_admin:
                 raise HTTPException(status_code=403, detail="Solo el administrador puede cambiar el estado de la hoja de ruta")
@@ -83,6 +84,11 @@ def actualizar_hoja_ruta(id: int, data: schemas.HojaRutaUpdate, db: Session = De
             if var == "cliente_id" and (value == "" or value == 0):
                 value = None
             setattr(db_hoja, var, value)
+
+        # Si se reabre una tarea 'No completado' (a Pendiente/En proceso), reiniciar la ventana de 24h;
+        # de lo contrario el listado la volvería a marcar como 'No completado' automáticamente.
+        if estado_previo == "No completado" and new_estado in ("Pendiente", "En proceso"):
+            db_hoja.created_at = datetime.utcnow()
         
         db.commit()
         db.refresh(db_hoja)
