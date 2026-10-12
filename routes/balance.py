@@ -638,7 +638,7 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
                 egresos_iptv_jep += m_val
             else:
                 egresos_iptv_ef += m_val
-        elif "PR" in metodo or "PROYECTO" in metodo:
+        elif metodo == "PR" or metodo.endswith(" PR") or "PROYECTO" in metodo:
             total_egresos_pr += m_val
             if "PICHINCHA" in metodo:
                 egresos_pr_pich += m_val
@@ -1061,13 +1061,17 @@ def reporte_anual(anio: int, db: Session = Depends(get_db)):
             t_adic     += float(p.monto_adicional or 0)
         t_extras  = sum(float(getattr(e, f"{month_key}_pago", 0) or 0) for e in extras_all)
         t_ingresos = t_internet + t_plus + t_adic + t_extras
-        t_egresos  = sum(float(eg.monto) for eg in egresos_all if eg.mes == mes_str)
+        egresos_mes_lst = [eg for eg in egresos_all if eg.mes == mes_str]
+        t_egresos  = sum(float(eg.monto or 0) for eg in egresos_mes_lst)
+        t_egresos_iptv = sum(float(eg.monto or 0) for eg in egresos_mes_lst if "IPTV" in (eg.metodo_pago or "").upper())
         balance    = t_ingresos - t_egresos
         data_mensual.append({
             "mes": mes_str, "label": meses_labels[i-1],
             "ingresos": round(t_ingresos,2), "egresos": round(t_egresos,2),
             "balance": round(balance,2), "internet": round(t_internet,2),
             "iptv": round(t_plus,2), "adicional": round(t_adic,2), "extras": round(t_extras,2),
+            "egresos_iptv": round(t_egresos_iptv,2),
+            "egresos_internet": round(t_egresos - t_egresos_iptv,2),
         })
         total_anual_ingresos += t_ingresos
         total_anual_egresos  += t_egresos
