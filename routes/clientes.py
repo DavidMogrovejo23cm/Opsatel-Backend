@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 import os
 import shutil
 import re
-from sqlalchemy import func, text
+from sqlalchemy import func, text, or_
 from sqlalchemy.orm import Session
 from typing import List
 import models, schemas
@@ -269,6 +269,20 @@ def listar_clientes(db: Session = Depends(get_db)):
         
         # Mapear estados QoS de manera eficiente y asegurar consistencia de facturas = 'SI' para clientes con cod
         qos_map = {state.cliente_id: state.status for state in db.query(ClientQoSState).all()}
+
+        # Precargar mapa de técnicos asignados en Hoja de Ruta para sincronizar clientes Activos
+        hojas_con_tecnico = {}
+        hojas_por_nombre = {}
+        try:
+            for h in db.query(models.HojaRuta.cliente_id, models.HojaRuta.nombre_cliente, models.HojaRuta.tecnico).filter(
+                models.HojaRuta.tecnico != None, models.HojaRuta.tecnico != ''
+            ).all():
+                if h.cliente_id and h.cliente_id not in hojas_con_tecnico:
+                    hojas_con_tecnico[h.cliente_id] = h.tecnico
+                if h.nombre_cliente and h.nombre_cliente.strip().lower() not in hojas_por_nombre:
+                    hojas_por_nombre[h.nombre_cliente.strip().lower()] = h.tecnico
+        except Exception as hr_map_err:
+            logger.warning(f"Aviso al precargar mapa de técnicos de HojaRuta: {hr_map_err}")
         
         has_updates = False
         for c in data:
@@ -278,6 +292,17 @@ def listar_clientes(db: Session = Depends(get_db)):
                 if str(c.facturas or "").strip().upper() != "SI":
                     c.facturas = "SI"
                     has_updates = True
+
+            # Sincronización automática en clientes activos: activador='sistema' y técnico de la tarea asignada
+            if c.estado and str(c.estado).strip().upper() == "ACTIVO":
+                if not c.activador or str(c.activador).strip() == "":
+                    c.activador = "sistema"
+                    has_updates = True
+                if not c.tecnico or str(c.tecnico).strip() == "":
+                    tec_encontrado = hojas_con_tecnico.get(c.id) or (hojas_por_nombre.get(c.nombre.strip().lower()) if c.nombre else None)
+                    if tec_encontrado:
+                        c.tecnico = tec_encontrado
+                        has_updates = True
 
         if has_updates:
             try:
@@ -1312,6 +1337,18 @@ def actualizar_cliente_general(
 
     # 5. Sincronizar balances manteniendo la coherencia de total_pago
     sync_cliente_balances(cliente, db, keep_total_pago=is_total_pago_edited)
+
+    # Si pasa a estado Activo, garantizar activador = "sistema" y técnico asignado de la tarea si están vacíos
+    if (data.estado and str(data.estado).strip().upper() == "ACTIVO") or (cliente.estado and str(cliente.estado).strip().upper() == "ACTIVO"):
+        if not cliente.activador or str(cliente.activador).strip() == "":
+            cliente.activador = "sistema"
+        if not cliente.tecnico or str(cliente.tecnico).strip() == "":
+            hr = db.query(models.HojaRuta).filter(
+                or_(models.HojaRuta.cliente_id == id, models.HojaRuta.nombre_cliente == cliente.nombre)
+            ).order_by(models.HojaRuta.id.desc()).first()
+            tecnico_hr = (hr.tecnico if hr and hr.tecnico else None)
+            cliente.tecnico = tecnico_hr or (current_user.username if current_user else None) or "sistema"
+
     _stats_cache = None
     db.commit()
 
@@ -1341,7 +1378,12 @@ def actualizar_cliente_general(
     return {"message": "Cliente actualizado correctamente"}
 
 @router.patch("/{id}/configuracion-tecnica", dependencies=[Depends(require_role(["administrador", "tecnico", "instalador"]))])
-def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: Session = Depends(get_db)):
+def actualizar_datos_tecnicos(
+    id: int, 
+    data: schemas.ClienteUpdateTecnico, 
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(get_current_user)
+):
     try:
         cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
         if not cliente:
@@ -1392,13 +1434,25 @@ def actualizar_datos_tecnicos(id: int, data: schemas.ClienteUpdateTecnico, db: S
 
         cliente.estado = "Activo"
         cliente.instalation_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cliente.activador = "sistema"
+
+        # Buscar técnico responsable de la tarea asignada en Hoja de Ruta
+        hr = db.query(models.HojaRuta).filter(
+            or_(models.HojaRuta.cliente_id == id, models.HojaRuta.nombre_cliente == cliente.nombre)
+        ).order_by(models.HojaRuta.id.desc()).first()
+        tecnico_hr = (hr.tecnico if hr and hr.tecnico else None)
+
+        if not cliente.tecnico or str(cliente.tecnico).strip() == "":
+            cliente.tecnico = tecnico_hr or (current_user.username if current_user else None) or "sistema"
+        elif tecnico_hr and (not data.tecnico or str(data.tecnico).strip() == ""):
+            cliente.tecnico = tecnico_hr
 
         # --- SINCRONIZACIÓN CON HOJA DE RUTA ---
-        # Al activar técnicamente, marcamos como 'En proceso' cualquier registro pendiente en Hoja de Ruta
+        # Al activar técnicamente, actualizamos Hoja de Ruta a 'Realizado'
         db.query(models.HojaRuta).filter(
-            models.HojaRuta.cliente_id == id,
-            models.HojaRuta.estado == "Pendiente"
-        ).update({"estado": "En proceso"})
+            or_(models.HojaRuta.cliente_id == id, models.HojaRuta.nombre_cliente == cliente.nombre),
+            models.HojaRuta.estado.in_(["Pendiente", "En proceso"])
+        ).update({"estado": "Realizado"}, synchronize_session=False)
         db.commit() # Asegurar cambios persistentes
 
         # Lógica de Prorrateo

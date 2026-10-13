@@ -122,7 +122,7 @@ def enviar_whatsapp_programado():
                     mensaje_personalizado = personalizar_mensaje_cliente(config.mensaje_programado, cliente)
                     
                     # Enviar mensaje usando el servicio unificado a todos los números del cliente
-                    success = whatsapp_service.send_whatsapp_message(raw_num, mensaje_personalizado)
+                    success = whatsapp_service.send_whatsapp_message(raw_num, mensaje_personalizado, priority="bulk")
                     
                     # Guardar en historial con el mensaje final personalizado
                     historial = models.WhatsAppHistorial(
@@ -151,8 +151,9 @@ def enviar_whatsapp_programado():
                     # Confirmar cambios en la base de datos tras cada mensaje
                     db.commit()
 
-                    # Pequeña pausa prudencial para simular comportamiento orgánico
-                    whatsapp_service.apply_rate_limit()
+                    # El espaciado, horario y topes los aplica el gobernador anti-bloqueo del puente (prioridad 'bulk')
+                    # Pausa adicional aleatoria para no enviar a ritmo constante
+                    time.sleep(random.uniform(5, 40))
 
                 except Exception as e:
                     fallidos += 1

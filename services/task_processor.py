@@ -730,6 +730,21 @@ class TaskProcessor:
                             pass
                         cliente.estado = 'Activo'
                         cliente.instalation_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        cliente.activador = 'sistema'
+
+                        # Asignar técnico responsable de la tarea (Hoja de Ruta) o quien creó la tarea
+                        try:
+                            hr = self.db.query(models.HojaRuta).filter(
+                                or_(
+                                    models.HojaRuta.cliente_id == cliente.id,
+                                    models.HojaRuta.nombre_cliente == cliente.nombre
+                                )
+                            ).order_by(models.HojaRuta.id.desc()).first()
+                            tecnico_hr = (hr.tecnico if hr and hr.tecnico else None)
+                        except Exception:
+                            tecnico_hr = None
+
+                        cliente.tecnico = tecnico_hr or task.created_by or 'sistema'
 
                         # puerto: número del puerto GPON (ej: "Puerto 8")
                         port_num = result.get('port_num')

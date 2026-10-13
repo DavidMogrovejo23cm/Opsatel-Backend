@@ -47,6 +47,33 @@ WHATSAPP_API_URL = os.getenv("WHATSAPP_API_URL", "https://api.green-api.com")
 WHATSAPP_INSTANCE_ID = os.getenv("WHATSAPP_INSTANCE_ID", "")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 
+# ---------------------------------------------------------------------------
+# Configuración anti-bloqueo para envíos masivos (prioridad "bulk")
+# El control fino (horario, topes por hora/día, cooldown por número, opt-out)
+# vive en el puente Node (whatsapp_bridge.js); aquí solo se respetan sus esperas.
+# ---------------------------------------------------------------------------
+# Tiempo máximo que un envío masivo puede esperar a que el puente lo autorice (horario/topes/pausas)
+BULK_MAX_WAIT_HOURS = float(os.getenv("WA_BULK_MAX_WAIT_H", "20"))
+# Tiempo máximo que se espera a que el puente vuelva si está caído/reiniciándose
+BRIDGE_DOWN_MAX_WAIT_MIN = float(os.getenv("WA_BRIDGE_DOWN_MAX_WAIT_MIN", "30"))
+# Pie de mensaje con opción de baja (reduce reportes de spam). Vacío para desactivar.
+BULK_FOOTER = os.getenv("WA_BULK_FOOTER", "_Si no deseas recibir estos avisos, responde *BAJA*._")
+# Por defecto un envío masivo va solo al PRIMER número válido del cliente (no a todos sus números)
+BULK_ALL_NUMBERS = os.getenv("WA_BULK_ALL_NUMBERS", "false").lower() in ("1", "true", "yes", "si")
+
+_SPINTAX_RE = re.compile(r'\{([^{}|]*\|[^{}]*)\}')
+
+def aplicar_spintax(texto: str) -> str:
+    """Resuelve variantes {hola|buen día|saludos} eligiendo una al azar.
+    Las etiquetas sin '|' (ej. {nombre}) no se tocan. Varía el texto entre destinatarios."""
+    if not texto:
+        return texto
+    prev = None
+    while prev != texto:
+        prev = texto
+        texto = _SPINTAX_RE.sub(lambda m: random.choice(m.group(1).split('|')), texto)
+    return texto
+
 def format_single_number(cleaned: str) -> str:
     """
     Limpia y valida un único número de teléfono (Ecuador o internacional).
@@ -177,9 +204,68 @@ def format_whatsapp_number(number: str) -> str:
     nums = extract_all_whatsapp_numbers(number)
     return nums[0] if nums else ""
 
-def _send_single_whatsapp_message(clean_num: str, mensaje: str, media_path: str = None, mime_type: str = "image/png") -> bool:
+def _post_to_bridge(url: str, payload: dict, priority: str, clean_num: str) -> bool:
+    """
+    Envía al puente local respetando su gobernador anti-bloqueo.
+    - bulk: si el puente responde 429 (fuera de horario, tope, pausa, espaciado) espera `retryAfter` y reintenta;
+            si el puente está caído/503 espera y reintenta hasta BRIDGE_DOWN_MAX_WAIT_MIN.
+    - manual/reply: sin reintentos largos (el puente solo aplica un espaciado mínimo humano).
+    """
+    is_bulk = priority == "bulk"
+    now = time.time()
+    deadline = now + BULK_MAX_WAIT_HOURS * 3600 if is_bulk else now
+    down_deadline = now + BRIDGE_DOWN_MAX_WAIT_MIN * 60 if is_bulk else now
+
+    while True:
+        try:
+            response = requests.post(url, json=payload, timeout=120)
+        except Exception as e:
+            print(f"[WhatsApp Service] Error de conexión con Local Bridge: {str(e)}")
+            if is_bulk and time.time() < down_deadline:
+                print("[WhatsApp Service] Puente no disponible. Reintentando en 60s sin marcar fallo...")
+                time.sleep(60)
+                continue
+            return False
+
+        if response.status_code == 200:
+            try:
+                res_data = response.json()
+            except Exception:
+                res_data = {}
+            if res_data.get("success"):
+                print(f"[WhatsApp Service] Mensaje enviado exitosamente a {clean_num}")
+                return True
+            print(f"[WhatsApp Service] Local Bridge reportó error: {res_data.get('error')}")
+            return False
+
+        try:
+            data = response.json()
+        except Exception:
+            data = {}
+
+        if response.status_code == 429 and is_bulk:
+            retry_after = float(data.get("retryAfter") or 60)
+            if time.time() + retry_after > deadline:
+                print(f"[WhatsApp Service] Envío masivo a {clean_num} cancelado: la espera ({retry_after/60:.0f} min) excede el máximo permitido. Motivo: {data.get('error')}")
+                return False
+            wait = retry_after + random.uniform(2, 25)
+            print(f"[WhatsApp Service] ⏳ Envío masivo en espera ({data.get('code')}: {data.get('error')}). Reintento en {wait/60:.1f} min.")
+            time.sleep(wait)
+            continue
+
+        if response.status_code == 503 and is_bulk and time.time() < down_deadline:
+            print("[WhatsApp Service] Puente WhatsApp no conectado (503). Reintentando en 60s sin marcar fallo...")
+            time.sleep(60)
+            continue
+
+        print(f"[WhatsApp Service] HTTP Error {response.status_code} desde Local Bridge: {response.text}")
+        return False
+
+
+def _send_single_whatsapp_message(clean_num: str, mensaje: str, media_path: str = None, mime_type: str = "image/png", priority: str = "reply") -> bool:
     """
     Envía un mensaje o multimedia a un ÚNICO destinatario limpio.
+    priority: 'bulk' (difusión/programado/reintento), 'manual' (operador) o 'reply' (respuesta a mensaje entrante).
     """
     # 1. Local Bridge (whatsapp-web.js microservice)
     if WHATSAPP_PROVIDER == "local-bridge":
@@ -187,7 +273,8 @@ def _send_single_whatsapp_message(clean_num: str, mensaje: str, media_path: str 
         payload = {
             "number": clean_num,
             "message": mensaje,
-            "caption": mensaje
+            "caption": mensaje,
+            "priority": priority
         }
         if media_path and os.path.exists(media_path):
             payload["mediaPath"] = os.path.abspath(media_path)
@@ -206,23 +293,8 @@ def _send_single_whatsapp_message(clean_num: str, mensaje: str, media_path: str 
             except Exception as e_b64:
                 print(f"[WhatsApp Service] Error codificando base64 de media: {e_b64}")
 
-        try:
-            print(f"[WhatsApp Service] Enviando vía Local Bridge a {clean_num} (Media: {'Sí' if media_path else 'No'})")
-            response = requests.post(url, json=payload, timeout=25)
-            if response.status_code == 200:
-                res_data = response.json()
-                if res_data.get("success"):
-                    print(f"[WhatsApp Service] Mensaje enviado exitosamente a {clean_num}")
-                    return True
-                else:
-                    print(f"[WhatsApp Service] Local Bridge reportó error: {res_data.get('error')}")
-                    return False
-            else:
-                print(f"[WhatsApp Service] HTTP Error {response.status_code} desde Local Bridge: {response.text}")
-                return False
-        except Exception as e:
-            print(f"[WhatsApp Service] Error de conexión con Local Bridge: {str(e)}")
-            return False
+        print(f"[WhatsApp Service] Enviando vía Local Bridge a {clean_num} (Media: {'Sí' if media_path else 'No'}, prioridad: {priority})")
+        return _post_to_bridge(url, payload, priority, clean_num)
 
     # 2. Green API
     elif WHATSAPP_PROVIDER == "green-api":
@@ -334,12 +406,19 @@ def _send_single_whatsapp_message(clean_num: str, mensaje: str, media_path: str 
             print(f"[WhatsApp Mock Service] Enviando mensaje a {clean_num}: {mensaje}")
         return True
 
-def send_whatsapp_message(numero: str, mensaje: str, media_path: str = None, mime_type: str = "image/png") -> bool:
+def send_whatsapp_message(numero: str, mensaje: str, media_path: str = None, mime_type: str = "image/png", priority: str = "reply") -> bool:
     """
     Envía un mensaje o multimedia a uno o varios números contenidos en 'numero'.
     Si 'numero' contiene múltiples teléfonos (separados por espacio, coma, barra, etc.),
     extrae cada número válido y envía el mensaje a todos ellos.
     Retorna True si al menos uno fue enviado exitosamente.
+
+    priority:
+      - 'reply'  (defecto) respuesta a un mensaje entrante (chatbot/operador en chat).
+      - 'manual' envío puntual de un operador.
+      - 'bulk'   difusión, envío programado o reintentos: pasa por el gobernador anti-bloqueo del puente,
+                 varía el texto (spintax), añade pie de baja y envía solo al primer número válido del cliente
+                 (salvo WA_BULK_ALL_NUMBERS=true).
     """
     if not numero:
         print("[WhatsApp Service] Error: Número de teléfono vacío.")
@@ -354,13 +433,25 @@ def send_whatsapp_message(numero: str, mensaje: str, media_path: str = None, mim
             print(f"[WhatsApp Service] Error: No se pudo formatear/extraer ningún número válido de '{numero}'.")
             return False
 
+    is_bulk = priority == "bulk"
     success_any = False
     for i, target_num in enumerate(targets):
         if i > 0:
-            time.sleep(1)
-        ok = _send_single_whatsapp_message(target_num, mensaje, media_path=media_path, mime_type=mime_type)
+            # Nunca enviar en ráfaga a varios números del mismo destinatario
+            time.sleep(random.uniform(45, 120) if is_bulk else random.uniform(3, 8))
+
+        mensaje_envio = mensaje
+        if is_bulk:
+            mensaje_envio = aplicar_spintax(mensaje)
+            if BULK_FOOTER and "BAJA" not in (mensaje_envio or "").upper():
+                mensaje_envio = f"{mensaje_envio.rstrip()}\n\n{BULK_FOOTER}"
+
+        ok = _send_single_whatsapp_message(target_num, mensaje_envio, media_path=media_path, mime_type=mime_type, priority=priority)
         if ok:
             success_any = True
+            # Difusión: basta con un número válido por cliente (menos volumen = menos riesgo de spam)
+            if is_bulk and not BULK_ALL_NUMBERS:
+                break
 
     return success_any
 

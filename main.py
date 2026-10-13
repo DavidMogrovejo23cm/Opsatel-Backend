@@ -354,7 +354,7 @@ def iniciar_puente_whatsapp():
     env["FASTAPI_PORT"] = os.getenv("BACKEND_PORT", "8000")
 
     print(f"Iniciando puente de WhatsApp (Node.js) en puerto {port}...")
-    try:
+    def lanzar_proceso():
         process = subprocess.Popen(
             ["node", "whatsapp_bridge.js"],
             stdout=subprocess.PIPE,
@@ -363,19 +363,38 @@ def iniciar_puente_whatsapp():
             bufsize=1,
             env=env
         )
-        
         app.state.whatsapp_bridge_process = process
 
-        def read_logs():
-            for line in iter(process.stdout.readline, ""):
+        def read_logs(proc):
+            for line in iter(proc.stdout.readline, ""):
                 print(f"[WhatsApp Bridge Output] {line.strip()}")
-            process.stdout.close()
+            proc.stdout.close()
 
-        log_thread = threading.Thread(target=read_logs, daemon=True)
-        log_thread.start()
-        print("Subproceso del puente local de WhatsApp iniciado y monitoreado.")
-    except Exception as e:
-        print(f"Error al iniciar el puente de WhatsApp (Node.js): {e}")
+        threading.Thread(target=read_logs, args=(process,), daemon=True).start()
+        return process
+
+    def supervisor():
+        import time as _time
+        fallos_rapidos = 0
+        while not getattr(app.state, "whatsapp_bridge_stopping", False):
+            inicio = _time.time()
+            try:
+                process = lanzar_proceso()
+                process.wait()
+            except Exception as e:
+                print(f"Error al iniciar el puente de WhatsApp (Node.js): {e}")
+            if getattr(app.state, "whatsapp_bridge_stopping", False):
+                break
+            # Si el proceso vive menos de 60s se considera fallo rápido: backoff creciente (máx. 5 min)
+            fallos_rapidos = fallos_rapidos + 1 if (_time.time() - inicio) < 60 else 0
+            espera = min(5 * (2 ** fallos_rapidos), 300)
+            print(f"[WhatsApp Bridge] El proceso terminó inesperadamente. Reiniciando en {espera}s...")
+            _time.sleep(espera)
+
+    app.state.whatsapp_bridge_stopping = False
+    threading.Thread(target=supervisor, daemon=True).start()
+    print("Subproceso del puente local de WhatsApp iniciado y monitoreado (con reinicio automático).")
+
 
 @app.on_event("startup")
 async def startup_bridge():
@@ -385,6 +404,7 @@ async def startup_bridge():
 
 @app.on_event("shutdown")
 async def shutdown_bridge():
+    app.state.whatsapp_bridge_stopping = True
     if hasattr(app.state, "whatsapp_bridge_process"):
         print("Terminando subproceso del puente de WhatsApp...")
         app.state.whatsapp_bridge_process.terminate()

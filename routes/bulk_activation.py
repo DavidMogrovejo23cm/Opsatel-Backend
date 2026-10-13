@@ -259,17 +259,32 @@ def confirm_task_activation(
 
             # 2. Actualizar también por coincidencia de nombre si fuera necesario
             cliente_obj = db.query(models.Cliente).filter(models.Cliente.id == cid).first()
-            if cliente_obj and cliente_obj.nombre:
-                name_count = db.query(models.HojaRuta).filter(
-                    models.HojaRuta.nombre_cliente == cliente_obj.nombre,
-                    models.HojaRuta.estado != "Cancelado"
-                ).update({"estado": "Realizado"}, synchronize_session=False)
-                updated_count += name_count
+            if cliente_obj:
+                cliente_obj.estado = "Activo"
+                cliente_obj.activador = "sistema"
+
+                # Buscar técnico responsable asignado en Hoja de Ruta para este cliente
+                hr = db.query(models.HojaRuta).filter(
+                    or_(
+                        models.HojaRuta.cliente_id == cid,
+                        models.HojaRuta.nombre_cliente == cliente_obj.nombre
+                    )
+                ).order_by(models.HojaRuta.id.desc()).first()
+
+                tecnico_asignado = (hr.tecnico if hr and hr.tecnico else None)
+                cliente_obj.tecnico = tecnico_asignado or current_user.username or task.created_by or "sistema"
+
+                if cliente_obj.nombre:
+                    name_count = db.query(models.HojaRuta).filter(
+                        models.HojaRuta.nombre_cliente == cliente_obj.nombre,
+                        models.HojaRuta.estado != "Cancelado"
+                    ).update({"estado": "Realizado"}, synchronize_session=False)
+                    updated_count += name_count
 
             db.commit()
-            logger.info(f"[confirm_task_activation] Hoja de Ruta actualizada a 'Realizado' ({updated_count} registros) para cliente {cid}")
+            logger.info(f"[confirm_task_activation] Hoja de Ruta actualizada a 'Realizado' ({updated_count} registros) y cliente {cid} activado con técnico '{cliente_obj.tecnico if cliente_obj else '—'}' y activador 'sistema'")
         except Exception as hr_err:
-            logger.error(f"[confirm_task_activation] Error actualizando estado en Hoja de Ruta para cliente {cid}: {hr_err}")
+            logger.error(f"[confirm_task_activation] Error actualizando estado para cliente {cid}: {hr_err}")
             db.rollback()
 
     obs.log_audit_event_async(

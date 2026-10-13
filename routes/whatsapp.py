@@ -106,7 +106,13 @@ def personalizar_mensaje_cliente(mensaje_base: str, cliente) -> str:
 
     if not tiene_etiqueta_nombre:
         if primer_nombre != "estimado/a cliente":
-            saludo = f"Hola *{primer_nombre}*,\n"
+            # Variar el saludo entre destinatarios evita mensajes idénticos (señal de spam)
+            saludo = random.choice([
+                f"Hola *{primer_nombre}*,\n",
+                f"¡Hola *{primer_nombre}*!\n",
+                f"Saludos *{primer_nombre}*,\n",
+                f"Estimado/a *{primer_nombre}*,\n",
+            ])
         else:
             saludo = "Estimado/a cliente,\n"
         msg = f"{saludo}{msg.strip()}"
@@ -386,7 +392,7 @@ def send_global_broadcast_task(
 
             mensaje_personalizado = personalizar_mensaje_cliente(mensaje, cliente)
             # send_whatsapp_message extrae y despacha a todos los números válidos del cliente si tiene más de uno
-            success = whatsapp_service.send_whatsapp_message(numero, mensaje_personalizado)
+            success = whatsapp_service.send_whatsapp_message(numero, mensaje_personalizado, priority="bulk")
             
             if success:
                 exitosos += 1
@@ -487,7 +493,7 @@ def enviar_whatsapp_manual(
                 mensaje_final = personalizar_mensaje_cliente(mensaje, cliente)
 
         # Enviar mensaje usando el servicio unificado a todos los números del destinatario
-        success = whatsapp_service.send_whatsapp_message(numero, mensaje_final)
+        success = whatsapp_service.send_whatsapp_message(numero, mensaje_final, priority="manual")
         
         if not success:
             raise HTTPException(
@@ -924,37 +930,23 @@ def marcar_historial_enviado(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/historial/reintentar-fallidos", dependencies=[Depends(require_role(["administrador", "secretario"]))])
-def reintentar_mensajes_fallidos(
-    db: Session = Depends(get_db)
-):
+def _reintentar_fallidos_task(ids_fallidos: list):
     """
-    Reintenta el envío de todos los mensajes con estado 'fallido' en el historial.
-    Procesa clientes con números múltiples o separados correctamente enviando a todos sus números.
+    Tarea en segundo plano: reintenta los mensajes fallidos uno a uno.
+    Cada envío es 'bulk', por lo que el puente aplica horario, topes y espaciado anti-bloqueo.
     """
+    db = SessionLocal()
+    reintentados = 0
+    errores = 0
     try:
-        fallidos = db.query(models.WhatsAppHistorial).filter(
-            models.WhatsAppHistorial.estado == "fallido"
-        ).all()
-
-        if not fallidos:
-            return {
-                "success": True, 
-                "message": "No hay mensajes fallidos pendientes de reintento.", 
-                "total": 0, 
-                "reintentados": 0
-            }
-
-        total = len(fallidos)
-        reintentados = 0
-        errores = 0
-
-        for item in fallidos:
+        for hist_id in ids_fallidos:
             try:
+                item = db.query(models.WhatsAppHistorial).filter(models.WhatsAppHistorial.id == hist_id).first()
+                if not item or item.estado != "fallido":
+                    continue
                 numero = item.numero_destino
                 msg = item.mensaje
-                # send_whatsapp_message enviará a todos los números del destinatario
-                ok = whatsapp_service.send_whatsapp_message(numero, msg)
+                ok = whatsapp_service.send_whatsapp_message(numero, msg, priority="bulk")
                 if ok:
                     item.estado = "enviado"
                     item.fecha_envio = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S")
@@ -967,23 +959,82 @@ def reintentar_mensajes_fallidos(
                             registrar_mensaje_chat(db, t, "operador", msg)
                     except Exception:
                         pass
-                    time.sleep(1.5)
                 else:
                     errores += 1
+                time.sleep(random.uniform(20, 60))
             except Exception as e_retry:
-                print(f"[Retry Error] Error reintentando mensaje {item.id}: {e_retry}")
+                db.rollback()
+                print(f"[Retry Error] Error reintentando mensaje {hist_id}: {e_retry}")
                 errores += 1
+        print(f"[Retry Task] Reintento finalizado. Exitosos: {reintentados}, Errores: {errores}")
+    finally:
+        db.close()
+
+
+@router.post("/historial/reintentar-fallidos", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def reintentar_mensajes_fallidos(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Reintenta en segundo plano el envío de todos los mensajes con estado 'fallido' en el historial.
+    Se envían de forma escalonada (protección anti-bloqueo): puede tardar horas y respeta el horario permitido.
+    """
+    try:
+        ids = [row[0] for row in db.query(models.WhatsAppHistorial.id).filter(
+            models.WhatsAppHistorial.estado == "fallido"
+        ).order_by(models.WhatsAppHistorial.id.asc()).all()]
+
+        if not ids:
+            return {
+                "success": True, 
+                "message": "No hay mensajes fallidos pendientes de reintento.", 
+                "total": 0, 
+                "reintentados": 0
+            }
+
+        background_tasks.add_task(_reintentar_fallidos_task, ids)
 
         return {
             "success": True,
-            "message": f"Reintento finalizado. Exitosos: {reintentados}, Errores: {errores}",
-            "total": total,
-            "reintentados": reintentados,
-            "errores": errores
+            "message": f"Reintento de {len(ids)} mensajes iniciado en segundo plano de forma escalonada (anti-bloqueo). Revisa el historial para ver el avance.",
+            "total": len(ids),
+            "reintentados": 0,
+            "errores": 0,
+            "en_segundo_plano": True
         }
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- Estado y control del sistema anti-bloqueo del puente ---
+@router.get("/antiban", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def antiban_estado():
+    """Estado del gobernador anti-bloqueo (horario, topes, pausas, opt-outs)."""
+    try:
+        r = requests.get(f"{whatsapp_service.WHATSAPP_BRIDGE_URL.rstrip('/')}/antiban", timeout=5)
+        return r.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Puente de WhatsApp no disponible: {e}")
+
+@router.post("/antiban/restriccion", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def antiban_declarar_restriccion(horas: float = 24):
+    """Declara una restricción de WhatsApp (ej. aviso 'Tu cuenta está restringida'): pausa los envíos masivos X horas
+    y reinicia el calentamiento al terminar."""
+    try:
+        r = requests.post(f"{whatsapp_service.WHATSAPP_BRIDGE_URL.rstrip('/')}/antiban/restricted", json={"hours": horas}, timeout=5)
+        return r.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Puente de WhatsApp no disponible: {e}")
+
+@router.post("/antiban/reanudar", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def antiban_reanudar():
+    """Levanta manualmente la pausa del envío masivo."""
+    try:
+        r = requests.post(f"{whatsapp_service.WHATSAPP_BRIDGE_URL.rstrip('/')}/antiban/clear", json={}, timeout=5)
+        return r.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Puente de WhatsApp no disponible: {e}")
 
 @router.post("/logout", dependencies=[Depends(require_role(["administrador", "secretario"]))])
 def cerrar_sesion_puente():

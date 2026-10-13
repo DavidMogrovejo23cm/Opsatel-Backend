@@ -45,8 +45,8 @@ class ClienteUpdateTecnico(BaseModel):
     potencia: str
     nap: str
     ubicacion: str
-    tecnico: str
-    activador: str
+    tecnico: Optional[str] = None
+    activador: Optional[str] = None
     red: str
     clave: str
     plus: Optional[str] = None
@@ -124,6 +124,8 @@ class ClienteUpdateGeneral(BaseModel):
     dispositivo: Optional[str] = None
     potencia: Optional[str] = None
     nap: Optional[str] = None
+    tecnico: Optional[str] = None
+    activador: Optional[str] = None
     red: Optional[str] = None
     clave: Optional[str] = None
     mac: Optional[str] = None
