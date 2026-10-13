@@ -849,6 +849,273 @@ def borrar_cliente_de_olt(id: int, db: Session = Depends(get_db), current_user=D
         "service_port": service_port,
     }
 
+
+@router.post("/{id}/migrar", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
+def migrar_cliente(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """
+    Acción de Migración de Cliente:
+    1. Preserva el cliente, su ID y toda su información financiera (saldo, pagos, facturas, mensualidad) 100% INTACTA.
+    2. Desactiva y borra la ONT y Service Port de la OLT Huawei.
+    3. Borra el DHCP lease y entradas de address-lists del router MikroTik.
+    4. Encola la remoción en LibreQoS (job REMOVE) para eliminar shaper/reglas QoS.
+    5. Libera los recursos de red en el inventario BD (IP Pool, Service Port, ONT ID).
+    6. Resetea los campos técnicos físicos del cliente y pasa su estado a 'En Activación'.
+    """
+    import json as _json
+    import re as _re
+    from sqlalchemy import or_ as _or
+
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    username = getattr(current_user, "username", "admin") if current_user else "admin"
+    correlation_id = f"migracion_{id}_{int(datetime.now().timestamp())}"
+
+    # Snapshot técnico previo para trazabilidad y auditoría
+    snapshot_tecnico = {
+        "puerto": cliente.puerto,
+        "id_port": cliente.id_port,
+        "service_port": cliente.service_port,
+        "ont": cliente.ont,
+        "mac": cliente.mac,
+        "ip": cliente.ip,
+        "nodo": cliente.nodo,
+        "potencia": cliente.potencia,
+        "estado_anterior": cliente.estado,
+        "fecha_migracion": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    olt_resumen = "OMITIDO"
+    mikrotik_resumen = "OMITIDO"
+    libreqos_resumen = "OMITIDO"
+
+    # ── 1. DESAPROVISIONAR DE OLT (Huawei GPON) ──
+    if cliente.id_port or cliente.service_port:
+        try:
+            puerto_raw = str(cliente.puerto or "0")
+            m = _re.search(r'\d+', puerto_raw)
+            puerto_num = m.group() if m else "0"
+
+            is_sayausi = is_nodo_sayausi(cliente.nodo)
+            gpon_port = f"0/1/{puerto_num}" if is_sayausi else f"0/0/{puerto_num}"
+            ont_id = str(cliente.id_port or "0").strip()
+            service_port = str(cliente.service_port or "").strip()
+
+            olt_config = db.query(models.OLTConfig).filter(
+                _or(
+                    models.OLTConfig.nodo_asociado == cliente.nodo,
+                    models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
+                    models.OLTConfig.nodo_asociado == None
+                ),
+                models.OLTConfig.active == True
+            ).first()
+
+            if olt_config:
+                olt_payload = {
+                    "gpon_port": gpon_port,
+                    "ont_id": ont_id,
+                    "service_port": service_port,
+                    "mac": str(cliente.mac or "000000000000").replace(":", "").replace("-", "") or "000000000000"
+                }
+
+                # Encolar la tarea OLT de alta prioridad
+                task = models.OLTTask(
+                    cliente_id=id,
+                    olt_id=olt_config.id,
+                    action="remove_ont",
+                    payload=_json.dumps(olt_payload),
+                    status="pending",
+                    priority=15,
+                    created_by=username,
+                    created_at=datetime.now(),
+                )
+                db.add(task)
+                db.flush()
+
+                # Intentar ejecución sincrónica inmediata si la conexión OLT está libre
+                try:
+                    from services.olt_interface import OLTInterface
+                    olt_direct = OLTInterface(
+                        host=olt_config.host,
+                        port=olt_config.port or 23,
+                        username=olt_config.username,
+                        password=olt_config.password,
+                        timeout=5
+                    )
+                    olt_direct.connect()
+                    res_direct = olt_direct.execute_removal_sequence(olt_payload)
+                    olt_direct.disconnect()
+                    if res_direct.get("success"):
+                        task.status = "success"
+                        task.result = _json.dumps(res_direct)
+                        task.completed_at = datetime.now()
+                        olt_resumen = "ELIMINADO_DIRECTO"
+                    else:
+                        olt_resumen = f"ENCOLADO_TAREA (ID {task.id})"
+                except Exception as direct_err:
+                    print(f"[Migración] OLT directa omitida ({direct_err}), procesando vía daemon OLT (Tarea {task.id})")
+                    olt_resumen = f"ENCOLADO_TAREA (ID {task.id})"
+            else:
+                olt_resumen = "SIN_CONFIG_OLT"
+        except Exception as olt_err:
+            print(f"[Migración] Error al preparar borrado OLT (cliente {id}): {olt_err}")
+            olt_resumen = f"ERROR: {str(olt_err)}"
+
+    # ── 2. BORRAR DEL MIKROTIK (DHCP Lease y Address-Lists) ──
+    if cliente.mac or cliente.ip:
+        try:
+            from network.adapters.mikrotik import MikroTikAdapter
+
+            olt_config_mt = db.query(models.OLTConfig).filter(
+                _or(
+                    models.OLTConfig.nodo_asociado == cliente.nodo,
+                    models.OLTConfig.nodo_asociado == None
+                ),
+                models.OLTConfig.active == True
+            ).first()
+
+            if olt_config_mt and olt_config_mt.mikrotik_host:
+                clean_mac = str(cliente.mac or "").replace(":", "").replace("-", "").upper()
+                clean_ip = str(cliente.ip or "").strip()
+
+                with MikroTikAdapter(
+                    host=olt_config_mt.mikrotik_host,
+                    port=olt_config_mt.mikrotik_port or 8728,
+                    username=olt_config_mt.mikrotik_username or "admin",
+                    password=olt_config_mt.mikrotik_password or "",
+                    timeout=5
+                ) as mt:
+                    resource = mt._get_resource('/ip/dhcp-server/lease')
+                    all_leases = resource.get()
+                    removed_leases = 0
+
+                    for lease in all_leases:
+                        lease_mac = lease.get('mac-address', '').replace(":", "").replace("-", "").upper()
+                        lease_ip = str(lease.get('address', '')).strip()
+                        if (clean_mac and lease_mac == clean_mac) or (clean_ip and lease_ip == clean_ip):
+                            l_id = lease.get('.id') or lease.get('id')
+                            if l_id:
+                                try:
+                                    resource.remove(**{'.id': l_id})
+                                    removed_leases += 1
+                                except Exception:
+                                    pass
+
+                    # Limpiar de listas de corte/suspensión de firewall si existieran
+                    if clean_ip:
+                        try:
+                            al_res = mt._get_resource('/ip/firewall/address-list')
+                            for al in al_res.get(address=clean_ip):
+                                al_id = al.get('.id') or al.get('id')
+                                if al_id:
+                                    try:
+                                        al_res.remove(**{'.id': al_id})
+                                    except Exception:
+                                        pass
+                        except Exception as al_err:
+                            print(f"[Migración] Aviso al limpiar address-list MikroTik: {al_err}")
+
+                    mikrotik_resumen = f"ELIMINADO ({removed_leases} lease)" if removed_leases > 0 else "OMITIDO (No se halló lease activo)"
+            else:
+                mikrotik_resumen = "SIN_CONFIG_MIKROTIK"
+        except Exception as mt_err:
+            print(f"[Migración] Error al borrar de MikroTik (cliente {id}): {mt_err}")
+            mikrotik_resumen = f"ERROR: {str(mt_err)}"
+
+    # ── 3. BORRAR DE LIBREQOS (Shaper / QoS Job REMOVE) ──
+    try:
+        from services.libreqos_manager import LibreQoSManager
+        job = LibreQoSManager.enqueue_job(
+            operation="REMOVE",
+            cliente_id=id,
+            db=db,
+            correlation_id=correlation_id,
+            created_by=f"MIGRACION_{username}"
+        )
+        libreqos_resumen = f"ENCOLADO_REMOVE (Job ID {job.id})" if job else "OMITIDO_O_YA_ENCOLADO"
+    except Exception as lq_err:
+        print(f"[Migración] Error encolando LibreQoS (cliente {id}): {lq_err}")
+        libreqos_resumen = f"ERROR: {str(lq_err)}"
+
+    # ── 4. LIBERAR RECURSOS DE INVENTARIO (IP, Service Port, ONT ID) ──
+    try:
+        import inventory_models
+        db.query(inventory_models.InventoryIpPool).filter(
+            inventory_models.InventoryIpPool.cliente_id == id
+        ).update({
+            inventory_models.InventoryIpPool.estado: "LIBRE",
+            inventory_models.InventoryIpPool.cliente_id: None,
+            inventory_models.InventoryIpPool.updated_at: datetime.now()
+        })
+        db.query(inventory_models.InventoryServicePort).filter(
+            inventory_models.InventoryServicePort.cliente_id == id
+        ).update({
+            inventory_models.InventoryServicePort.estado: "LIBRE",
+            inventory_models.InventoryServicePort.cliente_id: None,
+            inventory_models.InventoryServicePort.updated_at: datetime.now()
+        })
+        db.query(inventory_models.InventoryOntId).filter(
+            inventory_models.InventoryOntId.cliente_id == id
+        ).update({
+            inventory_models.InventoryOntId.estado: "LIBRE",
+            inventory_models.InventoryOntId.cliente_id: None,
+            inventory_models.InventoryOntId.updated_at: datetime.now()
+        })
+    except Exception as inv_err:
+        print(f"[Migración] Error al liberar recursos de inventario (cliente {id}): {inv_err}")
+
+    # ── 5. ACTUALIZAR CLIENTE A 'En Activación' Y RESETEAR CONEXIÓN FÍSICA ──
+    # PROTECCIÓN TOTAL: saldo, pagos, mensualidad y datos personales INTACTOS
+    cliente.estado = "En Activación"
+    cliente.service_port = None
+    cliente.id_port = None
+    cliente.ont = None
+    cliente.servicio = None
+    cliente.breach = None
+    cliente.mac = None
+    cliente.ip = None
+    cliente.potencia = None
+    cliente.instalation_date = None
+
+    db.commit()
+    db.refresh(cliente)
+
+    # ── 6. REGISTRAR AUDITORÍA ──
+    try:
+        import observability as obs
+        obs.log_audit_event_async(
+            accion="MIGRAR_CLIENTE",
+            modulo="clientes",
+            usuario=username,
+            entidad_tipo="Cliente",
+            entidad_id=str(cliente.id),
+            detalles=(
+                f"Cliente migrado a 'En Activación'. "
+                f"OLT: {olt_resumen} | MikroTik: {mikrotik_resumen} | LibreQoS: {libreqos_resumen}. "
+                f"Datos previos: {_json.dumps(snapshot_tecnico, ensure_ascii=False)}"
+            ),
+            correlation_id=correlation_id
+        )
+    except Exception as aud_err:
+        print(f"[Migración] Aviso al registrar auditoría: {aud_err}")
+
+    return {
+        "success": True,
+        "message": (
+            f"✅ Cliente '{cliente.nombre}' migrado con éxito. "
+            f"Fue desprovisionado de la red (OLT: {olt_resumen}, MikroTik: {mikrotik_resumen}, LibreQoS: {libreqos_resumen}). "
+            f"Su estado pasó a 'En Activación' manteniendo sus finanzas y datos personales intactos."
+        ),
+        "cliente_id": cliente.id,
+        "nombre": cliente.nombre,
+        "nuevo_estado": cliente.estado,
+        "olt": olt_resumen,
+        "mikrotik": mikrotik_resumen,
+        "libreqos": libreqos_resumen
+    }
+
+
 @router.post("/{id}/suspender-mikrotik", dependencies=[Depends(require_role(["administrador", "tecnico", "secretario"]))])
 def suspender_cliente_mikrotik(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """
