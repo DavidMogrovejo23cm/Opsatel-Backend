@@ -495,6 +495,7 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         plus=cliente.plus,
         iptv_max_conn=iptv_max,
         cedula_tipo=cliente.cedula_tipo,
+        foto_fachada=cliente.foto_fachada,
         ubicacion=cliente.ubicacion,
         fecha_firma=cliente.fecha_firma,
         tiempo=cliente.tiempo,
@@ -556,18 +557,37 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
 
 
 @router.post("/{id}/upload-cedula", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
-async def upload_cedula(id: int, frontal: UploadFile = File(None), posterior: UploadFile = File(None), db: Session = Depends(get_db)):
+async def upload_cedula(
+    id: int, 
+    frontal: UploadFile = File(None), 
+    posterior: UploadFile = File(None), 
+    fachada: UploadFile = File(None), 
+    db: Session = Depends(get_db)
+):
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
     upload_dir = "uploads/cedulas"
     os.makedirs(upload_dir, exist_ok=True)
+
+    # Validar límite de memoria/tamaño de 1.5 Megas para cualquier foto
+    MAX_FILE_SIZE = 1600 * 1024 # ~1.56 MB
+    for f_obj, f_name in [(frontal, "Frontal"), (posterior, "Posterior"), (fachada, "Fachada")]:
+        if f_obj and f_obj.filename:
+            f_obj.file.seek(0, os.SEEK_END)
+            size = f_obj.file.tell()
+            f_obj.file.seek(0)
+            if size > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"La foto {f_name} supera el límite máximo de 1.5 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
+                )
     
-    if frontal:
-        ext = os.path.splitext(frontal.filename)[1] if frontal.filename else ""
+    def resolve_ext(f_obj):
+        ext = os.path.splitext(f_obj.filename)[1] if f_obj.filename else ""
         if not ext:
-            ctype = str(getattr(frontal, 'content_type', '') or '').lower()
+            ctype = str(getattr(f_obj, 'content_type', '') or '').lower()
             if 'jpeg' in ctype or 'jpg' in ctype:
                 ext = ".jpg"
             elif 'webp' in ctype:
@@ -576,30 +596,84 @@ async def upload_cedula(id: int, frontal: UploadFile = File(None), posterior: Up
                 ext = ".gif"
             else:
                 ext = ".png"
-        file_path = f"{upload_dir}/frontal_{id}_{int(datetime.now().timestamp())}{ext}"
+        return ext
+
+    timestamp = int(datetime.now().timestamp())
+
+    if frontal:
+        ext = resolve_ext(frontal)
+        file_path = f"{upload_dir}/frontal_{id}_{timestamp}{ext}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(frontal.file, buffer)
         cliente.cedula_frontal = f"/{file_path}"
         
     if posterior:
-        ext = os.path.splitext(posterior.filename)[1] if posterior.filename else ""
-        if not ext:
-            ctype = str(getattr(posterior, 'content_type', '') or '').lower()
-            if 'jpeg' in ctype or 'jpg' in ctype:
-                ext = ".jpg"
-            elif 'webp' in ctype:
-                ext = ".webp"
-            elif 'gif' in ctype:
-                ext = ".gif"
-            else:
-                ext = ".png"
-        file_path = f"{upload_dir}/posterior_{id}_{int(datetime.now().timestamp())}{ext}"
+        ext = resolve_ext(posterior)
+        file_path = f"{upload_dir}/posterior_{id}_{timestamp}{ext}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(posterior.file, buffer)
         cliente.cedula_posterior = f"/{file_path}"
+
+    if fachada:
+        ext = resolve_ext(fachada)
+        file_path = f"{upload_dir}/fachada_{id}_{timestamp}{ext}"
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(fachada.file, buffer)
+        cliente.foto_fachada = f"/{file_path}"
     
     db.commit()
-    return {"message": "Imágenes subidas exitosamente"}
+    return {
+        "message": "Imágenes subidas exitosamente",
+        "cedula_frontal": cliente.cedula_frontal,
+        "cedula_posterior": cliente.cedula_posterior,
+        "foto_fachada": cliente.foto_fachada
+    }
+
+
+@router.post("/{id}/upload-fachada", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
+async def upload_fachada(id: int, fachada: UploadFile = File(...), db: Session = Depends(get_db)):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    MAX_FILE_SIZE = 1600 * 1024 # ~1.56 MB
+    if not fachada or not fachada.filename:
+        raise HTTPException(status_code=400, detail="Debe seleccionar una foto de la fachada.")
+
+    fachada.file.seek(0, os.SEEK_END)
+    size = fachada.file.tell()
+    fachada.file.seek(0)
+    if size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La foto de fachada supera el límite de 1.5 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
+        )
+
+    upload_dir = "uploads/cedulas"
+    os.makedirs(upload_dir, exist_ok=True)
+    ext = os.path.splitext(fachada.filename)[1] if fachada.filename else ""
+    if not ext:
+        ctype = str(getattr(fachada, 'content_type', '') or '').lower()
+        if 'jpeg' in ctype or 'jpg' in ctype:
+            ext = ".jpg"
+        elif 'webp' in ctype:
+            ext = ".webp"
+        elif 'gif' in ctype:
+            ext = ".gif"
+        else:
+            ext = ".png"
+
+    timestamp = int(datetime.now().timestamp())
+    file_path = f"{upload_dir}/fachada_{id}_{timestamp}{ext}"
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(fachada.file, buffer)
+    cliente.foto_fachada = f"/{file_path}"
+    db.commit()
+
+    return {
+        "message": "Foto de fachada subida exitosamente",
+        "foto_fachada": cliente.foto_fachada
+    }
 
 
 @router.get("/siguiente-valor-tecnico")
@@ -1616,6 +1690,15 @@ def actualizar_cliente_general(
             tecnico_hr = (hr.tecnico if hr and hr.tecnico else None)
             cliente.tecnico = tecnico_hr or (current_user.username if current_user else None) or "sistema"
 
+    # Si se actualizó la ubicación, sincronizar también en HojaRuta para tareas pendientes/en proceso
+    if data.ubicacion is not None:
+        try:
+            db.query(models.HojaRuta).filter(
+                or_(models.HojaRuta.cliente_id == id, models.HojaRuta.nombre_cliente == cliente.nombre)
+            ).update({"ubicacion_cliente": data.ubicacion}, synchronize_session=False)
+        except Exception as hr_ubi_err:
+            logger.warning(f"Aviso al sincronizar ubicacion_cliente en HojaRuta: {hr_ubi_err}")
+
     _stats_cache = None
     db.commit()
 
@@ -2598,6 +2681,11 @@ def eliminar_todos_clientes(db: Session = Depends(get_db)):
                 if os.path.exists(path):
                     try: os.remove(path)
                     except: pass
+            if cliente.foto_fachada:
+                path = cliente.foto_fachada.lstrip("/")
+                if os.path.exists(path):
+                    try: os.remove(path)
+                    except: pass
         
         # Contar cuántos se van a eliminar
         count = len(clientes)
@@ -2706,6 +2794,11 @@ def eliminar_cliente(id: int, db: Session = Depends(get_db)):
             except: pass
     if cliente.cedula_posterior:
         path = cliente.cedula_posterior.lstrip("/")
+        if os.path.exists(path):
+            try: os.remove(path)
+            except: pass
+    if cliente.foto_fachada:
+        path = cliente.foto_fachada.lstrip("/")
         if os.path.exists(path):
             try: os.remove(path)
             except: pass
@@ -2852,6 +2945,7 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
             "nombre": ["NOMBRE", "NOMBRES", "CLIENTE", "NOMBRE COMPLETO"],
             "cedula": ["CEDULA", "CI", "RUC", "IDENTIFICACION", "DNI"],
             "cedula_tipo": ["CEDULA_TIPO", "TIPO_CEDULA", "TIPO_IDENTIFICACION", "CEDULA TIPO"],
+            "foto_fachada": ["FOTO_FACHADA", "FOTO FACHADA", "FACHADA", "FOT.FACHADA", "FOT_FACHADA"],
             "celular": ["CELULAR", "TELEFONO", "MOVIL", "CONTACTO", "CEL"],
             "correo": ["CORREO", "EMAIL", "MAIL"],
             "direccion": ["DIRECCION", "DIR", "DOMICILIO"],
@@ -3382,7 +3476,7 @@ async def eliminar_cliente_completamente(
     # ── ETAPA 5: ELIMINAR RELACIONES INTERNAS Y CLIENTE DE LA BASE DE DATOS ──
     try:
         # Eliminar archivos de cédula si existen físicamente
-        for file_path in [cliente.cedula_frontal, cliente.cedula_posterior]:
+        for file_path in [cliente.cedula_frontal, cliente.cedula_posterior, cliente.foto_fachada]:
             if file_path:
                 path_clean = file_path.lstrip("/")
                 if os.path.exists(path_clean):

@@ -106,27 +106,66 @@ def enviar_whatsapp_programado():
                     db.commit()
                 continue
             
-            # Enviar mensaje personalizado a cada cliente activo
+            # Deduplicar clientes para garantizar que nunca se envíe doble vez al mismo cliente:
+            # Se filtra por: ID de cliente, Cédula del cliente y Primer número válido de WhatsApp
+            clientes_unicos = []
+            seen_ids = set()
+            seen_cedulas = set()
+            seen_numeros = set()
+
+            for c in clientes:
+                if not c or not c.celular:
+                    continue
+                if c.id in seen_ids:
+                    continue
+
+                num_principal = whatsapp_service.format_whatsapp_number(c.celular)
+                if not num_principal:
+                    continue
+
+                ced_clean = str(c.cedula or "").strip().lower()
+                if ced_clean and ced_clean in seen_cedulas:
+                    print(f"[WhatsApp Scheduler] Omitiendo cliente duplicado por cédula {c.cedula} ({c.nombre})")
+                    continue
+
+                if num_principal in seen_numeros:
+                    print(f"[WhatsApp Scheduler] Omitiendo cliente duplicado por número {num_principal} ({c.nombre})")
+                    continue
+
+                seen_ids.add(c.id)
+                if ced_clean:
+                    seen_cedulas.add(ced_clean)
+                seen_numeros.add(num_principal)
+                clientes_unicos.append(c)
+
+            if not clientes_unicos:
+                print(f"[WhatsApp] No hay clientes únicos válidos para el filtro '{filtro}' en config ID {config.id}")
+                if es_envio_unico:
+                    config.activo = False
+                    db.commit()
+                continue
+
+            # Enviar mensaje personalizado a cada cliente activo único (solo a su primer número)
             enviados = 0
             fallidos = 0
             
-            for cliente in clientes:
+            for cliente in clientes_unicos:
                 try:
                     raw_num = (cliente.celular or "").strip()
-                    numeros_validos = whatsapp_service.extract_all_whatsapp_numbers(raw_num)
-                    if not numeros_validos:
-                        print(f"[WhatsApp Scheduler] Saltando cliente {cliente.nombre}: '{cliente.celular}' no contiene números móviles válidos para WhatsApp.")
+                    num_principal = whatsapp_service.format_whatsapp_number(raw_num)
+                    if not num_principal:
+                        print(f"[WhatsApp Scheduler] Saltando cliente {cliente.nombre}: '{cliente.celular}' no contiene números móviles válidos.")
                         continue
 
                     # Personalizar mensaje con los datos reales del cliente en la BD
                     mensaje_personalizado = personalizar_mensaje_cliente(config.mensaje_programado, cliente)
                     
-                    # Enviar mensaje usando el servicio unificado a todos los números del cliente
-                    success = whatsapp_service.send_whatsapp_message(raw_num, mensaje_personalizado, priority="bulk")
+                    # Enviar mensaje usando el servicio unificado ÚNICAMENTE al primer número
+                    success = whatsapp_service.send_whatsapp_message(num_principal, mensaje_personalizado, priority="bulk")
                     
-                    # Guardar en historial con el mensaje final personalizado
+                    # Guardar en historial con el número real de destino
                     historial = models.WhatsAppHistorial(
-                        numero_destino=raw_num,
+                        numero_destino=num_principal,
                         mensaje=mensaje_personalizado,
                         tipo_envio="automatico",
                         estado="enviado" if success else "fallido",
@@ -137,16 +176,15 @@ def enviar_whatsapp_programado():
                     
                     if success:
                         enviados += 1
-                        print(f"[WhatsApp Scheduler] Mensaje personalizado enviado a {raw_num} ({len(numeros_validos)} números)")
+                        print(f"[WhatsApp Scheduler] Mensaje personalizado enviado a {num_principal} ({cliente.nombre})")
                         try:
                             from routes.whatsapp import registrar_mensaje_chat
-                            for num_tgt in numeros_validos:
-                                registrar_mensaje_chat(db, num_tgt, "operador", mensaje_personalizado, cliente_id=cliente.id)
+                            registrar_mensaje_chat(db, num_principal, "operador", mensaje_personalizado, cliente_id=cliente.id)
                         except Exception as e_chat:
                             print(f"[WhatsApp Scheduler] Aviso registrando chat: {e_chat}")
                     else:
                         fallidos += 1
-                        print(f"[WhatsApp Scheduler] Falló el envío a {raw_num}")
+                        print(f"[WhatsApp Scheduler] Falló el envío a {num_principal}")
                     
                     # Confirmar cambios en la base de datos tras cada mensaje
                     db.commit()

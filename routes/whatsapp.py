@@ -363,8 +363,40 @@ def send_global_broadcast_task(
         pausa_lote_a = float(batch_pause_min) if batch_pause_min and float(batch_pause_min) >= 1.0 else 300.0
         pausa_lote_b = float(batch_pause_max) if batch_pause_max and float(batch_pause_max) >= pausa_lote_a else max(pausa_lote_a, 600.0)
 
-        total_clientes = len(clientes)
-        print(f"[Broadcast Task] Iniciando difusión masiva con protección anti-baneo a {total_clientes} clientes ({alcance_label}). Lotes: {tamano_lote}. Intervalo por mensaje: {delay_a:.1f}-{delay_b:.1f}s. Pausa entre lotes: {pausa_lote_a/60:.1f}-{pausa_lote_b/60:.1f} min.")
+        # Deduplicar clientes para garantizar que nunca se envíe doble vez al mismo cliente:
+        # Se filtra por: ID de cliente, Cédula del cliente y Primer número válido de WhatsApp
+        clientes_unicos = []
+        seen_ids = set()
+        seen_cedulas = set()
+        seen_numeros = set()
+
+        for c in clientes:
+            if not c or not c.celular:
+                continue
+            if c.id in seen_ids:
+                continue
+
+            num_principal = whatsapp_service.format_whatsapp_number(c.celular)
+            if not num_principal:
+                continue
+
+            ced_clean = str(c.cedula or "").strip().lower()
+            if ced_clean and ced_clean in seen_cedulas:
+                print(f"[Broadcast Task] Omitiendo cliente duplicado por cédula {c.cedula} ({c.nombre})")
+                continue
+
+            if num_principal in seen_numeros:
+                print(f"[Broadcast Task] Omitiendo cliente duplicado por número de WhatsApp {num_principal} ({c.nombre})")
+                continue
+
+            seen_ids.add(c.id)
+            if ced_clean:
+                seen_cedulas.add(ced_clean)
+            seen_numeros.add(num_principal)
+            clientes_unicos.append(c)
+
+        total_clientes = len(clientes_unicos)
+        print(f"[Broadcast Task] Iniciando difusión masiva con protección anti-baneo a {total_clientes} clientes únicos ({alcance_label}). Lotes: {tamano_lote}. Intervalo por mensaje: {delay_a:.1f}-{delay_b:.1f}s. Pausa entre lotes: {pausa_lote_a/60:.1f}-{pausa_lote_b/60:.1f} min.")
         
         # Registrar campaña de difusión en historial
         difusion_registro = models.WhatsAppDifusionHistorial(
@@ -384,22 +416,21 @@ def send_global_broadcast_task(
         exitosos = 0
         fallidos = 0
 
-        for idx, cliente in enumerate(clientes):
+        for idx, cliente in enumerate(clientes_unicos):
             numero = (cliente.celular or "").strip()
-            if not numero:
+            num_principal = whatsapp_service.format_whatsapp_number(numero)
+            if not num_principal:
                 fallidos += 1
                 continue
 
             mensaje_personalizado = personalizar_mensaje_cliente(mensaje, cliente)
-            # send_whatsapp_message extrae y despacha a todos los números válidos del cliente si tiene más de uno
-            success = whatsapp_service.send_whatsapp_message(numero, mensaje_personalizado, priority="bulk")
+            # send_whatsapp_message despacha únicamente al primer número válido
+            success = whatsapp_service.send_whatsapp_message(num_principal, mensaje_personalizado, priority="bulk")
             
             if success:
                 exitosos += 1
                 try:
-                    targets = whatsapp_service.extract_all_whatsapp_numbers(numero)
-                    for num_tgt in (targets if targets else [numero]):
-                        registrar_mensaje_chat(db, num_tgt, "operador", mensaje_personalizado, cliente.id if cliente else None)
+                    registrar_mensaje_chat(db, num_principal, "operador", mensaje_personalizado, cliente.id if cliente else None)
                 except Exception:
                     pass
             else:
@@ -407,7 +438,7 @@ def send_global_broadcast_task(
 
             # Guardar en historial individual
             historial = models.WhatsAppHistorial(
-                numero_destino=numero,
+                numero_destino=num_principal,
                 mensaje=mensaje_personalizado,
                 tipo_envio=f"difusion_{nodo_clean if nodo_clean else 'global'}",
                 estado="enviado" if success else "fallido",
@@ -470,12 +501,15 @@ def enviar_whatsapp_manual(
         if not numero or not mensaje:
             raise HTTPException(status_code=400, detail="Número y mensaje son obligatorios")
         
-        # Extraer todos los números posibles para buscar cliente y registrar
+        # Extraer el primer número válido para WhatsApp
         targets = whatsapp_service.extract_all_whatsapp_numbers(numero)
+        primary_target = targets[0] if targets else whatsapp_service.format_single_number(numero)
+        if not primary_target:
+            raise HTTPException(status_code=400, detail="El número proporcionado no es válido para WhatsApp.")
 
-        # Buscar si alguno de los números corresponde a un cliente en la BD para personalizar
+        # Buscar si el número corresponde a un cliente en la BD para personalizar
         cliente = None
-        for t in (targets if targets else [numero]):
+        for t in [primary_target]:
             t_digits = re.sub(r'\D', '', t)
             t_ecuador = "0" + t_digits[3:] if t_digits.startswith("593") and len(t_digits) > 3 else t_digits
             cliente = db.query(models.Cliente).filter(
@@ -492,8 +526,8 @@ def enviar_whatsapp_manual(
             if tiene_variables:
                 mensaje_final = personalizar_mensaje_cliente(mensaje, cliente)
 
-        # Enviar mensaje usando el servicio unificado a todos los números del destinatario
-        success = whatsapp_service.send_whatsapp_message(numero, mensaje_final, priority="manual")
+        # Enviar mensaje usando el servicio unificado únicamente al primer número del cliente
+        success = whatsapp_service.send_whatsapp_message(primary_target, mensaje_final, priority="manual")
         
         if not success:
             raise HTTPException(
@@ -513,7 +547,7 @@ def enviar_whatsapp_manual(
         else:
             # Guardar en historial general
             historial = models.WhatsAppHistorial(
-                numero_destino=numero,
+                numero_destino=primary_target,
                 mensaje=mensaje_final,
                 tipo_envio="manual",
                 estado="enviado",
@@ -523,18 +557,17 @@ def enviar_whatsapp_manual(
             db.add(historial)
             db.commit()
 
-        # Guardar en el chat bidireccional del cliente para cada número
+        # Guardar en el chat bidireccional del cliente para el número al que realmente se envió
         try:
-            for t in (targets if targets else [numero]):
-                registrar_mensaje_chat(db, t, "operador", mensaje_final, cliente.id if cliente else None)
+            registrar_mensaje_chat(db, primary_target, "operador", mensaje_final, cliente.id if cliente else None)
         except Exception as chat_err:
             print(f"[Chat Warning] Error al registrar en chat: {chat_err}")
         
         return {
             "success": True,
-            "message": f"Mensaje enviado a {numero}",
-            "numero": numero,
-            "destinatarios": targets
+            "message": f"Mensaje enviado a {primary_target}",
+            "numero": primary_target,
+            "destinatarios": [primary_target]
         }
     
     except HTTPException:
@@ -938,6 +971,7 @@ def _reintentar_fallidos_task(ids_fallidos: list):
     db = SessionLocal()
     reintentados = 0
     errores = 0
+    seen_destinos = set()
     try:
         for hist_id in ids_fallidos:
             try:
@@ -945,18 +979,28 @@ def _reintentar_fallidos_task(ids_fallidos: list):
                 if not item or item.estado != "fallido":
                     continue
                 numero = item.numero_destino
+                target_num = whatsapp_service.format_whatsapp_number(numero) or numero
+                if not target_num:
+                    continue
+
+                # Evitar reintentar dos veces al mismo destinatario con el mismo contenido
+                dup_key = f"{target_num}_{item.mensaje}"
+                if dup_key in seen_destinos:
+                    item.estado = "cancelado_duplicado"
+                    db.commit()
+                    continue
+                seen_destinos.add(dup_key)
+
                 msg = item.mensaje
-                ok = whatsapp_service.send_whatsapp_message(numero, msg, priority="bulk")
+                ok = whatsapp_service.send_whatsapp_message(target_num, msg, priority="bulk")
                 if ok:
                     item.estado = "enviado"
                     item.fecha_envio = datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S")
                     reintentados += 1
                     db.commit()
-                    # Registrar en el chat para cada número extraído
+                    # Registrar en el chat para el número destino
                     try:
-                        targets = whatsapp_service.extract_all_whatsapp_numbers(numero)
-                        for t in (targets if targets else [numero]):
-                            registrar_mensaje_chat(db, t, "operador", msg)
+                        registrar_mensaje_chat(db, target_num, "operador", msg)
                     except Exception:
                         pass
                 else:

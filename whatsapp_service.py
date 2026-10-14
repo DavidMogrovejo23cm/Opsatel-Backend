@@ -408,17 +408,10 @@ def _send_single_whatsapp_message(clean_num: str, mensaje: str, media_path: str 
 
 def send_whatsapp_message(numero: str, mensaje: str, media_path: str = None, mime_type: str = "image/png", priority: str = "reply") -> bool:
     """
-    Envía un mensaje o multimedia a uno o varios números contenidos en 'numero'.
-    Si 'numero' contiene múltiples teléfonos (separados por espacio, coma, barra, etc.),
-    extrae cada número válido y envía el mensaje a todos ellos.
-    Retorna True si al menos uno fue enviado exitosamente.
-
-    priority:
-      - 'reply'  (defecto) respuesta a un mensaje entrante (chatbot/operador en chat).
-      - 'manual' envío puntual de un operador.
-      - 'bulk'   difusión, envío programado o reintentos: pasa por el gobernador anti-bloqueo del puente,
-                 varía el texto (spintax), añade pie de baja y envía solo al primer número válido del cliente
-                 (salvo WA_BULK_ALL_NUMBERS=true).
+    Envía un mensaje o multimedia al PRIMER número válido de WhatsApp contenido en 'numero'.
+    Si 'numero' contiene múltiples teléfonos (separados por espacio, coma, barra, guion, etc.),
+    extrae los números válidos y despacha ÚNICAMENTE al que esté primero, garantizando
+    que nunca se envíen mensajes a números secundarios del cliente.
     """
     if not numero:
         print("[WhatsApp Service] Error: Número de teléfono vacío.")
@@ -433,27 +426,17 @@ def send_whatsapp_message(numero: str, mensaje: str, media_path: str = None, mim
             print(f"[WhatsApp Service] Error: No se pudo formatear/extraer ningún número válido de '{numero}'.")
             return False
 
+    # REGLA OBLIGATORIA: Enviar únicamente al primer número válido del cliente
+    target_num = targets[0]
+
     is_bulk = priority == "bulk"
-    success_any = False
-    for i, target_num in enumerate(targets):
-        if i > 0:
-            # Nunca enviar en ráfaga a varios números del mismo destinatario
-            time.sleep(random.uniform(45, 120) if is_bulk else random.uniform(3, 8))
+    mensaje_envio = mensaje
+    if is_bulk:
+        mensaje_envio = aplicar_spintax(mensaje)
+        if BULK_FOOTER and "BAJA" not in (mensaje_envio or "").upper():
+            mensaje_envio = f"{mensaje_envio.rstrip()}\n\n{BULK_FOOTER}"
 
-        mensaje_envio = mensaje
-        if is_bulk:
-            mensaje_envio = aplicar_spintax(mensaje)
-            if BULK_FOOTER and "BAJA" not in (mensaje_envio or "").upper():
-                mensaje_envio = f"{mensaje_envio.rstrip()}\n\n{BULK_FOOTER}"
-
-        ok = _send_single_whatsapp_message(target_num, mensaje_envio, media_path=media_path, mime_type=mime_type, priority=priority)
-        if ok:
-            success_any = True
-            # Difusión: basta con un número válido por cliente (menos volumen = menos riesgo de spam)
-            if is_bulk and not BULK_ALL_NUMBERS:
-                break
-
-    return success_any
+    return _send_single_whatsapp_message(target_num, mensaje_envio, media_path=media_path, mime_type=mime_type, priority=priority)
 
 def send_whatsapp_media(numero: str, media_path: str, caption: str = "", mime_type: str = "image/png") -> bool:
     """

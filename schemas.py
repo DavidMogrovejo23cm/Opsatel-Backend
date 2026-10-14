@@ -9,6 +9,7 @@ class ClienteCreate(BaseModel):
     cedula_tipo: Optional[str] = None
     cedula_frontal: Optional[str] = None
     cedula_posterior: Optional[str] = None
+    foto_fachada: Optional[str] = None
     celular: str
     correo: Optional[str] = None
     direccion: str
@@ -135,6 +136,7 @@ class ClienteUpdateGeneral(BaseModel):
     cedula_tipo: Optional[str] = None
     cedula_frontal: Optional[str] = None
     cedula_posterior: Optional[str] = None
+    foto_fachada: Optional[str] = None
     tiempo: Optional[str] = None
     arrienda: Optional[str] = None
     cuenta: Optional[str] = None
@@ -236,6 +238,7 @@ class ClienteResponse(BaseModel):
     cedula_tipo: Optional[str] = None
     cedula_frontal: Optional[str] = None
     cedula_posterior: Optional[str] = None
+    foto_fachada: Optional[str] = None
     ubicacion: Optional[str] = None
     estado: Optional[str] = "Activo"
     tiempo: Optional[str] = None

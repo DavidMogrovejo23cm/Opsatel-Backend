@@ -22,6 +22,7 @@ class Cliente(Base):
     cedula_tipo = Column("CEDULA_TIPO", String(100))
     cedula_frontal = Column("CEDULA_FRONTAL", Text)
     cedula_posterior = Column("CEDULA_POSTERIOR", Text)
+    foto_fachada = Column("FOTO_FACHADA", Text)
 
     celular = Column("CELULAR", String(255))
 
