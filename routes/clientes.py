@@ -286,6 +286,7 @@ def listar_clientes(db: Session = Depends(get_db)):
         
         has_updates = False
         for c in data:
+            c.bridge = c.breach
             # Asociar el estado QoS al objeto
             c.qos_status = qos_map.get(c.id, "NOT_CONFIGURED")
             if c.cod and str(c.cod).strip() != "" and str(c.cod).strip().upper() != "NONE":

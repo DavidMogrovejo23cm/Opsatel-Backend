@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List
 import models, schemas
 from database import get_db
@@ -34,8 +34,8 @@ def listar_hoja_ruta(db: Session = Depends(get_db)):
         print(f"Aviso actualizando registros de 24h en Hoja de Ruta: {e_up}")
 
     try:
-        # Ordenar por fecha (desc) y luego por hora (desc)
-        return db.query(models.HojaRuta).order_by(models.HojaRuta.fecha.asc(), models.HojaRuta.hora.asc()).all()
+        # Ordenar por fecha (asc) y luego por hora (asc)
+        return db.query(models.HojaRuta).options(joinedload(models.HojaRuta.cliente_ref)).order_by(models.HojaRuta.fecha.asc(), models.HojaRuta.hora.asc()).all()
     except Exception as e:
         print(f"Error en listar_hoja_ruta: {e}")
         raise HTTPException(status_code=500, detail=f"Error al obtener hoja de ruta: {str(e)}")

@@ -39,6 +39,7 @@ class ClienteUpdateTecnico(BaseModel):
     ont: str
     servicio: str
     breach: Optional[str] = None
+    bridge: Optional[str] = None
     id_port: str
     service_port: str
     ip: str
@@ -119,6 +120,7 @@ class ClienteUpdateGeneral(BaseModel):
     ont: Optional[str] = None
     servicio: Optional[str] = None
     breach: Optional[str] = None
+    bridge: Optional[str] = None
     id_port: Optional[str] = None
     service_port: Optional[str] = None
     ip: Optional[str] = None
@@ -250,6 +252,7 @@ class ClienteResponse(BaseModel):
     ont: Optional[str] = None
     servicio: Optional[str] = None
     breach: Optional[str] = None
+    bridge: Optional[str] = None
     id_port: Optional[str] = None
     service_port: Optional[str] = None
     ip: Optional[str] = None
@@ -595,6 +598,7 @@ class HojaRutaUpdate(BaseModel):
 class HojaRutaResponse(HojaRutaBase):
     id: int
     created_at: Optional[datetime] = None
+    foto_fachada: Optional[str] = None
 
     class Config:
         from_attributes = True

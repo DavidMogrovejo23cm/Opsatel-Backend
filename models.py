@@ -1,7 +1,7 @@
 # pyrefly: ignore [missing-import]
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Numeric, Boolean, Text, JSON, BigInteger, Enum
 # pyrefly: ignore [missing-import]
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from database import Base
 import datetime
 import enum
@@ -50,6 +50,7 @@ class Cliente(Base):
     servicio = Column("SERVICIO", Text)
 
     breach = Column("BREACH", Text)
+    bridge = synonym("breach")
 
     id_port = Column("ID_PORT", String(200))
 
@@ -417,6 +418,15 @@ class HojaRuta(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     cliente_ref = relationship("Cliente")
+
+    @property
+    def foto_fachada(self):
+        try:
+            if self.cliente_ref and self.cliente_ref.foto_fachada:
+                return self.cliente_ref.foto_fachada
+        except Exception:
+            pass
+        return None
 
 class Ticket(Base):
     __tablename__ = "tickets_desarrollo"
