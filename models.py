@@ -58,7 +58,7 @@ class Cliente(Base):
 
     ip = Column("IP", String(50))
 
-    dispositivo = Column("DISPOSITIVO", String(255))
+    dispositivo = Column("DISPOSITIVO", Text)
 
     potencia = Column("POTENCIA", String(50))
 

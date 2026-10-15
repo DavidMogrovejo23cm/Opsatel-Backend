@@ -1,6 +1,7 @@
 from database import engine
 # pyrefly: ignore [missing-import]
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
+import json
 import os
 import shutil
 import re
@@ -674,6 +675,111 @@ async def upload_fachada(id: int, fachada: UploadFile = File(...), db: Session =
     return {
         "message": "Foto de fachada subida exitosamente",
         "foto_fachada": cliente.foto_fachada
+    }
+
+
+@router.post("/{id}/upload-dispositivo", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
+async def upload_dispositivo(
+    id: int, 
+    equipo_ont: UploadFile = File(None), 
+    equipo_router: UploadFile = File(None), 
+    modelo: str = Form(None),
+    remove_ont: bool = Form(False),
+    remove_router: bool = Form(False),
+    db: Session = Depends(get_db)
+):
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    
+    upload_dir = "uploads/dispositivos"
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Validar límite de memoria/tamaño de 1.5 Megas (1,572,864 bytes) para cualquier foto
+    MAX_FILE_SIZE = 1572864 # Exactamente 1.5 MB
+    for f_obj, f_name in [(equipo_ont, "Equipo Bridge/ONT"), (equipo_router, "Router")]:
+        if f_obj and f_obj.filename:
+            f_obj.file.seek(0, os.SEEK_END)
+            size = f_obj.file.tell()
+            f_obj.file.seek(0)
+            if size > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"La foto de {f_name} supera el límite máximo de 1.5 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
+                )
+
+    def resolve_ext(f_obj):
+        ext = os.path.splitext(f_obj.filename)[1] if f_obj.filename else ""
+        if not ext:
+            ctype = str(getattr(f_obj, 'content_type', '') or '').lower()
+            if 'jpeg' in ctype or 'jpg' in ctype:
+                ext = ".jpg"
+            elif 'webp' in ctype:
+                ext = ".webp"
+            elif 'gif' in ctype:
+                ext = ".gif"
+            else:
+                ext = ".png"
+        return ext
+
+    timestamp = int(datetime.now().timestamp())
+
+    # Leer valor previo si existe
+    existing_data = {}
+    if cliente.dispositivo:
+        raw_val = str(cliente.dispositivo).strip()
+        if raw_val.startswith("{") and raw_val.endswith("}"):
+            try:
+                parsed = json.loads(raw_val)
+                if isinstance(parsed, dict):
+                    existing_data = parsed
+            except Exception:
+                existing_data = {"texto": raw_val}
+        else:
+            existing_data = {"texto": raw_val}
+
+    if remove_ont and "ont" in existing_data:
+        old_ont = existing_data.pop("ont", None)
+        if old_ont:
+            old_p = str(old_ont).lstrip("/")
+            if os.path.exists(old_p):
+                try: os.remove(old_p)
+                except Exception: pass
+
+    if remove_router and "router" in existing_data:
+        old_router = existing_data.pop("router", None)
+        if old_router:
+            old_p = str(old_router).lstrip("/")
+            if os.path.exists(old_p):
+                try: os.remove(old_p)
+                except Exception: pass
+
+    if equipo_ont and equipo_ont.filename:
+        ext = resolve_ext(equipo_ont)
+        file_path = f"{upload_dir}/ont_{id}_{timestamp}{ext}"
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(equipo_ont.file, buffer)
+        existing_data["ont"] = f"/{file_path}"
+
+    if equipo_router and equipo_router.filename:
+        ext = resolve_ext(equipo_router)
+        file_path = f"{upload_dir}/router_{id}_{timestamp}{ext}"
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(equipo_router.file, buffer)
+        existing_data["router"] = f"/{file_path}"
+
+    if modelo is not None and str(modelo).strip() != "":
+        existing_data["texto"] = str(modelo).strip()
+
+    cliente.dispositivo = json.dumps(existing_data, ensure_ascii=False)
+    db.commit()
+
+    return {
+        "message": "Fotos de equipos guardadas exitosamente en Dispositivo",
+        "dispositivo": cliente.dispositivo,
+        "ont": existing_data.get("ont"),
+        "router": existing_data.get("router"),
+        "texto": existing_data.get("texto")
     }
 
 
@@ -3032,7 +3138,7 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                 db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `CLAVE` TEXT"))
                 db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `RED` VARCHAR(255)"))
                 db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `UBICACION` TEXT"))
-                db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `DISPOSITIVO` VARCHAR(255)"))
+                db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `DISPOSITIVO` TEXT"))
                 db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `TECNICO` VARCHAR(255)"))
                 db.execute(text("ALTER TABLE `hoja_de_c__lculo_sin_t__tulo` MODIFY COLUMN `ACTIVADOR` VARCHAR(255)"))
             db.commit()

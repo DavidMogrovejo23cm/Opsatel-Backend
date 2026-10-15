@@ -104,7 +104,7 @@ def force_fix_columns():
         ("hoja_de_c__lculo_sin_t__tulo", "CLAVE", "TEXT"),
         ("hoja_de_c__lculo_sin_t__tulo", "RED", "VARCHAR(255)"),
         ("hoja_de_c__lculo_sin_t__tulo", "UBICACION", "TEXT"),
-        ("hoja_de_c__lculo_sin_t__tulo", "DISPOSITIVO", "VARCHAR(255)"),
+        ("hoja_de_c__lculo_sin_t__tulo", "DISPOSITIVO", "TEXT"),
         ("hoja_de_c__lculo_sin_t__tulo", "TECNICO", "VARCHAR(255)"),
         ("hoja_de_c__lculo_sin_t__tulo", "ACTIVADOR", "VARCHAR(255)"),
         ("hoja_de_c__lculo_sin_t__tulo", "PARROQUIA", "VARCHAR(255)"),
