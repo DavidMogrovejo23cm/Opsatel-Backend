@@ -850,13 +850,37 @@ def ver_potencia_ont(
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    gpon_port = getattr(cliente, "puerto", None)
-    ont_id_str = getattr(cliente, "id_port", None)
+    # 1. Buscar la última tarea de activación para obtener OLT, GPON y ONT ID exactos
+    last_task = db.query(models.OLTTask).filter(
+        models.OLTTask.cliente_id == cliente.id,
+        models.OLTTask.action == 'add_ont'
+    ).order_by(models.OLTTask.id.desc()).first()
 
-    if not gpon_port or not ont_id_str:
+    task_payload = {}
+    task_resp = {}
+    if last_task:
+        try:
+            if isinstance(last_task.payload, str):
+                task_payload = json.loads(last_task.payload)
+            elif isinstance(last_task.payload, dict):
+                task_payload = last_task.payload
+        except Exception:
+            pass
+        try:
+            if isinstance(last_task.response_json, str):
+                task_resp = json.loads(last_task.response_json)
+            elif isinstance(last_task.response_json, dict):
+                task_resp = last_task.response_json
+        except Exception:
+            pass
+
+    gpon_port = task_resp.get('gpon_port') or task_payload.get('gpon_port') or getattr(cliente, "puerto", None)
+    ont_id_str = task_resp.get('ont_id') or task_payload.get('ont_id') or getattr(cliente, "id_port", None)
+
+    if not gpon_port or ont_id_str is None:
         raise HTTPException(status_code=400, detail="El cliente no tiene puerto GPON asignado")
 
-    # El modelo suele guardar "Puerto 10"; la OLT necesita 0/0/10 o 0/1/10.
+    # Si el puerto viene como "Puerto 10" o "10", convertir a formato 0/X/10
     if "/" not in str(gpon_port):
         import re
         match = re.search(r"\d+", str(gpon_port))
@@ -866,25 +890,33 @@ def ver_potencia_ont(
         gpon_port = f"0/{frame}/{match.group()}"
 
     try:
-        ont_id = int(ont_id_str)
+        ont_id = int(str(ont_id_str).strip())
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail=f"ONT ID inválido: {ont_id_str}")
 
-    # Buscar OLT activa para el nodo del cliente
-    nodo = getattr(cliente, "nodo", None)
-    if nodo:
-        is_sayausi_nodo = is_nodo_sayausi(nodo)
+    # Buscar OLT activa: primero la OLT de la tarea registrada (máxima precisión)
+    olt_config = None
+    if last_task and last_task.olt_id:
         olt_config = db.query(models.OLTConfig).filter(
-            models.OLTConfig.active == True,
-            or_(
-                models.OLTConfig.nodo_asociado == nodo,
-                models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi_nodo else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
-                models.OLTConfig.nodo_asociado == None,
-                models.OLTConfig.nodo_asociado == ""
-            )
+            models.OLTConfig.id == last_task.olt_id,
+            models.OLTConfig.active == True
         ).first()
-    else:
-        olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
+
+    if not olt_config:
+        nodo = getattr(cliente, "nodo", None)
+        if nodo:
+            is_sayausi_nodo = is_nodo_sayausi(nodo)
+            olt_config = db.query(models.OLTConfig).filter(
+                models.OLTConfig.active == True,
+                or_(
+                    models.OLTConfig.nodo_asociado == nodo,
+                    models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi_nodo else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
+                    models.OLTConfig.nodo_asociado == None,
+                    models.OLTConfig.nodo_asociado == ""
+                )
+            ).first()
+        else:
+            olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
 
     if not olt_config:
         raise HTTPException(status_code=503, detail="No hay OLT activa configurada para este nodo")
@@ -892,15 +924,34 @@ def ver_potencia_ont(
     try:
         olt = OLTInterface(
             host=olt_config.host,
-            port=olt_config.port or 23,
+            port=olt_config.port or 22,
             username=olt_config.username,
             password=olt_config.password,
             timeout=15,
-            max_retries=1
+            max_retries=2
         )
 
         connected = olt.connect()
         if not connected:
+            if cliente.potencia:
+                try:
+                    p_num = float(str(cliente.potencia).strip())
+                    return {
+                        "success": True,
+                        "cliente_id": cliente_id,
+                        "nombre": cliente.nombre,
+                        "gpon_port": gpon_port,
+                        "ont_id": ont_id,
+                        "olt": olt_config.nombre,
+                        "potencia": {
+                            "rx_power": p_num,
+                            "power": p_num,
+                            "status": "cached",
+                            "cached": True
+                        }
+                    }
+                except ValueError:
+                    pass
             raise HTTPException(status_code=503, detail="No se pudo conectar a la OLT")
 
         try:
@@ -908,11 +959,41 @@ def ver_potencia_ont(
             if power_data and power_data.get('rx_power') is not None:
                 cliente.potencia = str(power_data.get('rx_power'))
                 try:
+                    cliente.potencia_verificada = True
+                    cliente.potencia_last_check = datetime.now()
+                except Exception:
+                    pass
+                if last_task and isinstance(last_task.response_json, dict):
+                    updated_resp = dict(last_task.response_json)
+                    updated_resp['potencia'] = power_data.get('rx_power')
+                    updated_resp['rx_power'] = power_data.get('rx_power')
+                    last_task.response_json = updated_resp
+                elif last_task and isinstance(last_task.response_json, str):
+                    try:
+                        updated_resp = json.loads(last_task.response_json)
+                        updated_resp['potencia'] = power_data.get('rx_power')
+                        updated_resp['rx_power'] = power_data.get('rx_power')
+                        last_task.response_json = updated_resp
+                    except Exception:
+                        pass
+                try:
                     db.commit()
                 except Exception as db_e:
                     logger.warning(f"No se pudo actualizar cliente.potencia en DB: {db_e}")
+            elif (not power_data or power_data.get('rx_power') is None) and cliente.potencia:
+                try:
+                    p_num = float(str(cliente.potencia).strip())
+                    if not isinstance(power_data, dict):
+                        power_data = {}
+                    power_data['rx_power'] = p_num
+                    power_data['power'] = p_num
+                except ValueError:
+                    pass
         finally:
             olt.disconnect()
+
+        if not isinstance(power_data, dict):
+            power_data = {}
 
         # Auditoría
         import observability as obs
@@ -976,21 +1057,34 @@ def reset_cliente_ont(
 
     ont_id = str(ont_id_str).strip()
 
-    # Buscar OLT activa para el nodo del cliente
-    nodo = getattr(cliente, "nodo", None)
-    if nodo:
-        is_sayausi_nodo = is_nodo_sayausi(nodo)
+    # Buscar última tarea para tomar la OLT exacta si existe
+    last_task = db.query(models.OLTTask).filter(
+        models.OLTTask.cliente_id == cliente.id,
+        models.OLTTask.action == 'add_ont'
+    ).order_by(models.OLTTask.id.desc()).first()
+
+    olt_config = None
+    if last_task and last_task.olt_id:
         olt_config = db.query(models.OLTConfig).filter(
-            models.OLTConfig.active == True,
-            or_(
-                models.OLTConfig.nodo_asociado == nodo,
-                models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi_nodo else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
-                models.OLTConfig.nodo_asociado == None,
-                models.OLTConfig.nodo_asociado == ""
-            )
+            models.OLTConfig.id == last_task.olt_id,
+            models.OLTConfig.active == True
         ).first()
-    else:
-        olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
+
+    if not olt_config:
+        nodo = getattr(cliente, "nodo", None)
+        if nodo:
+            is_sayausi_nodo = is_nodo_sayausi(nodo)
+            olt_config = db.query(models.OLTConfig).filter(
+                models.OLTConfig.active == True,
+                or_(
+                    models.OLTConfig.nodo_asociado == nodo,
+                    models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi_nodo else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
+                    models.OLTConfig.nodo_asociado == None,
+                    models.OLTConfig.nodo_asociado == ""
+                )
+            ).first()
+        else:
+            olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
 
     if not olt_config:
         raise HTTPException(status_code=503, detail="No hay OLT activa configurada para este nodo")
@@ -998,11 +1092,11 @@ def reset_cliente_ont(
     try:
         olt = OLTInterface(
             host=olt_config.host,
-            port=olt_config.port or 23,
+            port=olt_config.port or 22,
             username=olt_config.username,
             password=olt_config.password,
             timeout=15,
-            max_retries=1
+            max_retries=2
         )
 
         connected = olt.connect()

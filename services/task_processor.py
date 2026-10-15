@@ -21,6 +21,7 @@ from sqlalchemy import and_, or_
 
 from services.olt_interface import OLTInterface, OLTConnectionError, OLTCommandError
 from services.command_sanitizer import CommandSanitizer, CommandSanitizationError
+from services.mac_utils import combine_macs, extract_ont_mac, extract_router_mac
 import models
 
 
@@ -941,7 +942,7 @@ class TaskProcessor:
                                                     real_client_mac = olt.get_mac_from_port_ont(gpon_port, ont_id_val)
                                                 if real_client_mac:
                                                     log_mt(f"[MikroTik] ¡MAC del router aprendida en OLT!: {real_client_mac}")
-                                                    mt_cliente.mac = real_client_mac
+                                                    mt_cliente.mac = combine_macs(mt_cliente.mac or validated_payload.get('mac'), real_client_mac)
                                                     self.db.commit()
                                             except Exception as olt_mac_err:
                                                 logger.debug(f"Intento {poll_attempt} de lectura de MAC en OLT: {olt_mac_err}")
@@ -950,10 +951,12 @@ class TaskProcessor:
                                         target_search_mac = ""
                                         if real_client_mac:
                                             target_search_mac = real_client_mac.replace(':', '').replace('-', '').upper()
-                                        elif provision_type == 'ont':
-                                            ont_raw_mac = validated_payload.get('mac', '')
-                                            if ont_raw_mac:
-                                                target_search_mac = ont_raw_mac.replace(':', '').replace('-', '').upper()
+                                        else:
+                                            r_mac = extract_router_mac(mt_cliente.mac)
+                                            o_mac = extract_ont_mac(mt_cliente.mac) or validated_payload.get('mac', '')
+                                            cand = r_mac or o_mac
+                                            if cand:
+                                                target_search_mac = cand.replace(':', '').replace('-', '').upper()
 
                                         log_mt(f"[MikroTik] Buscando lease dinámico (Intento {poll_attempt}/{lease_attempts} | MAC OLT: {real_client_mac or 'Esperando tráfico'})...")
 
@@ -1005,8 +1008,8 @@ class TaskProcessor:
                                         lease_server = lease.get('server', 'unknown')
                                         lease_mac_found = lease.get('mac-address', '')
                                         
-                                        if lease_mac_found and not mt_cliente.mac:
-                                            mt_cliente.mac = lease_mac_found
+                                        if lease_mac_found:
+                                            mt_cliente.mac = combine_macs(mt_cliente.mac or validated_payload.get('mac'), lease_mac_found)
                                             self.db.commit()
 
                                         log_mt(f"[MikroTik] Lease dinámico encontrado. ID: {lease_id} | IP: {lease_ip} | MAC: {lease_mac_found} | Server: {lease_server}")
@@ -1129,6 +1132,41 @@ class TaskProcessor:
                             updated_json = dict(task.response_json)
                             updated_json['mikrotik_log'] = "\n".join(mt_logs)
                             task.response_json = updated_json
+
+                    # ── VERIFICACIÓN ÓPTICA FINAL (Post-MikroTik) ──
+                    # El tiempo transcurrido durante la búsqueda de lease en MikroTik
+                    # permite que la ONT termine de estabilizar sus transceptores ópticos.
+                    try:
+                        resp_has_rx = bool(isinstance(task.response_json, dict) and task.response_json.get('rx_power') is not None)
+                        if olt and olt.is_connected and not resp_has_rx:
+                            logger.info(f"[Power-PostMikroTik] Comprobando potencia óptica final para {gpon_port} ID {ont_id_val}...")
+                            post_power = olt.check_ont_power(gpon_port, ont_id_val)
+                            if post_power and post_power.get('rx_power') is not None:
+                                power_val = post_power.get('rx_power')
+                                logger.info(f"[Power-PostMikroTik] ✓ Potencia capturada exitosamente tras MikroTik: {power_val} dBm")
+                                if mt_cliente:
+                                    mt_cliente.potencia = str(power_val)
+                                    try:
+                                        mt_cliente.potencia_verificada = True
+                                        mt_cliente.potencia_last_check = datetime.now()
+                                    except Exception:
+                                        pass
+                                if isinstance(task.response_json, dict):
+                                    updated_json = dict(task.response_json)
+                                    updated_json['potencia'] = power_val
+                                    updated_json['rx_power'] = power_val
+                                    updated_json['tx_power'] = post_power.get('tx_power')
+                                    updated_json['olt_rx_power'] = post_power.get('olt_rx_power')
+                                    updated_json['estado_ont'] = post_power.get('status')
+                                    task.response_json = updated_json
+                    except Exception as pw_post_err:
+                        logger.warning(f"[Power-PostMikroTik] Error leyendo potencia post-MikroTik (no crítico): {pw_post_err}")
+
+                    # Sincronizar MAC en response_json para que el frontend reciba ambos (ONT y Router)
+                    if mt_cliente and mt_cliente.mac and isinstance(task.response_json, dict):
+                        updated_json = dict(task.response_json)
+                        updated_json['mac'] = mt_cliente.mac
+                        task.response_json = updated_json
             else:
                 logger.error(f"✗ Comando falló")
                 task.status = 'failed'

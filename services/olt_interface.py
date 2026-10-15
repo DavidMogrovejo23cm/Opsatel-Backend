@@ -1575,79 +1575,116 @@ class OLTInterface:
                 'responses': [resp for _, resp in responses],
             }
     
-    def parse_ont_power(self, response: str) -> Dict[str, Optional[float]]:
+    @staticmethod
+    def parse_ont_optical_full(response: str) -> Dict[str, Optional[float]]:
         """
-        Parsea respuesta de 'display ont optical-info' para extraer potencia RX y TX.
-
-        Formatos reales Huawei OLT:
-          OLT Rx ONT optical power(dBm) : -22.30
-          ONT Tx power(dBm)             :   2.10
-          Rx optical power(dBm)         : -23.45
-          RX power(dBm)                 : -23.45
-          Rx power(dBm)                 : -23.45
-
-        Returns:
-            {'rx_power': float|None, 'tx_power': float|None}
+        Parsea exhaustivamente la respuesta de 'display ont optical-info' de Huawei OLT.
+        Extrae rx_power (con fallback a OLT Rx si la ONT aún no reporta Rx interno),
+        tx_power, olt_rx_power, temperature, voltage y bias_current.
         """
-        result: Dict[str, Optional[float]] = {'rx_power': None, 'tx_power': None}
+        result: Dict[str, Optional[float]] = {
+            'rx_power': None,
+            'tx_power': None,
+            'olt_rx_power': None,
+            'temperature': None,
+            'voltage': None,
+            'bias_current': None,
+        }
+        if not response:
+            return result
+
         try:
-            rx_patterns = [
-                # 1. Potencia recibida en la ONT del cliente (ej: Rx optical power(dBm) : -20.17)
-                r'^\s*Rx\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                r'^\s*RX\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                r'^\s*Rx\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                r'(?<!OLT\s)Rx\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                # 2. Fallback: OLT Rx ONT optical power (si la ONT no reporta la potencia directa)
-                r'OLT\s+Rx\s+ONT\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                r'(?:RX|Rx)\s*power.*?:\s*([-\d.]+)',
-                r'optical\s+power.*?:\s*([-\d.]+)',
-            ]
-            tx_patterns = [
-                r'ONT\s+Tx\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                r'Tx\s+optical\s+power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                r'TX\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-                r'Tx\s*power\s*\(\s*dBm\s*\)\s*:\s*([-+]?\d+(?:\.\d+)?)',
-            ]
+            # 1. Potencia recibida en la ONT (Rx optical power)
+            m_rx = re.search(
+                r'(?<!OLT\s)(?:Rx\s*optical\s*power|RX\s*power)\s*(?:\(\s*dBm\s*\))?\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                response,
+                re.IGNORECASE
+            )
+            if m_rx:
+                result['rx_power'] = float(m_rx.group(1).strip())
+            else:
+                # Fallback: OLT Rx ONT optical power (medida directamente por el módulo SFP de la OLT)
+                m_olt_rx_fallback = re.search(
+                    r'OLT\s+Rx\s+ONT\s+optical\s+power\s*(?:\(\s*dBm\s*\))?\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                    response,
+                    re.IGNORECASE
+                )
+                if m_olt_rx_fallback:
+                    result['rx_power'] = float(m_olt_rx_fallback.group(1).strip())
+                else:
+                    # Fallback genérico para otros formatos
+                    m_gen_rx = re.search(r'(?:RX|Rx)\s*power.*?:\s*([-\d.]+)', response, re.IGNORECASE)
+                    if m_gen_rx:
+                        try:
+                            result['rx_power'] = float(m_gen_rx.group(1).strip())
+                        except ValueError:
+                            pass
 
-            for pattern in rx_patterns:
-                match = re.search(pattern, response, re.IGNORECASE | re.MULTILINE)
-                if match:
-                    result['rx_power'] = float(match.group(1).strip())
-                    logger.debug(f"RX potencia parseada: {result['rx_power']} dBm")
-                    break
+            # 2. Potencia transmitida por la ONT (Tx optical power)
+            m_tx = re.search(
+                r'(?:Tx\s*optical\s*power|TX\s*power|ONT\s+Tx\s+power)\s*(?:\(\s*dBm\s*\))?\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                response,
+                re.IGNORECASE
+            )
+            if m_tx:
+                result['tx_power'] = float(m_tx.group(1).strip())
 
-            for pattern in tx_patterns:
-                match = re.search(pattern, response, re.IGNORECASE)
-                if match:
-                    result['tx_power'] = float(match.group(1).strip())
-                    logger.debug(f"TX potencia parseada: {result['tx_power']} dBm")
-                    break
+            # 3. Potencia recibida en la OLT desde la ONT
+            m_olt_rx = re.search(
+                r'OLT\s+Rx\s+ONT\s+optical\s+power\s*(?:\(\s*dBm\s*\))?\s*:\s*([-+]?\d+(?:\.\d+)?)',
+                response,
+                re.IGNORECASE
+            )
+            if m_olt_rx:
+                result['olt_rx_power'] = float(m_olt_rx.group(1).strip())
 
-            if result['rx_power'] is None:
-                logger.warning(f"No se encontró potencia RX en respuesta. Raw: {response[:300]}")
+            # 4. Temperatura del transceptor (°C)
+            m_temp = re.search(r'(?:Operating|Module|System|\b)?\s*temperature\s*(?:\(\s*C\s*\))?\s*:\s*([-+]?\d+(?:\.\d+)?)', response, re.IGNORECASE)
+            if m_temp:
+                result['temperature'] = float(m_temp.group(1).strip())
+
+            # 5. Voltaje de alimentación (V)
+            m_volt = re.search(r'(?:Supply\s*)?voltage\s*(?:\(\s*V\s*\))?\s*:\s*([-+]?\d+(?:\.\d+)?)', response, re.IGNORECASE)
+            if m_volt:
+                result['voltage'] = float(m_volt.group(1).strip())
+
+            # 6. Corriente de polarización láser (mA)
+            m_bias = re.search(r'(?:Tx\s*)?bias\s*current\s*(?:\(\s*mA\s*\))?\s*:\s*([-+]?\d+(?:\.\d+)?)', response, re.IGNORECASE)
+            if m_bias:
+                result['bias_current'] = float(m_bias.group(1).strip())
 
             return result
 
         except Exception as e:
-            logger.error(f"Error parseando potencia: {e}")
+            logger.error(f"Error parseando optical-info completo: {e}")
             return result
+
+    def parse_ont_power(self, response: str) -> Dict[str, Optional[float]]:
+        """
+        Parsea respuesta de 'display ont optical-info' para extraer potencia RX y TX.
+        (Mantiene compatibilidad con llamadas existentes).
+        """
+        full_data = self.parse_ont_optical_full(response)
+        return {
+            'rx_power': full_data.get('rx_power'),
+            'tx_power': full_data.get('tx_power'),
+        }
     
-    def parse_ont_status(self, response: str) -> Optional[str]:
+    @staticmethod
+    def parse_ont_status(response: str) -> Optional[str]:
         """
-        Parsea estado de ONT de respuesta de 'display ont info'.
-        Estados típicos: online, offline, working, etc.
-        
-        Args:
-            response: Respuesta cruda de la OLT
-            
-        Returns:
-            Estado de ONT o None si no se encuentra
+        Parsea estado de ONT de respuesta de 'display ont info' o 'display ont optical-info'.
+        Detecta Run state: online / offline, Control flag: active, etc.
         """
+        if not response:
+            return None
         try:
             patterns = [
-                r'ONT state:\s*(\w+)',
+                r'Run\s*state\s*:\s*(\w+)',
+                r'ONT\s*state\s*:\s*(\w+)',
                 r'State:\s*(\w+)',
                 r'(?:Current )?Status:\s*(\w+)',
+                r'Control\s*flag\s*:\s*(\w+)',
             ]
             
             for pattern in patterns:
@@ -1800,101 +1837,136 @@ class OLTInterface:
     
     def check_ont_power(self, gpon_port: str, ont_id: str) -> Dict[str, Any]:
         """
-        Verifica la potencia de un ONT específico.
+        Verifica la potencia de un ONT específico en tiempo real con reintentos y lectura completa.
         
         Args:
-            gpon_port: Puerto GPON (ej: "0/0/1")
+            gpon_port: Puerto GPON (ej: "0/0/1" o "0/1/10")
             ont_id: ID de ONT (ej: "1")
             
         Returns:
-            Diccionario con {'power': float, 'status': str, 'response': str}
+            Diccionario con datos ópticos y de estado:
+            {'power': float, 'rx_power': float, 'tx_power': float, 'olt_rx_power': float,
+             'temperature': float, 'voltage': float, 'bias_current': float, 'status': str, 'uptime': str}
         """
         try:
-            # Extraer slot/port e interface
             parts = [p.strip() for p in str(gpon_port).split('/') if p.strip()]
             if len(parts) >= 3:
-                interface = f"{parts[0]}/{parts[1]}"
+                gpon_interface = f"{parts[0]}/{parts[1]}"
                 port_num = parts[2]
             else:
-                interface = "0/0"
-                port_num = "0"
+                gpon_interface = '/'.join(parts[:2]) if len(parts) >= 2 else '0/0'
+                port_num = parts[-1] if parts else '0'
 
-            logger.info(f"Verificando potencia ONT {gpon_port} {ont_id}...")
+            logger.info(f"[check_ont_power] Consultando potencia ONT {gpon_port} (interfaz {gpon_interface}, puerto {port_num}, ID {ont_id})...")
             
-            # Entrar a la interfaz gpon correspondiente
-            try:
-                self.enter_privileged_mode()
-                self.enter_config_mode()
-                self.send_command(f"interface gpon {interface}", expect_string=r'\(config-if-gpon-', delay_factor=0.3)
-            except Exception as nav_err:
-                logger.warning(f"Error navegando a interfaz gpon para verificar potencia: {nav_err}")
+            # Garantizar modo de configuración (config)#
+            self._ensure_config_mode()
 
-            commands = [
-                f"display ont optical-info {port_num} {ont_id}",
-                f"display ont info {port_num} {ont_id}",
-            ]
-            
+            # Entrar a la interfaz GPON correspondiente
+            self.send_command(
+                f"interface gpon {gpon_interface}",
+                expect_string=r'\(config-if-gpon-',
+                delay_factor=0.3
+            )
+            self._current_mode = "gpon"
+            self._current_gpon = gpon_interface
+
+            optical_data: Dict[str, Optional[float]] = {
+                'rx_power': None,
+                'tx_power': None,
+                'olt_rx_power': None,
+                'temperature': None,
+                'voltage': None,
+                'bias_current': None,
+            }
+            status_val = None
+            uptime_val = None
             last_response = ""
-            for command in commands:
+
+            # 1. Consultar display ont optical-info con reintentos para estabilización
+            cmd_optical = f"display ont optical-info {port_num} {ont_id}"
+            for attempt in range(1, 4):
                 try:
-                    response = self.send_command(
-                        command,
+                    resp_opt = self.send_command(
+                        cmd_optical,
                         expect_string=r'\(config-if-gpon-',
                         delay_factor=0.3,
-                        read_timeout=10,
+                        read_timeout=12
                     )
-                    last_response = response
-                    power_data = self.parse_ont_power(response)
-                    rx_power = power_data['rx_power']
-                    tx_power = power_data['tx_power']
-                    status = self.parse_ont_status(response)
+                    last_response = resp_opt
+                    parsed_opt = self.parse_ont_optical_full(resp_opt)
+                    optical_data.update({k: v for k, v in parsed_opt.items() if v is not None})
 
-                    if rx_power is not None:
-                        # Salir de la interfaz GPON
-                        try:
-                            self.send_command("quit", expect_string=r'\(config\)#', delay_factor=0.3)
-                        except:
-                            pass
-                        return {
-                            'power': rx_power,      # backward-compat alias
-                            'rx_power': rx_power,
-                            'tx_power': tx_power,
-                            'status': status,
-                            'response': response,
-                            'gpon_port': gpon_port,
-                            'ont_id': ont_id,
-                            'timestamp': datetime.now().isoformat(),
-                            'command': command,
-                        }
-                except Exception as inner_exc:
-                    logger.debug(f"Comando {command} falló: {inner_exc}")
-                    continue
-            
-            # Salir de la interfaz GPON
+                    # Si obtuvimos rx_power válida, no es necesario esperar más
+                    if optical_data.get('rx_power') is not None:
+                        break
+
+                    if attempt < 3:
+                        time.sleep(1.5)
+                except Exception as opt_err:
+                    logger.debug(f"[check_ont_power] Intento {attempt} de optical-info falló: {opt_err}")
+
+            # 2. Consultar display ont info para obtener Run state (online/offline) y Last up time
+            cmd_info = f"display ont info {port_num} {ont_id}"
+            try:
+                resp_info = self.send_command(
+                    cmd_info,
+                    expect_string=r'\(config-if-gpon-',
+                    delay_factor=0.3,
+                    read_timeout=12
+                )
+                status_val = self.parse_ont_status(resp_info)
+                m_up = re.search(r'Last\s*up\s*time\s*:\s*([^\r\n]+)', resp_info, re.IGNORECASE)
+                if m_up:
+                    up_str = m_up.group(1).strip()
+                    if up_str != '-':
+                        uptime_val = up_str
+            except Exception as info_err:
+                logger.debug(f"[check_ont_power] Error consultando display ont info: {info_err}")
+
+            # 3. Salir de la interfaz GPON limpiamente
             try:
                 self.send_command("quit", expect_string=r'\(config\)#', delay_factor=0.3)
-            except:
+                self._current_mode = "config"
+                self._current_gpon = None
+            except Exception:
                 pass
 
+            rx_p = optical_data.get('rx_power')
             return {
-                'power': None,
-                'status': 'unknown',
+                'power': rx_p,           # backward-compat alias
+                'rx_power': rx_p,
+                'tx_power': optical_data.get('tx_power'),
+                'olt_rx_power': optical_data.get('olt_rx_power'),
+                'temperature': optical_data.get('temperature'),
+                'voltage': optical_data.get('voltage'),
+                'bias_current': optical_data.get('bias_current'),
+                'status': status_val or ('online' if rx_p is not None else 'offline'),
+                'uptime': uptime_val,
                 'response': last_response,
                 'gpon_port': gpon_port,
                 'ont_id': ont_id,
                 'timestamp': datetime.now().isoformat(),
-                'error': 'No se pudo leer potencia con los comandos disponibles',
             }
-        
+
         except Exception as e:
             logger.error(f"Error verificando potencia: {e}")
+            try:
+                self.send_command("quit", delay_factor=0.2)
+                self._current_mode = "config"
+                self._current_gpon = None
+            except Exception:
+                pass
             return {
                 'power': None,
+                'rx_power': None,
+                'tx_power': None,
                 'status': 'error',
                 'response': str(e),
                 'gpon_port': gpon_port,
                 'ont_id': ont_id,
-                'error': str(e)
+                'error': str(e),
+                'timestamp': datetime.now().isoformat(),
             }
     
     @staticmethod
@@ -2096,6 +2168,11 @@ def test_olt_interface():
     
     print("=" * 60)
     print("TEST COMPLETE\n")
+
+
+# Export helper functions for direct module-level access
+parse_ont_optical_full = OLTInterface.parse_ont_optical_full
+parse_ont_status = OLTInterface.parse_ont_status
 
 
 if __name__ == "__main__":

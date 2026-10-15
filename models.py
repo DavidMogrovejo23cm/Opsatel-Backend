@@ -73,7 +73,7 @@ class Cliente(Base):
     red = Column("RED", String(255))
 
     clave = Column("CLAVE", Text)
-    mac = Column("MAC", String(50))
+    mac = Column("MAC", String(255))
     instalation_date = Column("INSTALATION_DATE", String(50))
 
 
@@ -765,7 +765,7 @@ class ClienteEliminado(Base):
     cedula = Column(String(100))
     plan = Column(String(255))
     ip = Column(String(50))
-    mac = Column(String(50))
+    mac = Column(String(255))
     deleted_at = Column(DateTime, default=datetime.datetime.utcnow)
     deleted_by = Column(String(100))
     estado_olt = Column(String(50))      # "ELIMINADO", "OMITIDO", "ERROR"

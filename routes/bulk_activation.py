@@ -18,6 +18,7 @@ import models
 import observability as obs
 from routes.auth import require_role, get_current_user
 from services.command_sanitizer import CommandSanitizer, CommandSanitizationError
+from services.mac_utils import combine_macs, extract_ont_mac, extract_router_mac
 
 import unicodedata
 
@@ -344,11 +345,12 @@ def retry_activation(
     gpon_port = f"0/1/{puerto_num}" if is_sayausi else f"0/0/{puerto_num}"
 
     # Crear payload para eliminar
+    ont_mac_clean = extract_ont_mac(cliente.mac) or str(cliente.mac or "000000000000").replace(":", "").replace("-", "") or "000000000000"
     remove_payload = {
         "gpon_port": gpon_port,
         "ont_id": str(cliente.id_port or "0").strip(),
         "service_port": str(cliente.service_port or "").strip(),
-        "mac": str(cliente.mac or "000000000000").replace(":", "").replace("-", "") or "000000000000",
+        "mac": ont_mac_clean,
     }
 
     # Encolar remove_ont
@@ -423,11 +425,12 @@ def undo_last_activation(
     gpon_port = f"0/1/{puerto_num}" if is_sayausi else f"0/0/{puerto_num}"
 
     # Crear payload para eliminar
+    ont_mac_clean = extract_ont_mac(cliente.mac) or str(cliente.mac or "000000000000").replace(":", "").replace("-", "") or "000000000000"
     remove_payload = {
         "gpon_port": gpon_port,
         "ont_id": str(cliente.id_port or "0").strip(),
         "service_port": str(cliente.service_port or "").strip(),
-        "mac": str(cliente.mac or "000000000000").replace(":", "").replace("-", "") or "000000000000",
+        "mac": ont_mac_clean,
     }
 
     # Encolar tarea de eliminación (remove_ont)
@@ -539,7 +542,7 @@ def refresh_client_ip(
                 real_client_mac = olt.get_mac_from_port_ont(gpon_port_str, ont_id_str)
             if real_client_mac:
                 logger.info(f"[refresh-ip] MAC del router aprendida desde la OLT: {real_client_mac}")
-                cliente.mac = real_client_mac
+                cliente.mac = combine_macs(cliente.mac, real_client_mac)
                 db.commit()
                 break
     except Exception as olt_err:
@@ -550,9 +553,9 @@ def refresh_client_ip(
         except Exception:
             pass
 
-    mt_mac = real_client_mac or cliente.mac or ""
+    target_search_mac = extract_router_mac(cliente.mac) or real_client_mac or extract_ont_mac(cliente.mac) or cliente.mac or ""
     client_code = str(cliente.id).zfill(6)
-    clean_mac = mt_mac.replace(":", "").replace("-", "").upper() if mt_mac else ""
+    clean_mac = target_search_mac.replace(":", "").replace("-", "").upper() if target_search_mac else ""
     lease_found = None
 
     # Determinar los servidores DHCP candidatos basados en el puerto GPON
@@ -624,7 +627,7 @@ def refresh_client_ip(
                     break
 
         if not lease_found:
-            mac_info = f"MAC aprendida en OLT: {mt_mac}" if mt_mac else "La OLT aún no registra tráfico MAC en el service-port"
+            mac_info = f"MAC aprendida en OLT: {target_search_mac}" if target_search_mac else "La OLT aún no registra tráfico MAC en el service-port"
             raise HTTPException(
                 status_code=404,
                 detail=f"No se encontró un Lease DHCP en MikroTik para el cliente {client_code} ({mac_info}). Verifique que el router esté encendido y conectado por cable Ethernet al puerto LAN de la ONT/Bridge."
@@ -634,9 +637,9 @@ def refresh_client_ip(
         lease_ip = lease_found.get('address')
         lease_mac_real = lease_found.get('mac-address')
 
-        # Persistir MAC si vino del lease
-        if lease_mac_real and not real_client_mac:
-            cliente.mac = lease_mac_real
+        # Persistir MAC combinada si vino del lease
+        if lease_mac_real:
+            cliente.mac = combine_macs(cliente.mac, lease_mac_real)
             db.commit()
 
         # 2. Lógica de asignación de IP robusta (Normalizando acentos, espacios y mayúsculas en memoria)
@@ -712,7 +715,7 @@ def refresh_client_ip(
         return {
             "status": "ok",
             "ip": target_ip,
-            "mac": lease_mac_real or mt_mac,
+            "mac": cliente.mac or lease_mac_real or clean_mac,
             "message": f"IP del cliente refrescada y asignada con éxito: {target_ip}"
         }
 
