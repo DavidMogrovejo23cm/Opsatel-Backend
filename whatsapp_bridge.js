@@ -332,22 +332,22 @@ const envNum = (k, d) => { const v = parseFloat(process.env[k]); return Number.i
 const DAY_MS = 24 * 3600 * 1000;
 const AB = {
     tz: process.env.WA_TIMEZONE || 'America/Guayaquil',
-    windowStart: envNum('WA_BULK_WINDOW_START', 8),
-    windowEnd: envNum('WA_BULK_WINDOW_END', 19),
-    bulkGapSec: [envNum('WA_BULK_MIN_GAP_SEC', 60), envNum('WA_BULK_MAX_GAP_SEC', 180)],
-    manualGapSec: [4, 9],
-    replyGapSec: [1.5, 4],
-    hourlyCap: envNum('WA_BULK_HOURLY_CAP', 10),
-    dailyCap: envNum('WA_BULK_DAILY_CAP', 50),
-    warmupEnabled: (process.env.WA_WARMUP || 'on').toLowerCase() !== 'off',
-    warmupStart: envNum('WA_WARMUP_START', 15),
-    warmupStep: envNum('WA_WARMUP_STEP', 5),
-    perNumberCooldownMs: envNum('WA_PER_NUMBER_COOLDOWN_H', 6) * 3600 * 1000,
-    failThreshold: envNum('WA_FAIL_BREAKER', 3),
-    failPauseMs: envNum('WA_FAIL_PAUSE_MIN', 30) * 60 * 1000,
+    windowStart: envNum('WA_BULK_WINDOW_START', 7),
+    windowEnd: envNum('WA_BULK_WINDOW_END', 22),
+    bulkGapSec: [envNum('WA_BULK_MIN_GAP_SEC', 10), envNum('WA_BULK_MAX_GAP_SEC', 25)],
+    manualGapSec: [2, 6],
+    replyGapSec: [1, 3],
+    hourlyCap: envNum('WA_BULK_HOURLY_CAP', 60),
+    dailyCap: envNum('WA_BULK_DAILY_CAP', 300),
+    warmupEnabled: (process.env.WA_WARMUP || 'off').toLowerCase() === 'on',
+    warmupStart: envNum('WA_WARMUP_START', 30),
+    warmupStep: envNum('WA_WARMUP_STEP', 15),
+    perNumberCooldownMs: envNum('WA_PER_NUMBER_COOLDOWN_H', 0.5) * 3600 * 1000,
+    failThreshold: envNum('WA_FAIL_BREAKER', 8),
+    failPauseMs: envNum('WA_FAIL_PAUSE_MIN', 5) * 60 * 1000,
     logoutPauseMs: envNum('WA_LOGOUT_PAUSE_H', 12) * 3600 * 1000,
     numberOkTtlMs: 30 * DAY_MS,
-    numberBadTtlMs: 14 * DAY_MS
+    numberBadTtlMs: 2 * 3600 * 1000
 };
 
 const AB_STATE_DIR = path.join(process.cwd(), '.wwebjs_auth');
@@ -720,9 +720,20 @@ app.post('/antiban/restricted', (req, res) => {
 app.post('/antiban/clear', (req, res) => {
     ab.pausedUntil = 0;
     ab.pauseReason = '';
+    ab.nextBulkAt = 0;
     ab.consecutiveFails = 0;
     saveAb();
     res.json({ success: true, ...antibanSummary() });
+});
+
+// Endpoint explícito de cancelación de envíos en curso
+app.post('/cancel', (req, res) => {
+    ab.pausedUntil = 0;
+    ab.pauseReason = '';
+    ab.nextBulkAt = 0;
+    saveAb();
+    console.log('[WhatsApp Bridge] 🛑 Señal de cancelación recibida: pausas y temporizadores de lote reseteados.');
+    res.json({ success: true, message: 'Señal de cancelación procesada correctamente en el puente.' });
 });
 
 app.post('/antiban/opt-out', (req, res) => {
@@ -763,7 +774,9 @@ async function processSend({ number, message, finalCaption, mediaPath, mediaBase
     
     // Ecuador specific formatting (solo para @c.us)
     if (server !== 'lid') {
-        if (cleanNumber.startsWith('0') && cleanNumber.length === 10) {
+        if (cleanNumber.startsWith('59309') && cleanNumber.length === 13) {
+            cleanNumber = '593' + cleanNumber.substring(4);
+        } else if (cleanNumber.startsWith('0') && cleanNumber.length === 10) {
             cleanNumber = '593' + cleanNumber.substring(1);
         } else if (cleanNumber.length === 9 && !cleanNumber.startsWith('593')) {
             cleanNumber = '593' + cleanNumber;
@@ -796,14 +809,13 @@ async function processSend({ number, message, finalCaption, mediaPath, mediaBase
     // 1. Verificación previa: Comprobar si el número está registrado en WhatsApp (SOLO para @c.us)
     // IMPORTANTE: NO ejecutar getNumberId para @lid porque getNumberId solo acepta números de teléfono
     // y retorna null para LIDs, provocando rechazos erróneos.
-    // Los resultados se cachean: no se consulta de nuevo un número ya verificado (consultar números inexistentes en masa es señal de spam).
+    // Los resultados se cachean: no se consulta de nuevo un número ya verificado.
     let targetChatId = chatId;
     if (!chatId.endsWith('@lid') && server !== 'lid') {
         const cached = ab.numberCheck[cleanNumber];
         const nowT = Date.now();
         if (cached && cached.ok === false && nowT - cached.ts < AB.numberBadTtlMs) {
-            console.warn(`[WhatsApp Bridge] El número ${chatId} está en caché como NO registrado. Omitiendo envío.`);
-            return { status: 400, body: { success: false, error: 'El número no está registrado en WhatsApp.' } };
+            console.warn(`[WhatsApp Bridge] El número ${chatId} está en caché reciente como no verificado. Reintentando directo.`);
         }
         if (cached && cached.ok && cached.id && nowT - cached.ts < AB.numberOkTtlMs) {
             targetChatId = cached.id;
@@ -819,13 +831,12 @@ async function processSend({ number, message, finalCaption, mediaPath, mediaBase
                     ab.numberCheck[cleanNumber] = { ok: true, id: targetChatId, ts: Date.now() };
                     saveAb();
                 } else if (numberCheck === null) {
-                    console.warn(`[WhatsApp Bridge] El número ${chatId} no está registrado en WhatsApp. Omitiendo envío.`);
-                    ab.numberCheck[cleanNumber] = { ok: false, ts: Date.now() };
-                    saveAb();
-                    return { status: 400, body: { success: false, error: 'El número no está registrado en WhatsApp.' } };
+                    console.warn(`[WhatsApp Bridge] getNumberId retornó null para ${chatId}. Se procederá con envío directo a ${chatId}.`);
+                    targetChatId = chatId;
                 }
             } catch (errCheck) {
-                console.warn(`[WhatsApp Bridge] Aviso en verificación de número (${chatId}): ${errCheck.message}`);
+                console.warn(`[WhatsApp Bridge] Aviso en verificación de número (${chatId}): ${errCheck.message}. Usando chatId directo.`);
+                targetChatId = chatId;
             }
         }
     }
@@ -877,7 +888,7 @@ async function processSend({ number, message, finalCaption, mediaPath, mediaBase
         }
 
         const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout de 20 segundos al enviar por WhatsApp.')), 20000)
+            setTimeout(() => reject(new Error('Timeout de 45 segundos al enviar por WhatsApp.')), 45000)
         );
 
         const response = await Promise.race([sendPromise, timeoutPromise]);

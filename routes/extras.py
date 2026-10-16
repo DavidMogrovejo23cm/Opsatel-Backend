@@ -179,6 +179,7 @@ def recalcular_cuadricula_extra(cliente: models.ClienteExtra, db: Session):
                 pagos_por_mes[mes_key] = []
             pagos_por_mes[mes_key].append(p)
 
+    running_saldo = 0.0
     for i in range(12):
         mes_actual = meses_validos[i]
         if i < limite_ingreso_idx:
@@ -190,30 +191,28 @@ def recalcular_cuadricula_extra(cliente: models.ClienteExtra, db: Session):
                 total_mes = sum(float(p.monto or 0) for p in pagos_por_mes[mes_actual])
                 ultimo_pago = pagos_por_mes[mes_actual][-1]
                 setattr(cliente, f"{mes_actual}_pago", round(total_mes, 2))
-                # Saldo mensual exacto: si paga de más, saldo es negativo (EXCEDENTE). Si debe, saldo es positivo.
-                setattr(cliente, f"{mes_actual}_saldo", round(valor_mensual - total_mes, 2))
                 setattr(cliente, f"{mes_actual}_fecha_pago", ultimo_pago.fecha_pago.strftime("%d/%m/%Y") if ultimo_pago.fecha_pago else datetime.now().strftime("%d/%m/%Y"))
                 setattr(cliente, f"{mes_actual}_banco", ultimo_pago.metodo_pago)
                 setattr(cliente, f"{mes_actual}_factura", ultimo_pago.factura)
                 setattr(cliente, f"{mes_actual}_cod", ultimo_pago.referencia)
             else:
-                pago_guardado = float(getattr(cliente, f"{mes_actual}_pago", 0) or 0)
-                saldo_guardado = getattr(cliente, f"{mes_actual}_saldo")
-                if pago_guardado > 0:
-                    if saldo_guardado is None:
-                        setattr(cliente, f"{mes_actual}_saldo", round(valor_mensual - pago_guardado, 2))
-                else:
-                    if saldo_guardado is None or str(saldo_guardado).strip() == '':
-                        setattr(cliente, f"{mes_actual}_saldo", valor_mensual)
+                total_mes = float(getattr(cliente, f"{mes_actual}_pago", 0) or 0)
+
+            # Cuota mensual del cliente activo
+            fee_mes = valor_mensual if str(cliente.activo).strip().upper() != 'NO' and str(cliente.estado).strip().upper() != 'ELIMINADO' else 0.0
+            # Running balance con arrastre de excedentes:
+            running_saldo = round(running_saldo + fee_mes - total_mes, 2)
+            setattr(cliente, f"{mes_actual}_saldo", running_saldo)
 
     # Calcular totales globales
     total_pagado = 0.0
-    saldo_pendiente = 0.0
     for m in meses_validos:
         total_pagado += float(getattr(cliente, f"{m}_pago", 0) or 0)
-        saldo_pendiente += float(getattr(cliente, f"{m}_saldo", 0) or 0)
     cliente.total_pagado = round(total_pagado, 2)
-    cliente.saldo_pendiente = round(saldo_pendiente, 2)
+    # Saldo pendiente representa la deuda neta al mes actual
+    mes_actual_idx = datetime.now().month - 1
+    saldo_mes_actual = float(getattr(cliente, f"{meses_validos[mes_actual_idx]}_saldo", 0) or 0)
+    cliente.saldo_pendiente = max(0.0, saldo_mes_actual)
 
 @router.post("/{id}/pagar")
 def registrar_pago_extra(
@@ -428,33 +427,52 @@ def upload_database_extras(
                 if n_base > 0:
                     month_fees.append(n_base)
 
-                for c in range(start_c, end_c + 1):
-                    h = str(sheet.cell(1, c).value or '').strip().upper()
-                    v = sheet.cell(r, c).value
-                    if v is None: continue
+                if has_banco_header:
+                    # Formato estándar de 8 columnas
+                    for c in range(start_c, end_c + 1):
+                        h = str(sheet.cell(1, c).value or '').strip().upper()
+                        v = sheet.cell(r, c).value
+                        if v is None: continue
 
-                    if 'FACTURA' in h:
-                        m_info['factura'] = clean_val(v)
-                    elif 'FECHA A PAGAR' in h:
-                        m_info['fecha_a_pagar'] = clean_val(v)
-                    elif 'SALDO' in h:
-                        m_info['saldo'] = clean_num(v)
-                    elif 'COD' in h:
-                        m_info['cod'] = clean_val(v)
-                    elif 'BANCO' in h:
-                        m_info['banco'] = clean_val(v)
-                    elif h == 'PAGO':
-                        # Detección inteligente para columnas desplazadas sin encabezado BANCO
-                        if not has_banco_header and isinstance(v, str) and any(b in v.upper() for b in ['PICHINCHA', 'JEP', 'EFECTIVO', 'PRODUBANCO', 'GUAYAQUIL', 'PACIFICO', 'AUSTRO', 'COOP']):
-                            m_info['banco'] = clean_val(v)
-                        else:
-                            m_info['pago'] = clean_num(v)
-                    elif 'FECHA DE PAGO' in h:
-                        # Si no hay BANCO y el valor es numérico (desplazamiento de celda en excel original)
-                        if not has_banco_header and isinstance(v, (int, float)):
-                            m_info['pago'] = clean_num(v)
-                        else:
+                        if 'FACTURA' in h:
+                            m_info['factura'] = clean_val(v)
+                        elif 'FECHA A PAGAR' in h:
+                            m_info['fecha_a_pagar'] = clean_val(v)
+                        elif 'FECHA DE PAGO' in h:
                             m_info['fecha_pago'] = clean_val(v)
+                        elif h == 'PAGO':
+                            m_info['pago'] = clean_num(v)
+                        elif 'BANCO' in h:
+                            m_info['banco'] = clean_val(v)
+                        elif 'COD' in h:
+                            m_info['cod'] = clean_val(v)
+                        elif 'SALDO' in h:
+                            m_info['saldo'] = clean_num(v)
+                else:
+                    # Formato heredado de 7 columnas (desplazado sin encabezado BANCO)
+                    col2 = sheet.cell(r, start_c + 1).value # Factura o Fecha
+                    col3 = sheet.cell(r, start_c + 2).value # Fecha
+                    col4 = sheet.cell(r, start_c + 3).value # Pago
+                    col5 = sheet.cell(r, start_c + 4).value # Banco
+                    col6 = sheet.cell(r, start_c + 5).value # Cod
+                    col7 = sheet.cell(r, start_c + 6).value # Saldo
+
+                    if col2 is not None:
+                        s_col2 = str(col2).strip()
+                        if isinstance(col2, (datetime, date)) or (len(s_col2) >= 8 and ('/' in s_col2 or '-' in s_col2) and not s_col2.startswith('001') and not s_col2.startswith('C')):
+                            m_info['fecha_a_pagar'] = clean_val(col2)
+                        else:
+                            m_info['factura'] = clean_val(col2)
+                    if col3 is not None:
+                        m_info['fecha_pago'] = clean_val(col3)
+                    elif m_info['fecha_a_pagar'] and not m_info['factura']:
+                        m_info['fecha_pago'] = m_info['fecha_a_pagar']
+                        m_info['fecha_a_pagar'] = None
+
+                    m_info['pago'] = clean_num(col4)
+                    m_info['banco'] = clean_val(col5)
+                    m_info['cod'] = clean_val(col6)
+                    m_info['saldo'] = clean_num(col7)
 
                 # Ajustes por coherencia de tipos
                 if m_info['pago'] == 0.0 and isinstance(m_info['banco'], (int, float)):
@@ -469,10 +487,6 @@ def upload_database_extras(
                 if (m_info['pago'] > 0 or m_info['saldo'] > 0 or n_base > 0) and first_active_month_idx is None:
                     if m_name in months_order:
                         first_active_month_idx = months_order.index(m_name)
-
-            # Si el valor está en 0 o vacío, deducir el precio mensual de los meses
-            # if valor_raw == 0.0 and month_fees:
-                # valor_raw = max(set(month_fees), key=month_fees.count)
 
             # Determinar fecha_ingreso para cálculo de deudas
             if first_active_month_idx is not None:
@@ -510,35 +524,23 @@ def upload_database_extras(
             db_cliente.activo = activo_raw
             db_cliente.fecha_ingreso = fecha_ingreso_calc
 
-            # Asignar meses a columnas del modelo
+            # Asignar meses a columnas del modelo (asignación exacta sin duplicación acumulativa)
             total_pagado_calc = 0.0
             for m_low, m_info in meses_data.items():
-                # Update month fields, accumulating pagos and saldos, preserving existing info when appropriate
-                existing_factura = getattr(db_cliente, f"{m_low}_factura")
-                if not existing_factura and m_info['factura']:
-                    db_cliente.__setattr__(f"{m_low}_factura", m_info['factura'])
-                existing_fecha_a_pagar = getattr(db_cliente, f"{m_low}_fecha_a_pagar")
-                if not existing_fecha_a_pagar and m_info['fecha_a_pagar']:
-                    db_cliente.__setattr__(f"{m_low}_fecha_a_pagar", m_info['fecha_a_pagar'])
-                existing_fecha_pago = getattr(db_cliente, f"{m_low}_fecha_pago")
-                if not existing_fecha_pago and m_info['fecha_pago']:
-                    db_cliente.__setattr__(f"{m_low}_fecha_pago", m_info['fecha_pago'])
-                # Accumulate pago
-                prev_pago = getattr(db_cliente, f"{m_low}_pago") or 0.0
-                db_cliente.__setattr__(f"{m_low}_pago", prev_pago + m_info['pago'])
-                # Update banco and cod if not set
-                existing_banco = getattr(db_cliente, f"{m_low}_banco")
-                if not existing_banco and m_info['banco']:
-                    db_cliente.__setattr__(f"{m_low}_banco", m_info['banco'])
-                existing_cod = getattr(db_cliente, f"{m_low}_cod")
-                if not existing_cod and m_info['cod']:
-                    db_cliente.__setattr__(f"{m_low}_cod", m_info['cod'])
-                # Accumulate saldo
-                prev_saldo = getattr(db_cliente, f"{m_low}_saldo") or 0.0
-                db_cliente.__setattr__(f"{m_low}_saldo", prev_saldo + m_info['saldo'])
+                setattr(db_cliente, f"{m_low}_factura", m_info['factura'])
+                setattr(db_cliente, f"{m_low}_fecha_a_pagar", m_info['fecha_a_pagar'])
+                setattr(db_cliente, f"{m_low}_fecha_pago", m_info['fecha_pago'])
+                setattr(db_cliente, f"{m_low}_pago", m_info['pago'])
+                setattr(db_cliente, f"{m_low}_banco", m_info['banco'])
+                setattr(db_cliente, f"{m_low}_cod", m_info['cod'])
+                setattr(db_cliente, f"{m_low}_saldo", m_info['saldo'])
                 total_pagado_calc += m_info['pago']
 
-            db_cliente.total_pagado = total_pagado_calc
+            db_cliente.total_pagado = round(total_pagado_calc, 2)
+            mes_actual_idx = datetime.now().month - 1
+            mes_actual_str = months_order[mes_actual_idx].lower() if mes_actual_idx < len(months_order) else "octubre"
+            oct_saldo = float(meses_data.get(mes_actual_str, {}).get('saldo', 0.0) or 0.0)
+            db_cliente.saldo_pendiente = max(0.0, oct_saldo)
 
             # Flush para tener ID del cliente
             db.flush()
@@ -656,7 +658,7 @@ def download_database_extras(db: Session = Depends(get_db)):
             for m in meses:
                 m_l = m.lower()
                 row.extend([
-                    float(getattr(e, f"{m_l}_pago", 0) or 0) if float(getattr(e, f"{m_l}_pago", 0) or 0) > 0 else float(e.valor or 0),
+                    float(e.valor or 0),
                     getattr(e, f"{m_l}_factura", None),
                     getattr(e, f"{m_l}_fecha_a_pagar", None),
                     getattr(e, f"{m_l}_fecha_pago", None),
@@ -666,6 +668,8 @@ def download_database_extras(db: Session = Depends(get_db)):
                     float(getattr(e, f"{m_l}_saldo", 0) or 0)
                 ])
             ws.append(row)
+
+        ws.freeze_panes = "C2"
 
         # Ajuste de anchos de columna
         for col in ws.columns:

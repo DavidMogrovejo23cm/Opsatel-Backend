@@ -100,8 +100,11 @@ def format_single_number(cleaned: str) -> str:
         return ""
 
     # Celulares Ecuador:
+    # 59309xxxxxxxx (13 dígitos con 0 intermedio) -> 5939xxxxxxxx
+    if digits.startswith('59309') and len(digits) == 13:
+        return f"593{digits[4:]}{server}"
     # 09xxxxxxxx (10 dígitos) -> 5939xxxxxxxx
-    if digits.startswith('09') and len(digits) == 10:
+    elif digits.startswith('09') and len(digits) == 10:
         return f"593{digits[1:]}{server}"
     # 9xxxxxxxx (9 dígitos) -> 5939xxxxxxxx
     elif digits.startswith('9') and len(digits) == 9:
@@ -248,14 +251,18 @@ def _post_to_bridge(url: str, payload: dict, priority: str, clean_num: str) -> b
             if time.time() + retry_after > deadline:
                 print(f"[WhatsApp Service] Envío masivo a {clean_num} cancelado: la espera ({retry_after/60:.0f} min) excede el máximo permitido. Motivo: {data.get('error')}")
                 return False
-            wait = retry_after + random.uniform(2, 25)
+            wait = retry_after + random.uniform(2, 10)
             print(f"[WhatsApp Service] ⏳ Envío masivo en espera ({data.get('code')}: {data.get('error')}). Reintento en {wait/60:.1f} min.")
-            time.sleep(wait)
+            end_wait = time.time() + wait
+            while time.time() < end_wait:
+                time.sleep(min(1.0, end_wait - time.time()))
             continue
 
         if response.status_code == 503 and is_bulk and time.time() < down_deadline:
-            print("[WhatsApp Service] Puente WhatsApp no conectado (503). Reintentando en 60s sin marcar fallo...")
-            time.sleep(60)
+            print("[WhatsApp Service] Puente WhatsApp no conectado (503). Reintentando en 15s sin marcar fallo...")
+            end_wait = time.time() + 15
+            while time.time() < end_wait:
+                time.sleep(min(1.0, end_wait - time.time()))
             continue
 
         print(f"[WhatsApp Service] HTTP Error {response.status_code} desde Local Bridge: {response.text}")

@@ -253,20 +253,26 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
     return nuevo_msg
 
 
+# Control en memoria de cancelaciones en tiempo real
+CANCELLED_DIFUSIONES = set()
+GLOBAL_CANCEL_REQUESTED = False
+
 def send_global_broadcast_task(
     mensaje: str,
     nodo: Optional[str],
     db_session_factory,
     estado: Optional[str] = "ACTIVO",
-    delay_min: float = 30.0,
-    delay_max: float = 120.0,
+    delay_min: float = 25.0,
+    delay_max: float = 45.0,
     batch_size: int = 10,
-    batch_pause_min: float = 300.0,
-    batch_pause_max: float = 600.0,
+    batch_pause_min: float = 180.0,
+    batch_pause_max: float = 300.0,
     desde_id: Optional[int] = None,
     hasta_id: Optional[int] = None,
-    limite_mensajes: Optional[int] = None
+    limite_mensajes: Optional[int] = None,
+    difusion_id: Optional[int] = None
 ):
+    global GLOBAL_CANCEL_REQUESTED
     db = db_session_factory()
     import time
     import random
@@ -357,14 +363,13 @@ def send_global_broadcast_task(
 
         alcance_label = f"{estado_label} ({nodo_label}){rango_info}".strip()
         # Parámetros de pausas y lotes
-        delay_a = float(delay_min) if delay_min and float(delay_min) >= 1.0 else 30.0
-        delay_b = float(delay_max) if delay_max and float(delay_max) >= delay_a else max(delay_a, 120.0)
+        delay_a = float(delay_min) if delay_min and float(delay_min) >= 1.0 else 25.0
+        delay_b = float(delay_max) if delay_max and float(delay_max) >= delay_a else max(delay_a, 45.0)
         tamano_lote = int(batch_size) if batch_size and int(batch_size) > 0 else 10
-        pausa_lote_a = float(batch_pause_min) if batch_pause_min and float(batch_pause_min) >= 1.0 else 300.0
-        pausa_lote_b = float(batch_pause_max) if batch_pause_max and float(batch_pause_max) >= pausa_lote_a else max(pausa_lote_a, 600.0)
+        pausa_lote_a = float(batch_pause_min) if batch_pause_min and float(batch_pause_min) >= 1.0 else 180.0
+        pausa_lote_b = float(batch_pause_max) if batch_pause_max and float(batch_pause_max) >= pausa_lote_a else max(pausa_lote_a, 300.0)
 
         # Deduplicar clientes para garantizar que nunca se envíe doble vez al mismo cliente:
-        # Se filtra por: ID de cliente, Cédula del cliente y Primer número válido de WhatsApp
         clientes_unicos = []
         seen_ids = set()
         seen_cedulas = set()
@@ -398,25 +403,72 @@ def send_global_broadcast_task(
         total_clientes = len(clientes_unicos)
         print(f"[Broadcast Task] Iniciando difusión masiva con protección anti-baneo a {total_clientes} clientes únicos ({alcance_label}). Lotes: {tamano_lote}. Intervalo por mensaje: {delay_a:.1f}-{delay_b:.1f}s. Pausa entre lotes: {pausa_lote_a/60:.1f}-{pausa_lote_b/60:.1f} min.")
         
-        # Registrar campaña de difusión en historial
-        difusion_registro = models.WhatsAppDifusionHistorial(
-            tipo="difusion_masiva",
-            alcance=alcance_label,
-            mensaje=mensaje,
-            total_destinatarios=total_clientes,
-            total_exitosos=0,
-            total_fallidos=0,
-            estado="en_proceso" if total_clientes > 0 else "completado",
-            fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S"),
-            fecha_creacion=datetime.now(ECUADOR_TZ)
-        )
-        db.add(difusion_registro)
-        db.commit()
+        # Obtener o registrar campaña de difusión en historial
+        if difusion_id:
+            difusion_registro = db.query(models.WhatsAppDifusionHistorial).filter(
+                models.WhatsAppDifusionHistorial.id == difusion_id
+            ).first()
+            if difusion_registro:
+                difusion_registro.alcance = alcance_label
+                difusion_registro.total_destinatarios = total_clientes
+                difusion_registro.estado = "en_proceso" if total_clientes > 0 else "completado"
+                db.commit()
+
+        if not difusion_registro:
+            difusion_registro = models.WhatsAppDifusionHistorial(
+                tipo="difusion_masiva",
+                alcance=alcance_label,
+                mensaje=mensaje,
+                total_destinatarios=total_clientes,
+                total_exitosos=0,
+                total_fallidos=0,
+                estado="en_proceso" if total_clientes > 0 else "completado",
+                fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+                fecha_creacion=datetime.now(ECUADOR_TZ)
+            )
+            db.add(difusion_registro)
+            db.commit()
+
+        cur_dif_id = difusion_registro.id if difusion_registro else None
+
+        # Funciones auxiliares para cancelación inmediata e interruptible sleep
+        def should_cancel() -> bool:
+            nonlocal cur_dif_id
+            if GLOBAL_CANCEL_REQUESTED:
+                return True
+            if cur_dif_id and cur_dif_id in CANCELLED_DIFUSIONES:
+                return True
+            if cur_dif_id:
+                try:
+                    # Comprobar directamente en la base de datos si el estado cambió a 'cancelado'
+                    db.expire_all()
+                    item = db.query(models.WhatsAppDifusionHistorial).filter(models.WhatsAppDifusionHistorial.id == cur_dif_id).first()
+                    if item and item.estado == "cancelado":
+                        CANCELLED_DIFUSIONES.add(cur_dif_id)
+                        return True
+                except Exception:
+                    pass
+            return False
+
+        def interruptible_sleep(duration_sec: float) -> bool:
+            """Duerme en intervalos de 0.5s para responder de forma instantánea al botón Cancelar."""
+            deadline = time.time() + duration_sec
+            while time.time() < deadline:
+                if should_cancel():
+                    return True
+                time.sleep(min(0.5, max(0.05, deadline - time.time())))
+            return should_cancel()
 
         exitosos = 0
         fallidos = 0
+        cancelado_por_usuario = False
 
         for idx, cliente in enumerate(clientes_unicos):
+            if should_cancel():
+                print(f"[Broadcast Task] 🛑 Envío masivo #{cur_dif_id} cancelado por el usuario. Deteniendo de inmediato...")
+                cancelado_por_usuario = True
+                break
+
             numero = (cliente.celular or "").strip()
             num_principal = whatsapp_service.format_whatsapp_number(numero)
             if not num_principal:
@@ -424,7 +476,6 @@ def send_global_broadcast_task(
                 continue
 
             mensaje_personalizado = personalizar_mensaje_cliente(mensaje, cliente)
-            # send_whatsapp_message despacha únicamente al primer número válido
             success = whatsapp_service.send_whatsapp_message(num_principal, mensaje_personalizado, priority="bulk")
             
             if success:
@@ -452,27 +503,35 @@ def send_global_broadcast_task(
                 difusion_registro.total_fallidos = fallidos
             db.commit()
 
-            # Lógica de pausas entre clientes y descanso entre lotes de 10
+            # Lógica de pausas entre clientes y descanso entre lotes con verificación de cancelación en tiempo real
             if idx < total_clientes - 1:
-                # Comprobar si completó un lote de 10 clientes (o tamano_lote)
                 if (idx + 1) % tamano_lote == 0:
                     descanso_sec = random.uniform(pausa_lote_a, pausa_lote_b)
                     descanso_min = descanso_sec / 60.0
                     print(f"[Broadcast Task] 🛑 Lote de {tamano_lote} clientes completado ({idx + 1}/{total_clientes}). Pausa de descanso anti-bloqueo: {descanso_min:.2f} minutos ({int(descanso_sec)}s) antes del siguiente grupo...")
-                    time.sleep(descanso_sec)
+                    if interruptible_sleep(descanso_sec):
+                        print(f"[Broadcast Task] 🛑 Envío masivo #{cur_dif_id} cancelado durante la pausa entre lotes.")
+                        cancelado_por_usuario = True
+                        break
                 else:
-                    # Pausa aleatoria dentro del lote (entre 30 y 120 segundos)
                     delay_sec = random.uniform(delay_a, delay_b)
                     print(f"[Broadcast Task] Mensaje {idx + 1}/{total_clientes} enviado ({'Éxito' if success else 'Fallo'}). Pausa de {delay_sec:.1f}s...")
-                    time.sleep(delay_sec)
+                    if interruptible_sleep(delay_sec):
+                        print(f"[Broadcast Task] 🛑 Envío masivo #{cur_dif_id} cancelado durante la pausa entre mensajes.")
+                        cancelado_por_usuario = True
+                        break
 
         if difusion_registro:
-            difusion_registro.estado = "completado"
+            if cancelado_por_usuario or should_cancel():
+                difusion_registro.estado = "cancelado"
+                print(f"[Broadcast Task] Campaña #{cur_dif_id} marcada como CANCELADA. Entregados antes de cancelar: {exitosos}/{total_clientes}")
+            else:
+                difusion_registro.estado = "completado"
+                print(f"[Broadcast Task] Envío masivo #{cur_dif_id} finalizado exitosamente. Exitosos: {exitosos}, Fallidos: {fallidos}")
             difusion_registro.total_exitosos = exitosos
             difusion_registro.total_fallidos = fallidos
             db.commit()
 
-        print(f"[Broadcast Task] Envío masivo finalizado exitosamente. Exitosos: {exitosos}, Fallidos: {fallidos}")
     except Exception as e:
         db.rollback()
         print(f"[Broadcast Task] Error durante el envío masivo: {str(e)}")
@@ -968,12 +1027,16 @@ def _reintentar_fallidos_task(ids_fallidos: list):
     Tarea en segundo plano: reintenta los mensajes fallidos uno a uno.
     Cada envío es 'bulk', por lo que el puente aplica horario, topes y espaciado anti-bloqueo.
     """
+    global GLOBAL_CANCEL_REQUESTED
     db = SessionLocal()
     reintentados = 0
     errores = 0
     seen_destinos = set()
     try:
         for hist_id in ids_fallidos:
+            if GLOBAL_CANCEL_REQUESTED:
+                print("[Retry Task] Reintento de fallidos detenido por cancelación.")
+                break
             try:
                 item = db.query(models.WhatsAppHistorial).filter(models.WhatsAppHistorial.id == hist_id).first()
                 if not item or item.estado != "fallido":
@@ -1005,7 +1068,13 @@ def _reintentar_fallidos_task(ids_fallidos: list):
                         pass
                 else:
                     errores += 1
-                time.sleep(random.uniform(20, 60))
+
+                # Pausa interruptible
+                deadline = time.time() + random.uniform(15, 30)
+                while time.time() < deadline:
+                    if GLOBAL_CANCEL_REQUESTED:
+                        break
+                    time.sleep(min(0.5, deadline - time.time()))
             except Exception as e_retry:
                 db.rollback()
                 print(f"[Retry Error] Error reintentando mensaje {hist_id}: {e_retry}")
@@ -1024,6 +1093,8 @@ def reintentar_mensajes_fallidos(
     Reintenta en segundo plano el envío de todos los mensajes con estado 'fallido' en el historial.
     Se envían de forma escalonada (protección anti-bloqueo): puede tardar horas y respeta el horario permitido.
     """
+    global GLOBAL_CANCEL_REQUESTED
+    GLOBAL_CANCEL_REQUESTED = False
     try:
         ids = [row[0] for row in db.query(models.WhatsAppHistorial.id).filter(
             models.WhatsAppHistorial.estado == "fallido"
@@ -1040,7 +1111,7 @@ def reintentar_mensajes_fallidos(
         background_tasks.add_task(_reintentar_fallidos_task, ids)
 
         return {
-            "success": True,
+            "success": True, 
             "message": f"Reintento de {len(ids)} mensajes iniciado en segundo plano de forma escalonada (anti-bloqueo). Revisa el historial para ver el avance.",
             "total": len(ids),
             "reintentados": 0,
@@ -1050,6 +1121,74 @@ def reintentar_mensajes_fallidos(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/difusion/{difusion_id}/cancelar", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def cancelar_difusion(difusion_id: int, db: Session = Depends(get_db)):
+    """
+    Cancela inmediatamente una difusión masiva en curso.
+    Detiene el bucle de envío y marca el estado como 'cancelado'.
+    """
+    try:
+        CANCELLED_DIFUSIONES.add(int(difusion_id))
+        dif = db.query(models.WhatsAppDifusionHistorial).filter(
+            models.WhatsAppDifusionHistorial.id == difusion_id
+        ).first()
+        
+        if not dif:
+            raise HTTPException(status_code=404, detail="Campaña de difusión no encontrada")
+            
+        dif.estado = "cancelado"
+        db.commit()
+        
+        # Notificar al puente local para resetear pausas si correspondía
+        try:
+            bridge_url = getattr(whatsapp_service, "WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+            requests.post(f"{bridge_url.rstrip('/')}/cancel", timeout=2)
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "message": f"Difusión #{difusion_id} cancelada exitosamente. Se ha detenido el envío.",
+            "id": difusion_id,
+            "estado": "cancelado"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al cancelar difusión: {str(e)}")
+
+@router.post("/cancelar-todos-envios", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+def cancelar_todos_los_envios(db: Session = Depends(get_db)):
+    """
+    Cancela de emergencia TODOS los envíos masivos y reintentos que se encuentren 'en_proceso'.
+    """
+    global GLOBAL_CANCEL_REQUESTED
+    try:
+        GLOBAL_CANCEL_REQUESTED = True
+        
+        # Marcar todas las difusiones 'en_proceso' como 'cancelado'
+        actualizados = db.query(models.WhatsAppDifusionHistorial).filter(
+            models.WhatsAppDifusionHistorial.estado == "en_proceso"
+        ).update({"estado": "cancelado"}, synchronize_session=False)
+        db.commit()
+        
+        # Notificar al bridge
+        try:
+            bridge_url = getattr(whatsapp_service, "WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+            requests.post(f"{bridge_url.rstrip('/')}/cancel", timeout=2)
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "message": f"Se cancelaron exitosamente {actualizados} campañas de envío en proceso.",
+            "total_cancelados": actualizados
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error cancelando envíos: {str(e)}")
 
 # --- Estado y control del sistema anti-bloqueo del puente ---
 @router.get("/antiban", dependencies=[Depends(require_role(["administrador", "secretario"]))])
@@ -1155,24 +1294,59 @@ def enviar_whatsapp_global(
     Envía un mensaje de difusión de WhatsApp según el estado de cliente y nodo seleccionado.
     El envío se realiza en segundo plano (asíncronamente) con protección anti-baneo y pausas aleatorias.
     """
+    global GLOBAL_CANCEL_REQUESTED
+    GLOBAL_CANCEL_REQUESTED = False
+
     if not payload.mensaje:
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío.")
+
+    # 1. Crear el registro en la base de datos primero para tener el ID listo de inmediato
+    db = SessionLocal()
+    difusion_id = None
+    try:
+        from database import engine
+        models.Base.metadata.create_all(bind=engine, tables=[models.WhatsAppDifusionHistorial.__table__], checkfirst=True)
+        
+        estado_label = (payload.estado or "ACTIVO").strip().upper()
+        nodo_label = payload.nodo.strip() if payload.nodo and str(payload.nodo).strip() and str(payload.nodo).lower() not in ["todos", "all"] else "Todos los nodos"
+        alcance_est = f"Clientes {estado_label} ({nodo_label})"
+        
+        dif_reg = models.WhatsAppDifusionHistorial(
+            tipo="difusion_masiva",
+            alcance=alcance_est,
+            mensaje=payload.mensaje,
+            total_destinatarios=0,
+            total_exitosos=0,
+            total_fallidos=0,
+            estado="en_proceso",
+            fecha_envio=datetime.now(ECUADOR_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+            fecha_creacion=datetime.now(ECUADOR_TZ)
+        )
+        db.add(dif_reg)
+        db.commit()
+        difusion_id = dif_reg.id
+    except Exception as e_init:
+        print(f"[enviar_whatsapp_global] Aviso creando registro inicial: {e_init}")
+        db.rollback()
+    finally:
+        db.close()
     
-    # Encolar la tarea en background con lotes de 10, pausas de 30-120s y descansos de 5-10min
+    # Encolar la tarea en background pasando el difusion_id
     background_tasks.add_task(
         send_global_broadcast_task,
         payload.mensaje,
         payload.nodo,
         SessionLocal,
         payload.estado or "ACTIVO",
-        payload.delay_min if payload.delay_min is not None else 30.0,
-        payload.delay_max if payload.delay_max is not None else 120.0,
+        payload.delay_min if payload.delay_min is not None else 25.0,
+        payload.delay_max if payload.delay_max is not None else 45.0,
         payload.batch_size if payload.batch_size is not None else 10,
-        payload.batch_pause_min if payload.batch_pause_min is not None else 300.0,
-        payload.batch_pause_max if payload.batch_pause_max is not None else 600.0,
+        payload.batch_pause_min if payload.batch_pause_min is not None else 180.0,
+        payload.batch_pause_max if payload.batch_pause_max is not None else 300.0,
         payload.desde_id,
         payload.hasta_id,
-        payload.limite_mensajes
+        payload.limite_mensajes,
+        difusion_id
     )
     
     msg_detalle = "Difusión masiva iniciada en segundo plano con protección anti-bloqueo."
@@ -1181,7 +1355,8 @@ def enviar_whatsapp_global(
 
     return {
         "success": True,
-        "message": msg_detalle
+        "message": msg_detalle,
+        "difusion_id": difusion_id
     }
 
 from pydantic import BaseModel
