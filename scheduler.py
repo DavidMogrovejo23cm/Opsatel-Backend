@@ -82,6 +82,7 @@ def enviar_whatsapp_programado():
             from routes.whatsapp import personalizar_mensaje_cliente
 
             filtro = getattr(config, 'filtro_clientes', 'todos') or 'todos'
+            desde_cid = getattr(config, 'desde_cliente_id', None)
             query_clientes = db.query(models.Cliente).filter(
                 func.upper(models.Cliente.estado).in_(["ACTIVO", "ACTIVA"]),
                 models.Cliente.celular != None,
@@ -97,10 +98,17 @@ def enviar_whatsapp_programado():
                     or_(models.Cliente.saldo == None, models.Cliente.saldo <= 0)
                 )
 
+            # Filtro para continuar desde cierto cliente específico (ID)
+            if desde_cid is not None and int(desde_cid) > 0:
+                query_clientes = query_clientes.filter(models.Cliente.id >= int(desde_cid))
+
+            # Orden estricto secuencial por ID de cliente
+            query_clientes = query_clientes.order_by(models.Cliente.id.asc())
+
             clientes = query_clientes.all()
             
             if not clientes:
-                print(f"[WhatsApp] No hay clientes activos para el filtro '{filtro}' con celular registrado para config ID {config.id}")
+                print(f"[WhatsApp] No hay clientes activos para el filtro '{filtro}' (desde ID {desde_cid}) con celular registrado para config ID {config.id}")
                 if es_envio_unico:
                     config.activo = False
                     db.commit()
@@ -145,11 +153,71 @@ def enviar_whatsapp_programado():
                     db.commit()
                 continue
 
-            # Enviar mensaje personalizado a cada cliente activo único (solo a su primer número)
+            rec_tag = "Mensual" if rec == 'mensual' else ("Diario" if rec == 'diario' else "Único")
+            if filtro == "deuda":
+                alcance_desc = "Clientes activos con DEUDA"
+            elif filtro in ["al_dia", "pago", "sin_deuda"]:
+                alcance_desc = "Clientes activos AL DÍA (Sin deuda)"
+            else:
+                alcance_desc = "TODOS los clientes activos"
+
+            if desde_cid and int(desde_cid) > 0:
+                alcance_desc += f" [Desde ID #{desde_cid}]"
+
+            # Pre-registrar la difusión como 'en_proceso' para visualización en tiempo real y permitir cancelación
+            difusion_prog = models.WhatsAppDifusionHistorial(
+                tipo="envio_programado",
+                alcance=f"{alcance_desc} (Recurrencia {rec_tag})",
+                mensaje=config.mensaje_programado,
+                total_destinatarios=len(clientes_unicos),
+                total_exitosos=0,
+                total_fallidos=0,
+                estado="en_proceso" if len(clientes_unicos) > 0 else "completado",
+                fecha_envio=ahora.strftime("%Y-%m-%d %H:%M:%S"),
+                fecha_creacion=ahora
+            )
+            db.add(difusion_prog)
+            db.commit()
+            prog_dif_id = difusion_prog.id
+
+            from routes.whatsapp import CANCELLED_DIFUSIONES, GLOBAL_CANCEL_REQUESTED
+
+            def should_cancel_prog() -> bool:
+                nonlocal prog_dif_id
+                if GLOBAL_CANCEL_REQUESTED:
+                    return True
+                if prog_dif_id and prog_dif_id in CANCELLED_DIFUSIONES:
+                    return True
+                if prog_dif_id:
+                    try:
+                        db.expire_all()
+                        item = db.query(models.WhatsAppDifusionHistorial).filter(models.WhatsAppDifusionHistorial.id == prog_dif_id).first()
+                        if item and item.estado == "cancelado":
+                            CANCELLED_DIFUSIONES.add(prog_dif_id)
+                            return True
+                    except Exception:
+                        pass
+                return False
+
+            def interruptible_sleep_prog(duration_sec: float) -> bool:
+                deadline = time.time() + duration_sec
+                while time.time() < deadline:
+                    if should_cancel_prog():
+                        return True
+                    time.sleep(min(0.5, max(0.05, deadline - time.time())))
+                return should_cancel_prog()
+
+            # Enviar mensaje personalizado a cada cliente activo único
             enviados = 0
             fallidos = 0
+            cancelado_programado = False
             
             for cliente in clientes_unicos:
+                if should_cancel_prog():
+                    print(f"[WhatsApp Scheduler] 🛑 Envío programado #{prog_dif_id} cancelado por el usuario en cliente ID {cliente.id} ({cliente.nombre}).")
+                    cancelado_programado = True
+                    break
+
                 try:
                     raw_num = (cliente.celular or "").strip()
                     num_principal = whatsapp_service.format_whatsapp_number(raw_num)
@@ -186,12 +254,18 @@ def enviar_whatsapp_programado():
                         fallidos += 1
                         print(f"[WhatsApp Scheduler] Falló el envío a {num_principal}")
                     
-                    # Confirmar cambios en la base de datos tras cada mensaje
+                    # Actualizar progreso en la difusión
+                    if difusion_prog:
+                        difusion_prog.total_exitosos = enviados
+                        difusion_prog.total_fallidos = fallidos
                     db.commit()
 
-                    # El espaciado, horario y topes los aplica el gobernador anti-bloqueo del puente (prioridad 'bulk')
-                    # Pausa adicional aleatoria para no enviar a ritmo constante
-                    time.sleep(random.uniform(5, 40))
+                    # Pausa adicional aleatoria e interrumpible para no enviar a ritmo constante
+                    pause_sec = random.uniform(25, 45)
+                    if interruptible_sleep_prog(pause_sec):
+                        print(f"[WhatsApp Scheduler] 🛑 Envío programado #{prog_dif_id} cancelado durante pausa.")
+                        cancelado_programado = True
+                        break
 
                 except Exception as e:
                     fallidos += 1
@@ -205,42 +279,32 @@ def enviar_whatsapp_programado():
                             fecha_creacion=ahora
                         )
                         db.add(historial)
+                        if difusion_prog:
+                            difusion_prog.total_fallidos = fallidos
                         db.commit()
                     except Exception:
                         db.rollback()
                     print(f"[WhatsApp Scheduler] Error enviando a {cliente.celular}: {str(e)}")
             
-            # Si era envío único, desactivarlo para que no se vuelva a mandar
-            if es_envio_unico:
+            # Si era envío único y no fue cancelado, desactivarlo
+            if es_envio_unico and not cancelado_programado:
                 config.activo = False
                 print(f"[WhatsApp] Desactivando configuración única ID {config.id} tras envío.")
                 db.commit()
                 
-            # Registrar resumen de envío programado en historial de difusiones
+            # Actualizar estado final de la difusión en historial
             try:
-                rec_tag = "Mensual" if rec == 'mensual' else ("Diario" if rec == 'diario' else "Único")
-                if filtro == "deuda":
-                    alcance_desc = "Clientes activos con DEUDA"
-                elif filtro in ["al_dia", "pago", "sin_deuda"]:
-                    alcance_desc = "Clientes activos AL DÍA (Sin deuda)"
-                else:
-                    alcance_desc = "TODOS los clientes activos"
-
-                difusion_prog = models.WhatsAppDifusionHistorial(
-                    tipo="envio_programado",
-                    alcance=f"{alcance_desc} (Recurrencia {rec_tag})",
-                    mensaje=config.mensaje_programado,
-                    total_destinatarios=len(clientes),
-                    total_exitosos=enviados,
-                    total_fallidos=fallidos,
-                    estado="completado" if fallidos < len(clientes) else "fallido",
-                    fecha_envio=ahora.strftime("%Y-%m-%d %H:%M:%S"),
-                    fecha_creacion=ahora
-                )
-                db.add(difusion_prog)
-                db.commit()
+                if difusion_prog:
+                    difusion_prog.total_exitosos = enviados
+                    difusion_prog.total_fallidos = fallidos
+                    if cancelado_programado or should_cancel_prog():
+                        difusion_prog.estado = "cancelado"
+                        print(f"[WhatsApp Scheduler] Campaña programada #{prog_dif_id} marcada como CANCELADA.")
+                    else:
+                        difusion_prog.estado = "completado" if fallidos < len(clientes_unicos) else "fallido"
+                    db.commit()
             except Exception as e_dif:
-                print(f"[WhatsApp Scheduler] Error guardando difusion_prog: {e_dif}")
+                print(f"[WhatsApp Scheduler] Error actualizando estado final difusion_prog: {e_dif}")
 
             print(f"[WhatsApp] Envío completado para config ID {config.id}. Enviados: {enviados}, Fallidos: {fallidos}")
     

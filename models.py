@@ -723,6 +723,7 @@ class WhatsAppConfiguracion(Base):
     fecha_programada = Column(DateTime, nullable=True)  # Fecha y hora exacta (opcional)
     recurrencia = Column(String(50), default="diario")  # diario, mensual, unico
     job_id = Column(String(200), nullable=True)  # Scheduler job id si es envío puntual
+    desde_cliente_id = Column(Integer, nullable=True)  # ID inicial del cliente para continuar/comenzar
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
 
 class WhatsAppAdministrador(Base):

@@ -87,7 +87,8 @@ def force_fix_columns():
     # 8. Tabla whatsapp_configuracion
     table_whatsapp_config = "whatsapp_configuracion"
     columns_whatsapp_config = [
-        ("filtro_clientes", "VARCHAR(50) DEFAULT 'todos'")
+        ("filtro_clientes", "VARCHAR(50) DEFAULT 'todos'"),
+        ("desde_cliente_id", "INT")
     ]
 
     process_table(table_clientes, columns_clientes)

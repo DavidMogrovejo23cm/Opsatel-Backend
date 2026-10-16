@@ -681,6 +681,7 @@ def programar_whatsapp(
         
         # Guardar configuración programada
         filtro_clientes = payload.filtro_clientes or "todos"
+        desde_cid = payload.desde_cliente_id if (payload.desde_cliente_id and int(payload.desde_cliente_id) > 0) else None
         config = models.WhatsAppConfiguracion(
             hora_programada=hora,
             mensaje_programado=mensaje,
@@ -689,6 +690,7 @@ def programar_whatsapp(
             filtro_clientes=filtro_clientes,
             fecha_programada=fecha_obj,
             recurrencia=recurrencia,
+            desde_cliente_id=desde_cid,
             fecha_creacion=datetime.now(ECUADOR_TZ)
         )
         db.add(config)
@@ -700,6 +702,9 @@ def programar_whatsapp(
             msg_resp = f"Envío mensual recurrente configurado para el día {dia_num} de cada mes a las {hora}"
         elif fecha:
             msg_resp += f" el día {fecha}"
+            
+        if desde_cid:
+            msg_resp += f" (Iniciando desde Cliente ID #{desde_cid})"
             
         return {
             "success": True,
@@ -772,6 +777,7 @@ def listar_configuraciones(db: Session = Depends(get_db)):
                 "recurrencia": getattr(c, 'recurrencia', 'diario') or 'diario',
                 "dia_mes": dia_m,
                 "fecha": fecha_str,
+                "desde_cliente_id": getattr(c, 'desde_cliente_id', None),
                 "proximo_envio": _calcular_proximo_envio(c)
             })
         return resultado
@@ -801,6 +807,7 @@ def obtener_configuracion(db: Session = Depends(get_db)):
             "fecha": fecha_str,
             "dia_mes": dia_m,
             "recurrencia": getattr(config, 'recurrencia', 'diario') or 'diario',
+            "desde_cliente_id": getattr(config, 'desde_cliente_id', None),
             "proximo_envio": _calcular_proximo_envio(config),
             "id": config.id
         }
@@ -881,6 +888,12 @@ def actualizar_configuracion(
         
         if payload.recurrencia is not None:
             config.recurrencia = payload.recurrencia
+
+        if payload.desde_cliente_id is not None:
+            if payload.desde_cliente_id and int(payload.desde_cliente_id) > 0:
+                config.desde_cliente_id = int(payload.desde_cliente_id)
+            else:
+                config.desde_cliente_id = None
             
         db.commit()
         

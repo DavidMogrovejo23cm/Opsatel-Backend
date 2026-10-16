@@ -748,6 +748,7 @@ class WhatsAppConfiguracionCreate(BaseModel):
     fecha: Optional[str] = None # Formato: YYYY-MM-DD
     recurrencia: Optional[str] = "diario" # diario, mensual, unico
     dia_mes: Optional[int] = None # 1 al 31 para mensual
+    desde_cliente_id: Optional[int] = None # Continuar desde este ID de cliente
 
 class WhatsAppConfiguracionUpdate(BaseModel):
     hora: Optional[str] = None
@@ -758,6 +759,7 @@ class WhatsAppConfiguracionUpdate(BaseModel):
     fecha: Optional[str] = None # Formato: YYYY-MM-DD, o "vaciar" si se quiere eliminar
     recurrencia: Optional[str] = None # diario, mensual, unico
     dia_mes: Optional[int] = None # 1 al 31 para mensual
+    desde_cliente_id: Optional[int] = None # Continuar desde este ID de cliente
 
 class WhatsAppManualSend(BaseModel):
     numero: str
