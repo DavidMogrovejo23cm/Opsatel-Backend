@@ -8,9 +8,16 @@ def run():
     print("Iniciando script de reconciliación de Extras General...")
     
     antigua_path = "2026 ADMNISTRACION(6).xlsx"
+    if not os.path.exists(antigua_path) and os.path.exists(os.path.join("..", antigua_path)):
+        antigua_path = os.path.join("..", antigua_path)
+
     nueva_path = "Base_Datos_Extras_General_2026-10-15_backup_original.xlsx"
-    if not os.path.exists(nueva_path):
+    if not os.path.exists(nueva_path) and os.path.exists(os.path.join("..", nueva_path)):
+        nueva_path = os.path.join("..", nueva_path)
+    elif not os.path.exists(nueva_path):
         nueva_path = "Base_Datos_Extras_General_2026-10-15.xlsx"
+        if not os.path.exists(nueva_path) and os.path.exists(os.path.join("..", nueva_path)):
+            nueva_path = os.path.join("..", nueva_path)
         
     wb_a = openpyxl.load_workbook(antigua_path, data_only=True)
     ws_a = wb_a['PLATAFORMA']
@@ -123,6 +130,12 @@ def run():
         obs = clean_str(ws_a.cell(r, 9).value)
         estado = clean_str(ws_a.cell(r, 10).value) or "FIJO"
         valor = clean_num(ws_a.cell(r, 11).value)
+        if valor == 0.0:
+            c11_raw = str(ws_a.cell(r, 11).value or '').strip().upper()
+            if c11_raw != 'GRATIS' and 'TECNICO' not in nom.upper():
+                m_fees = [clean_num(ws_a.cell(r, c).value) for c in [13, 21, 29, 37, 45, 53, 61, 68, 75] if clean_num(ws_a.cell(r, c).value) > 0]
+                if m_fees:
+                    valor = max(set(m_fees), key=m_fees.count)
         activo = clean_str(ws_a.cell(r, 12).value) or "SI"
 
         nom_u = nom.upper()
@@ -404,6 +417,8 @@ def run():
 
     # Guardar sobre Base_Datos_Extras_General_2026-10-15.xlsx
     target_excel = "Base_Datos_Extras_General_2026-10-15.xlsx"
+    if not os.path.exists(target_excel) and os.path.exists(os.path.join("..", target_excel)):
+        target_excel = os.path.join("..", target_excel)
     wb_out.save(target_excel)
     print(f"Excel guardado exitosamente en: {target_excel}")
 

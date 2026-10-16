@@ -211,6 +211,96 @@ def sync_cliente_balances(cliente: models.Cliente, db: Session = None, keep_tota
     # Permite valores negativos si el cliente cuenta con saldo a favor / excedente global
     cliente.total_pago = round(saldo + plus + adicional, 2)
 
+
+def verificar_y_reactivar_cliente_por_pago_completo(cliente: models.Cliente, db: Session, motivo: str = "PAGO_COMPLETO") -> dict:
+    """
+    Regla de negocio crítica:
+    Siempre que se pague el servicio de un cliente por completo (quede en ceros o con saldo a favor):
+    - Revisa si está cortado por corte del firewall en MikroTik (o si su estado en BD no es 'Activo').
+    - Si está cortado en firewall o no está activo, lo reactiva removiéndolo de la lista de corte y pasa a estado 'Activo'.
+    - OJO: Solo y exclusivamente cuando se cancele TODO (saldo <= 0, plus <= 0, adicional <= 0, total_pago <= 0).
+    """
+    if not cliente:
+        return {"reactivado": False, "motivo": "CLIENTE_INVALIDO"}
+
+    saldo_val = float(cliente.saldo or 0)
+    plus_val = try_float(cliente.plus)
+    adic_val = try_float(cliente.adicional)
+    total_pago_val = float(cliente.total_pago or 0) if cliente.total_pago is not None else (saldo_val + plus_val + adic_val)
+
+    deuda_total = max(0.0, saldo_val) + max(0.0, plus_val) + max(0.0, adic_val)
+
+    # Condición estricta: todo pagado y saldado en ceros (o con saldo a favor <= 0)
+    # Permite tolerancia mínima por flotantes (0.001)
+    if deuda_total > 0.001 or total_pago_val > 0.001:
+        logger.info(f"[AutoReactivar] Cliente {cliente.id} ({cliente.nombre}) mantiene deuda (${deuda_total:.2f}). No se reactiva firewall.")
+        return {"reactivado": False, "motivo": "DEUDA_PENDIENTE", "deuda_total": deuda_total}
+
+    from network.adapters.mikrotik import (
+        reactivar_cliente_mikrotik_backend,
+        esta_cliente_cortado_en_firewall
+    )
+
+    estado_actual = str(cliente.estado or "").strip()
+    no_esta_activo = estado_actual.upper() != "ACTIVO"
+    cortado_en_firewall = False
+
+    try:
+        cortado_en_firewall = esta_cliente_cortado_en_firewall(cliente, db)
+    except Exception as e:
+        logger.warning(f"[AutoReactivar] Aviso al consultar corte de firewall para cliente {cliente.id}: {e}")
+
+    # Si está cortado en firewall O su estado no es 'Activo'
+    if cortado_en_firewall or no_esta_activo:
+        logger.info(f"[AutoReactivar] Cliente {cliente.id} ({cliente.nombre}) canceló todo (en ceros). Procediendo a reactivar servicio...")
+
+        # 1. Remover de listas de corte de firewall MikroTik
+        res_mt = {"success": True}
+        if cliente.ip:
+            try:
+                res_mt = reactivar_cliente_mikrotik_backend(cliente, db)
+                logger.info(f"[AutoReactivar] Resultado MikroTik para {cliente.nombre} ({cliente.ip}): {res_mt}")
+            except Exception as mt_err:
+                logger.error(f"[AutoReactivar] Error MikroTik reactivando cliente {cliente.id}: {mt_err}")
+                res_mt = {"success": False, "error": str(mt_err)}
+
+        # 2. Activar si no está activo
+        if no_esta_activo:
+            cliente.estado = "Activo"
+            if not cliente.activador or str(cliente.activador).strip() == "":
+                cliente.activador = "sistema"
+
+        # 3. Auditoría
+        try:
+            import observability as obs
+            obs.log_audit_event_async(
+                accion="REACTIVACION_FIREWALL_PAGO_COMPLETO",
+                modulo="clientes",
+                usuario="sistema",
+                entidad_tipo="Cliente",
+                entidad_id=str(cliente.id),
+                detalles=f"Cliente {cliente.nombre} (IP: {cliente.ip}) canceló su servicio por completo (en ceros). Reactivado de firewall y pasado a Activo ({motivo})."
+            )
+        except Exception as obs_err:
+            logger.warning(f"[AutoReactivar] Aviso registrando auditoría: {obs_err}")
+
+        return {
+            "reactivado": True,
+            "cortado_previo_firewall": cortado_en_firewall,
+            "estado_previo": estado_actual,
+            "nuevo_estado": cliente.estado,
+            "mikrotik": res_mt
+        }
+    else:
+        # Si ya estaba activo y no estaba en lista de corte, aseguramos limpieza de cualquier residuo en MikroTik si tiene IP
+        if cliente.ip:
+            try:
+                reactivar_cliente_mikrotik_backend(cliente, db)
+            except Exception:
+                pass
+        return {"reactivado": False, "motivo": "YA_ACTIVO_SIN_CORTE"}
+
+
 @router.get("/pendientes-count")
 def get_pendientes_count(db: Session = Depends(get_db)):
     count = db.query(models.Cliente).filter(models.Cliente.estado.in_(["Pendiente", "En Activación"])).count()
@@ -1704,14 +1794,6 @@ def actualizar_cliente_general(
             cliente.saldo = 0.0
             cliente.plus = ""
             cliente.adicional = ""
-            if str(cliente.estado or '').strip().upper() in ["MOROSO", "SUSPENDIDO"]:
-                cliente.estado = "Activo"
-                if cliente.ip:
-                    try:
-                        from network.adapters.mikrotik import reactivar_cliente_mikrotik_backend
-                        reactivar_cliente_mikrotik_backend(cliente, db)
-                    except Exception as mt_err:
-                        logger.error(f"Error MikroTik al reactivar cliente {cliente.id}: {mt_err}")
         else:
             plus_val = try_float(cliente.plus)
             adic_val = try_float(cliente.adicional)
@@ -1785,6 +1867,9 @@ def actualizar_cliente_general(
 
     # 5. Sincronizar balances manteniendo la coherencia de total_pago
     sync_cliente_balances(cliente, db, keep_total_pago=is_total_pago_edited)
+
+    # Reactivación automática de servicio y firewall si canceló todo por completo (queda en ceros)
+    verificar_y_reactivar_cliente_por_pago_completo(cliente, db, motivo="ACTUALIZAR_CLIENTE")
 
     # Si pasa a estado Activo, garantizar activador = "sistema" y técnico asignado de la tarea si están vacíos
     if (data.estado and str(data.estado).strip().upper() == "ACTIVO") or (cliente.estado and str(cliente.estado).strip().upper() == "ACTIVO"):
@@ -1993,6 +2078,7 @@ def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Ses
             cliente.saldo = float(plan_info.precio or 0)
 
     sync_cliente_balances(cliente, db)
+    verificar_y_reactivar_cliente_por_pago_completo(cliente, db, motivo="ACTUALIZAR_ADMINISTRACION")
     db.commit()
     return {"message": "Datos de administración actualizados"}
 
@@ -2116,17 +2202,11 @@ def registrar_pago(
             prev_internet = try_float(cliente.internet_payment)
             cliente.internet_payment = str(round(prev_internet + m_internet_cash, 2))
 
-        # 5. Reactivación automática inmediata al saldar deuda (remueve de MikroTik y pasa a Activo)
-        if str(cliente.estado or "").strip().capitalize() in ["Moroso", "Suspendido"] and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
-            cliente.estado = "Activo"
-            if cliente.ip:
-                try:
-                    from network.adapters.mikrotik import reactivar_cliente_mikrotik_backend
-                    reactivar_cliente_mikrotik_backend(cliente, db)
-                except Exception as mt_err:
-                    logger.error(f"Error MikroTik al reactivar cliente {cliente.id} ({cliente.ip}): {mt_err}")
-
         sync_cliente_balances(cliente, db)
+
+        # 5. Reactivación automática de servicio y firewall si canceló todo por completo (queda en ceros)
+        reactivacion_info = verificar_y_reactivar_cliente_por_pago_completo(cliente, db, motivo="REGISTRO_PAGO")
+
         db.commit()
 
         _stats_cache = None # Vaciar caché
@@ -2143,7 +2223,10 @@ def registrar_pago(
             "saldo_adicional": remaining_adicional,
             "saldo_extras": round(remaining_plus + remaining_adicional, 2),
         }
-        if nuevo_saldo < 0:
+        if reactivacion_info.get("reactivado"):
+            response["reactivado_firewall"] = True
+            response["message"] = f"Pago registrado. Deuda en ceros y servicio reactivado en firewall/MikroTik."
+        elif nuevo_saldo < 0:
             response["message"] = f"Pago registrado. Excedente: ${abs(nuevo_saldo):.2f}"
         return response
     except HTTPException:
@@ -2193,17 +2276,10 @@ def confirmar_pago(
     
     pago.estado = "Completado"
     
-    # Reactivación inmediata al confirmar transferencia si salda la deuda
-    if str(cliente.estado or "").strip().capitalize() in ["Moroso", "Suspendido"] and cliente.saldo <= 0 and try_float(cliente.plus) <= 0:
-        cliente.estado = "Activo"
-        if cliente.ip:
-            try:
-                from network.adapters.mikrotik import reactivar_cliente_mikrotik_backend
-                reactivar_cliente_mikrotik_backend(cliente, db)
-            except Exception as mt_err:
-                logger.error(f"Error MikroTik al reactivar cliente {cliente.id} ({cliente.ip}): {mt_err}")
-             
     sync_cliente_balances(cliente, db)
+
+    # Reactivación automática de servicio y firewall si canceló todo por completo al confirmar transferencia
+    verificar_y_reactivar_cliente_por_pago_completo(cliente, db, motivo="CONFIRMAR_PAGO")
     db.commit()
     
     global _stats_cache

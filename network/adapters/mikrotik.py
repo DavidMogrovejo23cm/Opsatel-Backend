@@ -291,13 +291,40 @@ class MikroTikAdapter:
                 filters['list'] = list_name
             items = resource.get(**filters)
             for item in items:
-                try:
-                    resource.remove(**{'.id': item['id']})
-                except Exception:
-                    resource.remove(**{'id': item['id']})
+                item_id = item.get('.id') or item.get('id')
+                if item_id:
+                    try:
+                        resource.remove(**{'.id': item_id})
+                    except Exception:
+                        resource.remove(**{'id': item_id})
             return True
         except Exception as e:
             logger.warning(f"Error removiendo IP {address} de address-list '{list_name}': {e}")
+            return False
+
+    def remove_from_suspended_list(self, address: str) -> bool:
+        """Remueve una IP de cualquier lista de corte o suspensión en /ip/firewall/address-list"""
+        try:
+            resource = self._get_resource('/ip/firewall/address-list')
+            items = resource.get(address=address)
+            removed = False
+            for item in items:
+                nombre_lista = str(item.get('list', '')).upper()
+                if any(k in nombre_lista for k in ['SUSPEND', 'CORTE', 'MOROSO', 'PAGO']):
+                    item_id = item.get('.id') or item.get('id')
+                    if item_id:
+                        try:
+                            resource.remove(**{'.id': item_id})
+                            removed = True
+                        except Exception:
+                            try:
+                                resource.remove(**{'id': item_id})
+                                removed = True
+                            except Exception:
+                                pass
+            return removed
+        except Exception as e:
+            logger.warning(f"Error removiendo IP {address} de listas de corte/suspensión: {e}")
             return False
 
     def is_ip_in_suspended_list(self, address: str) -> bool:
@@ -473,6 +500,10 @@ def reactivar_cliente_mikrotik_backend(cliente, db) -> Dict[str, Any]:
     if not cliente or not cliente.ip:
         return {"success": False, "error": "Cliente sin IP registrada"}
 
+    clean_ip = str(cliente.ip).strip()
+    if not clean_ip:
+        return {"success": False, "error": "Cliente con IP vacía"}
+
     import models
     is_sayausi = is_nodo_sayausi(cliente.nodo)
     list_name = "CLIENTES_SUSPENDIDOS_POR_PAGOS" if is_sayausi else "CLIENTES_SUSPENDIDOS_POR_PAGO"
@@ -484,7 +515,7 @@ def reactivar_cliente_mikrotik_backend(cliente, db) -> Dict[str, Any]:
     ).all()
 
     if not olt_configs:
-        logger.warning(f"No hay MikroTik activo configurado para reactivar a {cliente.nombre} ({cliente.ip})")
+        logger.warning(f"No hay MikroTik activo configurado para reactivar a {cliente.nombre} ({clean_ip})")
         return {"success": False, "error": "No hay MikroTik activo configurado"}
 
     target_olts = []
@@ -507,16 +538,72 @@ def reactivar_cliente_mikrotik_backend(cliente, db) -> Dict[str, Any]:
                 host=target_olt.mikrotik_host,
                 username=target_olt.mikrotik_username,
                 password=target_olt.mikrotik_password,
-                port=target_olt.mikrotik_port or 8728
+                port=target_olt.mikrotik_port or 8728,
+                timeout=4,
+                max_retries=1
             ) as mt:
-                mt.remove_from_address_list(cliente.ip, list_name)
-                mt.remove_from_address_list(cliente.ip, alt_list)
-            logger.info(f"✓ Cliente {cliente.nombre} ({cliente.ip}) REACTIVADO en MikroTik ({target_olt.mikrotik_host})")
+                mt.remove_from_address_list(clean_ip, list_name)
+                mt.remove_from_address_list(clean_ip, alt_list)
+                mt.remove_from_suspended_list(clean_ip)
+            logger.info(f"✓ Cliente {cliente.nombre} ({clean_ip}) REACTIVADO en MikroTik ({target_olt.mikrotik_host})")
             success = True
         except Exception as e:
-            logger.error(f"Error MikroTik al reactivar a {cliente.nombre} ({cliente.ip}) en {target_olt.mikrotik_host}: {e}")
+            logger.error(f"Error MikroTik al reactivar a {cliente.nombre} ({clean_ip}) en {target_olt.mikrotik_host}: {e}")
 
     return {"success": success}
+
+
+def esta_cliente_cortado_en_firewall(cliente, db) -> bool:
+    """
+    Comprueba si la IP del cliente se encuentra en alguna lista de corte o suspensión
+    en el firewall de MikroTik (o si su estado en base de datos es Moroso/Suspendido/Cortado).
+    """
+    if not cliente:
+        return False
+
+    clean_ip = str(cliente.ip or "").strip()
+    if clean_ip:
+        import models
+        is_sayausi = is_nodo_sayausi(cliente.nodo)
+        olt_configs = db.query(models.OLTConfig).filter(
+            models.OLTConfig.active == True,
+            models.OLTConfig.mikrotik_host != None
+        ).all()
+
+        target_olts = []
+        for olt in olt_configs:
+            if olt.nodo_asociado and str(olt.nodo_asociado).strip().upper() == str(cliente.nodo or "").strip().upper():
+                target_olts.append(olt)
+        if not target_olts:
+            for olt in olt_configs:
+                if is_sayausi and olt.nodo_asociado and "SAYAUS" in str(olt.nodo_asociado).upper():
+                    target_olts.append(olt)
+                elif not is_sayausi and olt.nodo_asociado and "BAN" in str(olt.nodo_asociado).upper():
+                    target_olts.append(olt)
+        if not target_olts:
+            target_olts = olt_configs
+
+        for target_olt in target_olts:
+            try:
+                with MikroTikAdapter(
+                    host=target_olt.mikrotik_host,
+                    username=target_olt.mikrotik_username,
+                    password=target_olt.mikrotik_password,
+                    port=target_olt.mikrotik_port or 8728,
+                    timeout=3,
+                    max_retries=1
+                ) as mt:
+                    if mt.is_ip_in_suspended_list(clean_ip):
+                        return True
+            except Exception as e:
+                logger.warning(f"Error consultando MikroTik ({target_olt.mikrotik_host}) para IP {clean_ip}: {e}")
+
+    # Fallback por estado en BD
+    estado_clean = str(cliente.estado or "").strip().upper()
+    if any(k in estado_clean for k in ["SUSPEND", "CORTE", "CORTA", "MOROS"]):
+        return True
+
+    return False
 
 
 

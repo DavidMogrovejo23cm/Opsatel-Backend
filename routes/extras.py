@@ -67,6 +67,7 @@ async def crear_extra(extra: schemas.ClienteExtraCreate, db: Session = Depends(g
     return db_extra
 
 @router.patch("/{id}", response_model=schemas.ClienteExtraResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
+@router.put("/{id}", response_model=schemas.ClienteExtraResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def actualizar_extra(id: int, data: schemas.ClienteExtraUpdate, db: Session = Depends(get_db)):
     db_extra = db.query(models.ClienteExtra).filter(models.ClienteExtra.id == id).first()
     if not db_extra:
@@ -84,9 +85,11 @@ def actualizar_extra(id: int, data: schemas.ClienteExtraUpdate, db: Session = De
                 value = float(value or 0.0)
             except (ValueError, TypeError):
                 value = 0.0
-        elif var.endswith("_fecha_pago") or var == "fecha_ingreso":
+        elif var.endswith("_fecha_pago") or var.endswith("_fecha_a_pagar") or var == "fecha_ingreso":
             if value and str(value).strip():
                 value = str(value).strip()
+            else:
+                value = None
         elif var == "activo":
             value = str(value or "SI").strip().upper()
         elif var == "estado":
@@ -94,20 +97,17 @@ def actualizar_extra(id: int, data: schemas.ClienteExtraUpdate, db: Session = De
         setattr(db_extra, var, value)
 
     # Identificar meses afectados por la edición
-    meses_tocados = set()
+    meses_pagos_tocados = set()
+    meses_saldos_tocados = set()
     for var in update_data.keys():
         for m in meses_validos:
-            if var.startswith(f"{m}_"):
-                meses_tocados.add(m)
-                break
+            if var == f"{m}_pago":
+                meses_pagos_tocados.add(m)
+            elif var == f"{m}_saldo":
+                meses_saldos_tocados.add(m)
 
     # Sincronizar PagoExtra para que el historial y balance reflejen los pagos según el mes
-    for m in meses_tocados:
-        if f"{m}_pago" in update_data and f"{m}_saldo" not in update_data:
-            v_base = float(db_extra.valor or 0.0)
-            p_val = float(getattr(db_extra, f"{m}_pago", 0.0) or 0.0)
-            setattr(db_extra, f"{m}_saldo", round(v_base - p_val, 2))
-
+    for m in meses_pagos_tocados:
         m_pago = float(getattr(db_extra, f"{m}_pago", 0.0) or 0.0)
         m_banco = getattr(db_extra, f"{m}_banco", None) or "EFECTIVO"
         m_factura = getattr(db_extra, f"{m}_factura", None)
@@ -164,7 +164,8 @@ def actualizar_extra(id: int, data: schemas.ClienteExtraUpdate, db: Session = De
         for m in meses_validos:
             setattr(db_extra, f"{m}_saldo", 0.0)
     else:
-        recalcular_cuadricula_extra(db_extra, db)
+        # Recalcular cuadrícula respetando los saldos fijados explícitamente en update_data
+        recalcular_cuadricula_extra(db_extra, db, saldos_fijados=meses_saldos_tocados)
 
     # Actualizar totales globales
     total_pagado = 0.0
@@ -237,11 +238,12 @@ async def eliminar_extra(id: int, db: Session = Depends(get_db)):
 
     return {"message": "Cliente extra eliminado"}
 
-def recalcular_cuadricula_extra(cliente: models.ClienteExtra, db: Session):
+def recalcular_cuadricula_extra(cliente: models.ClienteExtra, db: Session, saldos_fijados=None):
     meses_validos = [
         "enero", "febrero", "marzo", "abril", "mayo", "junio", 
         "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
     ]
+    saldos_fijados = saldos_fijados or set()
     
     is_eliminado = str(cliente.estado or "").strip().upper() == "ELIMINADO"
     if is_eliminado:
@@ -250,15 +252,28 @@ def recalcular_cuadricula_extra(cliente: models.ClienteExtra, db: Session):
             setattr(cliente, f"{m}_saldo", 0.0)
         return
 
-    valor_mensual = float(cliente.valor or 0)
+    valor_mensual = float(cliente.valor or 0.0)
     
     limite_ingreso_idx = 0
     if cliente.fecha_ingreso:
         try:
-            mes_ingreso_num = int(cliente.fecha_ingreso.split("-")[1])
+            parts = str(cliente.fecha_ingreso).strip().replace('/', '-').split('-')
+            mes_ingreso_num = int(parts[1])
             limite_ingreso_idx = mes_ingreso_num - 1
-        except:
+        except Exception:
             limite_ingreso_idx = 0
+
+    # Si hay pagos, saldos fijados o datos en meses anteriores a limite_ingreso_idx,
+    # expandir el límite para no bloquear ni borrar meses anteriores (ej. si edita Enero)
+    for i in range(limite_ingreso_idx):
+        m = meses_validos[i]
+        pago_val = float(getattr(cliente, f"{m}_pago", 0.0) or 0.0)
+        saldo_val = float(getattr(cliente, f"{m}_saldo", 0.0) or 0.0)
+        factura_val = getattr(cliente, f"{m}_factura", None)
+        if pago_val > 0 or saldo_val != 0 or factura_val or (m in saldos_fijados):
+            limite_ingreso_idx = i
+            cliente.fecha_ingreso = f"2026-{i+1:02d}-01"
+            break
 
     # 1. Cargar pagos válidos
     pagos = db.query(models.PagoExtra).filter(
@@ -279,36 +294,43 @@ def recalcular_cuadricula_extra(cliente: models.ClienteExtra, db: Session):
     running_saldo = 0.0
     for i in range(12):
         mes_actual = meses_validos[i]
-        if i < limite_ingreso_idx:
-            # Mes anterior al ingreso del cliente
-            setattr(cliente, f"{mes_actual}_saldo", 0.0)
-            setattr(cliente, f"{mes_actual}_pago", 0.0)
-        else:
-            if mes_actual in pagos_por_mes:
-                total_mes = sum(float(p.monto or 0) for p in pagos_por_mes[mes_actual])
-                ultimo_pago = pagos_por_mes[mes_actual][-1]
-                setattr(cliente, f"{mes_actual}_pago", round(total_mes, 2))
+        
+        if mes_actual in pagos_por_mes:
+            total_mes = sum(float(p.monto or 0.0) for p in pagos_por_mes[mes_actual])
+            ultimo_pago = pagos_por_mes[mes_actual][-1]
+            setattr(cliente, f"{mes_actual}_pago", round(total_mes, 2))
+            if not getattr(cliente, f"{mes_actual}_fecha_pago", None):
                 setattr(cliente, f"{mes_actual}_fecha_pago", ultimo_pago.fecha_pago.strftime("%d/%m/%Y") if ultimo_pago.fecha_pago else datetime.now().strftime("%d/%m/%Y"))
+            if not getattr(cliente, f"{mes_actual}_banco", None):
                 setattr(cliente, f"{mes_actual}_banco", ultimo_pago.metodo_pago)
+            if not getattr(cliente, f"{mes_actual}_factura", None):
                 setattr(cliente, f"{mes_actual}_factura", ultimo_pago.factura)
+            if not getattr(cliente, f"{mes_actual}_cod", None):
                 setattr(cliente, f"{mes_actual}_cod", ultimo_pago.referencia)
-            else:
-                total_mes = float(getattr(cliente, f"{mes_actual}_pago", 0) or 0)
+        else:
+            total_mes = float(getattr(cliente, f"{mes_actual}_pago", 0.0) or 0.0)
 
-            # Cuota mensual del cliente activo
-            fee_mes = valor_mensual if str(cliente.activo).strip().upper() != 'NO' and not is_eliminado else 0.0
-            # Running balance con arrastre de excedentes:
-            running_saldo = round(running_saldo + fee_mes - total_mes, 2)
-            setattr(cliente, f"{mes_actual}_saldo", running_saldo)
+        if i < limite_ingreso_idx:
+            # Mes anterior al ingreso y sin actividad registrada
+            setattr(cliente, f"{mes_actual}_saldo", 0.0)
+            running_saldo = 0.0
+        else:
+            if mes_actual in saldos_fijados:
+                # El usuario fijó manualmente el saldo de este mes: respetarlo y arrastrar desde aquí
+                running_saldo = float(getattr(cliente, f"{mes_actual}_saldo", 0.0) or 0.0)
+            else:
+                fee_mes = valor_mensual if str(cliente.activo).strip().upper() != 'NO' and not is_eliminado else 0.0
+                running_saldo = round(running_saldo + fee_mes - total_mes, 2)
+                setattr(cliente, f"{mes_actual}_saldo", running_saldo)
 
     # Calcular totales globales
     total_pagado = 0.0
     for m in meses_validos:
-        total_pagado += float(getattr(cliente, f"{m}_pago", 0) or 0)
+        total_pagado += float(getattr(cliente, f"{m}_pago", 0.0) or 0.0)
     cliente.total_pagado = round(total_pagado, 2)
     # Saldo pendiente representa la deuda neta al mes actual
     mes_actual_idx = datetime.now().month - 1
-    saldo_mes_actual = float(getattr(cliente, f"{meses_validos[mes_actual_idx]}_saldo", 0) or 0)
+    saldo_mes_actual = float(getattr(cliente, f"{meses_validos[mes_actual_idx]}_saldo", 0.0) or 0.0)
     cliente.saldo_pendiente = max(0.0, saldo_mes_actual) if not is_eliminado else 0.0
 
 @router.post("/{id}/pagar")
@@ -584,6 +606,10 @@ def upload_database_extras(
                 if (m_info['pago'] > 0 or m_info['saldo'] > 0 or n_base > 0) and first_active_month_idx is None:
                     if m_name in months_order:
                         first_active_month_idx = months_order.index(m_name)
+
+            # Deducir valor si no está en columna general
+            if valor_raw == 0.0 and month_fees:
+                valor_raw = max(set(month_fees), key=month_fees.count)
 
             # Determinar fecha_ingreso para cálculo de deudas
             if first_active_month_idx is not None:

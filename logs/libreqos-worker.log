@@ -1,0 +1,763 @@
+[2026-10-16 18:30:51] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:31:01] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:31:11] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:31:21] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:31:31] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:31:41] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:31:51] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:32:01] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:32:11] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:32:21] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:32:31] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:32:41] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:32:51] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:33:01] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:33:11] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:33:21] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:33:31] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:33:41] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:33:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:34:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:34:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:34:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:34:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:34:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:34:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:35:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:35:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:35:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:35:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:35:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:35:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:36:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:36:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:36:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:36:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:36:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:36:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:37:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:37:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:37:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:37:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:37:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:37:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:38:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:38:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:38:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:38:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:38:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:38:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:39:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:39:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:39:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:39:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:39:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:39:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:40:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:40:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:40:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:40:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:40:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:40:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:41:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:41:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:41:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:41:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:41:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:41:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:42:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:42:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:42:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:42:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:42:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:42:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:43:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:43:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:43:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:43:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:43:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:43:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:44:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:44:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:44:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:44:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:44:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:44:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:45:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:45:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:45:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:45:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:45:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:45:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:46:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:46:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:46:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:46:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:46:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:46:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:47:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:47:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:47:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:47:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:47:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:47:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:48:02] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:48:12] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:48:22] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:48:32] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:48:42] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-16 18:48:52] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
