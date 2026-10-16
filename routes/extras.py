@@ -61,37 +61,120 @@ async def crear_extra(extra: schemas.ClienteExtraCreate, db: Session = Depends(g
 
     return db_extra
 
-@router.patch("/{id}", response_model=schemas.ClienteExtraResponse, dependencies=[Depends(require_role(["administrador", "secretario"]))])
+@router.patch("/{id}", response_model=schemas.ClienteExtraResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def actualizar_extra(id: int, data: schemas.ClienteExtraUpdate, db: Session = Depends(get_db)):
     db_extra = db.query(models.ClienteExtra).filter(models.ClienteExtra.id == id).first()
     if not db_extra:
         raise HTTPException(status_code=404, detail="Cliente extra no encontrado")
     
     update_data = data.dict(exclude_unset=True)
-    for var, value in update_data.items():
-        setattr(db_extra, var, value)
-    
     meses_validos = [
         "enero", "febrero", "marzo", "abril", "mayo", "junio", 
         "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
     ]
 
-    # Si se actualizó el valor base mensual, actualizar saldos de los meses que no fueron fijados explícitamente
-    if "valor" in update_data:
-        nuevo_valor = float(db_extra.valor or 0)
+    for var, value in update_data.items():
+        if var == "valor" or var.endswith("_pago") or var.endswith("_saldo") or var in ("saldo_pendiente", "total_pagado"):
+            try:
+                value = float(value or 0.0)
+            except (ValueError, TypeError):
+                value = 0.0
+        elif var.endswith("_fecha_pago") or var == "fecha_ingreso":
+            if value and str(value).strip():
+                value = str(value).strip()
+        elif var == "activo":
+            value = str(value or "SI").strip().upper()
+        elif var == "estado":
+            value = str(value or "30 DÍAS").strip().upper()
+        setattr(db_extra, var, value)
+
+    # Identificar meses afectados por la edición
+    meses_tocados = set()
+    for var in update_data.keys():
         for m in meses_validos:
-            if f"{m}_saldo" not in update_data:
-                p_mes = float(getattr(db_extra, f"{m}_pago", 0) or 0)
+            if var.startswith(f"{m}_"):
+                meses_tocados.add(m)
+                break
+
+    # Sincronizar PagoExtra para que el historial y balance reflejen los pagos según el mes
+    for m in meses_tocados:
+        if f"{m}_pago" in update_data and f"{m}_saldo" not in update_data:
+            v_base = float(db_extra.valor or 0.0)
+            p_val = float(getattr(db_extra, f"{m}_pago", 0.0) or 0.0)
+            setattr(db_extra, f"{m}_saldo", round(v_base - p_val, 2))
+
+        m_pago = float(getattr(db_extra, f"{m}_pago", 0.0) or 0.0)
+        m_banco = getattr(db_extra, f"{m}_banco", None) or "EFECTIVO"
+        m_factura = getattr(db_extra, f"{m}_factura", None)
+        m_cod = getattr(db_extra, f"{m}_cod", None)
+        m_fecha = getattr(db_extra, f"{m}_fecha_pago", None)
+
+        pago_existente = db.query(models.PagoExtra).filter(
+            models.PagoExtra.cliente_id == db_extra.id,
+            models.PagoExtra.mes_correspondiente == m.upper(),
+            models.PagoExtra.anulado == False
+        ).first()
+
+        if m_pago > 0:
+            f_pago_dt = None
+            if m_fecha:
+                for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+                    try:
+                        f_pago_dt = datetime.strptime(str(m_fecha).strip(), fmt)
+                        break
+                    except Exception:
+                        pass
+            if not f_pago_dt:
+                m_idx = meses_validos.index(m) + 1
+                anio_actual = datetime.now().year
+                f_pago_dt = datetime(anio_actual, m_idx, 15)
+
+            if pago_existente:
+                pago_existente.monto = m_pago
+                pago_existente.metodo_pago = m_banco
+                pago_existente.factura = m_factura
+                pago_existente.referencia = m_cod or f"PAGO EXTRA {m.upper()}"
+                pago_existente.fecha_pago = f_pago_dt
+                pago_existente.estado = "Completado"
+            else:
+                nuevo_pago = models.PagoExtra(
+                    cliente_id=db_extra.id,
+                    monto=m_pago,
+                    metodo_pago=m_banco,
+                    mes_correspondiente=m.upper(),
+                    referencia=m_cod or f"PAGO EXTRA {m.upper()}",
+                    factura=m_factura,
+                    estado="Completado",
+                    fecha_pago=f_pago_dt,
+                    anulado=False
+                )
+                db.add(nuevo_pago)
+        else:
+            if pago_existente:
+                db.delete(pago_existente)
+
+    # Si se actualizó el valor base mensual, actualizar saldos de los meses no modificados
+    if "valor" in update_data:
+        nuevo_valor = float(db_extra.valor or 0.0)
+        for m in meses_validos:
+            if f"{m}_saldo" not in update_data and f"{m}_pago" not in update_data:
+                p_mes = float(getattr(db_extra, f"{m}_pago", 0.0) or 0.0)
                 setattr(db_extra, f"{m}_saldo", round(nuevo_valor - p_mes, 2))
 
     # Actualizar totales globales
     total_pagado = 0.0
-    saldo_pendiente = 0.0
     for m in meses_validos:
-        total_pagado += float(getattr(db_extra, f"{m}_pago", 0) or 0)
-        saldo_pendiente += float(getattr(db_extra, f"{m}_saldo", 0) or 0)
+        total_pagado += float(getattr(db_extra, f"{m}_pago", 0.0) or 0.0)
     db_extra.total_pagado = round(total_pagado, 2)
-    db_extra.saldo_pendiente = round(saldo_pendiente, 2)
+
+    if "saldo_pendiente" in update_data:
+        db_extra.saldo_pendiente = float(update_data["saldo_pendiente"] or 0.0)
+    elif "saldo" in update_data:
+        db_extra.saldo_pendiente = float(update_data["saldo"] or 0.0)
+    else:
+        mes_actual_idx = datetime.now().month - 1
+        saldo_mes_actual = float(getattr(db_extra, f"{meses_validos[mes_actual_idx]}_saldo", 0.0) or 0.0)
+        db_extra.saldo_pendiente = max(0.0, saldo_mes_actual)
 
     db.commit()
     db.refresh(db_extra)

@@ -6,6 +6,25 @@ const { execSync, statSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+// Cargar variables de entorno locales desde .env si existe
+try {
+    const envFile = path.join(__dirname, '.env');
+    if (fs.existsSync(envFile)) {
+        const envContent = fs.readFileSync(envFile, 'utf8');
+        envContent.split('\n').forEach(line => {
+            const trimmed = line.trim();
+            if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+                const idx = trimmed.indexOf('=');
+                const key = trimmed.substring(0, idx).trim();
+                const val = trimmed.substring(idx + 1).trim();
+                if (key && !process.env[key]) {
+                    process.env[key] = val;
+                }
+            }
+        });
+    }
+} catch (_) {}
+
 const app = express();
 const port = process.env.PORT || 3001;
 
@@ -607,6 +626,71 @@ client.on('message', async (msg) => {
             console.warn('[AntiBan] No se pudo confirmar el opt-out:', eOpt.message);
         }
         return;
+    }
+
+    // =========================================================================
+    // REENVÍO AUTOMÁTICO DE COMPROBANTES (Imágenes o Documentos/PDFs de Clientes)
+    // Destino administrativo: +593 98 714 9097 (593987149097)
+    // =========================================================================
+    const adminReceiptsPhone = (process.env.WHATSAPP_ADMIN_RECEIPTS_NUMBER || '593987149097').replace(/\D/g, '');
+    const adminChatId = `${adminReceiptsPhone}@c.us`;
+    const remitenteDigits = remitente.replace(/\D/g, '');
+    const realPhoneDigits = realPhone ? realPhone.replace(/\D/g, '') : '';
+    const esMensajeDeAdmin = (remitenteDigits && (remitenteDigits.endsWith(adminReceiptsPhone) || adminReceiptsPhone.endsWith(remitenteDigits))) ||
+                             (realPhoneDigits && (realPhoneDigits.endsWith(adminReceiptsPhone) || adminReceiptsPhone.endsWith(realPhoneDigits)));
+
+    const esComprobanteCandidato = (msg.type === 'image' || msg.type === 'document') && msg.hasMedia;
+
+    if (esComprobanteCandidato && !esMensajeDeAdmin) {
+        console.log(`[WhatsApp Bridge] 🧾 Comprobante detectado (${msg.type}) de ${pushname || 'Cliente'} (${realPhone || remitente}). Descargando para reenviar a administración (+${adminReceiptsPhone})...`);
+        try {
+            const media = await msg.downloadMedia();
+            if (media && media.data) {
+                const nowStr = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', hour12: false });
+                const remitenteDisplay = realPhone ? `+${realPhone}` : `+${remitente.split('@')[0]}`;
+                const nombreDisplay = pushname ? pushname : 'Cliente WhatsApp';
+                const notaTexto = msg.body && msg.body.trim() ? `\n💬 *Mensaje adjunto:* "${msg.body.trim()}"` : '';
+
+                const captionAdmin = 
+                    `🧾 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
+                    `👤 *Cliente:* ${nombreDisplay}\n` +
+                    `📱 *WhatsApp:* ${remitenteDisplay}\n` +
+                    `${notaTexto}\n` +
+                    `📅 *Fecha y Hora:* ${nowStr}\n\n` +
+                    `_Reenviado automáticamente al área administrativa._`;
+
+                // 1. Reenviar imagen/comprobante al número administrativo con su ficha
+                await runExclusive(async () => {
+                    try {
+                        await sleep(rand(1000, 2000));
+                        await client.sendMessage(adminChatId, media, { caption: captionAdmin });
+                        console.log(`[WhatsApp Bridge] 📤 Comprobante reenviado con éxito a Administración (${adminChatId}) desde ${nombreDisplay} (${remitenteDisplay})`);
+                        lastOutboundAt = Date.now();
+                    } catch (eSendAdmin) {
+                        console.error('[WhatsApp Bridge] Error al reenviar comprobante a administración:', eSendAdmin.message);
+                    }
+                });
+
+                // 2. Responder al cliente de forma cortés confirmando recepción
+                const respCliente = `¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago.\nHa sido reenviado al área administrativa para su verificación y registro en el sistema. ¡Que tengas un excelente día! 😊`;
+                await runExclusive(async () => {
+                    try {
+                        await sleep(rand(1200, 2500));
+                        await client.sendMessage(msg.from, respCliente);
+                        lastOutboundAt = Date.now();
+                    } catch (eResp) {
+                        console.warn('[WhatsApp Bridge] Aviso al confirmar al cliente:', eResp.message);
+                    }
+                });
+
+                // 3. Notificar a FastAPI para que quede registrado en el chat persistente de Opsatel
+                const infoMsg = `🧾 [Comprobante enviado al área administrativa] ${msg.body || ''}`.trim();
+                sendWebhook(numeroParaWebhook, infoMsg, pushname, remitente);
+                return;
+            }
+        } catch (eMediaErr) {
+            console.error('[WhatsApp Bridge] Error procesando comprobante:', eMediaErr.message);
+        }
     }
 
     // Manejar mensajes entrantes: solo procesar texto o multimedia real enviada por personas

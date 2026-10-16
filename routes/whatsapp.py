@@ -1524,9 +1524,11 @@ def webhook_mensaje_whatsapp(
 
         # Registrar mensaje entrante del cliente en el historial persistente de chat
         cid_vinculado = c_por_msg.id if c_por_msg else None
+        tipo_msg = "multimedia" if mensaje.startswith("🧾 [Comprobante") else "texto"
         nuevo_msg_guardado = registrar_mensaje_chat(
             db, jid_destino, "cliente", mensaje,
             cliente_id=cid_vinculado,
+            tipo=tipo_msg,
             nombre_remitente=payload.nombre or ""
         )
         if nuevo_msg_guardado and nuevo_msg_guardado.cliente_id and not c_por_msg:
@@ -1537,6 +1539,19 @@ def webhook_mensaje_whatsapp(
                     sam_bot_service.clientes_identificados_sesion[tel_real] = c_por_msg.id
 
         sam_bot_service.guardar_mensaje_historial(jid_destino, "user", mensaje)
+
+        # 4.1 Manejo de comprobante ya reenviado automáticamente a administración (+593 98 714 9097)
+        if mensaje.startswith("🧾 [Comprobante enviado al área administrativa]"):
+            resp_comprobante = (
+                "¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago.\n"
+                "Ha sido reenviado al área administrativa (+593 98 714 9097) para su verificación y registro en el sistema. ¡Que tengas un excelente día! 😊"
+            )
+            registrar_mensaje_chat(
+                db, jid_destino, "asistente", resp_comprobante,
+                cliente_id=c_por_msg.id if c_por_msg else None
+            )
+            sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", resp_comprobante)
+            return {"success": True, "response": resp_comprobante, "comprobante": True}
 
         # 5. Comando explícito de reinicio / cancelación
         if mensaje.lower() in ["cancelar", "salir", "menu", "menú", "inicio", "empezar de nuevo", "reset", "reiniciar"]:

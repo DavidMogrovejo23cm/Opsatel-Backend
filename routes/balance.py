@@ -604,7 +604,7 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
             banco = (getattr(e, f"{month_key}_banco", "") or "").upper()
             if pago > 0:
                 if "PICHINCHA" in banco: extras_pich += pago
-                elif "JEP" in banco:    extras_jep += pago
+                elif "JEP" in banco or "GUAYAQUIL" in banco: extras_jep += pago
                 else:                   extras_ef  += pago
 
     total_extras   = extras_ef + extras_pich + extras_jep
@@ -2224,7 +2224,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
             banco = (getattr(e, f"{month_key}_banco", "") or "").upper()
             if pago > 0:
                 if "PICHINCHA" in banco: extras_pich += pago
-                elif "JEP" in banco:    extras_jep += pago
+                elif "JEP" in banco or "GUAYAQUIL" in banco: extras_jep += pago
                 else:                   extras_ef  += pago
 
     total_extras = extras_ef + extras_pich + extras_jep

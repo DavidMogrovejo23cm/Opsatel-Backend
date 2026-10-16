@@ -2196,7 +2196,10 @@ def procesar_mensaje_entrante(numero: str, mensaje: str, db: Session, nombre_rem
         print(f"[SAM Chatbot] 🤫 Intervención de operador activa para {numero}. Bot en silencio por 5 minutos. Mensaje cliente guardado en chat.")
         return ""
 
-    # 1. Manejo de mensajes no soportados (audio, imágenes, stickers)
+    # 1. Manejo de comprobantes y mensajes no soportados
+    if mensaje.startswith("🧾 [Comprobante"):
+        return ""
+
     if mensaje.startswith("[NON_TEXT_MSG]"):
         tipo_recibido = mensaje.replace("[NON_TEXT_MSG]", "").strip() or "multimedia"
         response_text = f"Hola, soy SAM de Opsatel 😊 Por el momento solo puedo leer mensajes de texto. Por favor, escríbeme tu consulta en texto y con gusto te ayudo."
