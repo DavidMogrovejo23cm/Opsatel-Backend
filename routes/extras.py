@@ -22,6 +22,11 @@ router = APIRouter(prefix="/extras", tags=["extras"])
 @router.get("/", response_model=List[schemas.ClienteExtraResponse])
 def listar_extras(db: Session = Depends(get_db)):
     extras = db.query(models.ClienteExtra).all()
+    for e in extras:
+        if str(e.estado or "").strip().upper() == "ELIMINADO":
+            e.saldo_pendiente = 0.0
+            for m in ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]:
+                setattr(e, f"{m}_saldo", 0.0)
     return extras
 
 @router.post("/", response_model=schemas.ClienteExtraResponse, dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
@@ -153,13 +158,13 @@ def actualizar_extra(id: int, data: schemas.ClienteExtraUpdate, db: Session = De
             if pago_existente:
                 db.delete(pago_existente)
 
-    # Si se actualizó el valor base mensual, actualizar saldos de los meses no modificados
-    if "valor" in update_data:
-        nuevo_valor = float(db_extra.valor or 0.0)
+    is_eliminado = str(db_extra.estado or "").strip().upper() == "ELIMINADO"
+    if is_eliminado:
+        db_extra.saldo_pendiente = 0.0
         for m in meses_validos:
-            if f"{m}_saldo" not in update_data and f"{m}_pago" not in update_data:
-                p_mes = float(getattr(db_extra, f"{m}_pago", 0.0) or 0.0)
-                setattr(db_extra, f"{m}_saldo", round(nuevo_valor - p_mes, 2))
+            setattr(db_extra, f"{m}_saldo", 0.0)
+    else:
+        recalcular_cuadricula_extra(db_extra, db)
 
     # Actualizar totales globales
     total_pagado = 0.0
@@ -167,7 +172,9 @@ def actualizar_extra(id: int, data: schemas.ClienteExtraUpdate, db: Session = De
         total_pagado += float(getattr(db_extra, f"{m}_pago", 0.0) or 0.0)
     db_extra.total_pagado = round(total_pagado, 2)
 
-    if "saldo_pendiente" in update_data:
+    if is_eliminado:
+        db_extra.saldo_pendiente = 0.0
+    elif "saldo_pendiente" in update_data:
         db_extra.saldo_pendiente = float(update_data["saldo_pendiente"] or 0.0)
     elif "saldo" in update_data:
         db_extra.saldo_pendiente = float(update_data["saldo"] or 0.0)
@@ -236,6 +243,13 @@ def recalcular_cuadricula_extra(cliente: models.ClienteExtra, db: Session):
         "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
     ]
     
+    is_eliminado = str(cliente.estado or "").strip().upper() == "ELIMINADO"
+    if is_eliminado:
+        cliente.saldo_pendiente = 0.0
+        for m in meses_validos:
+            setattr(cliente, f"{m}_saldo", 0.0)
+        return
+
     valor_mensual = float(cliente.valor or 0)
     
     limite_ingreso_idx = 0
@@ -282,7 +296,7 @@ def recalcular_cuadricula_extra(cliente: models.ClienteExtra, db: Session):
                 total_mes = float(getattr(cliente, f"{mes_actual}_pago", 0) or 0)
 
             # Cuota mensual del cliente activo
-            fee_mes = valor_mensual if str(cliente.activo).strip().upper() != 'NO' and str(cliente.estado).strip().upper() != 'ELIMINADO' else 0.0
+            fee_mes = valor_mensual if str(cliente.activo).strip().upper() != 'NO' and not is_eliminado else 0.0
             # Running balance con arrastre de excedentes:
             running_saldo = round(running_saldo + fee_mes - total_mes, 2)
             setattr(cliente, f"{mes_actual}_saldo", running_saldo)
@@ -295,7 +309,7 @@ def recalcular_cuadricula_extra(cliente: models.ClienteExtra, db: Session):
     # Saldo pendiente representa la deuda neta al mes actual
     mes_actual_idx = datetime.now().month - 1
     saldo_mes_actual = float(getattr(cliente, f"{meses_validos[mes_actual_idx]}_saldo", 0) or 0)
-    cliente.saldo_pendiente = max(0.0, saldo_mes_actual)
+    cliente.saldo_pendiente = max(0.0, saldo_mes_actual) if not is_eliminado else 0.0
 
 @router.post("/{id}/pagar")
 def registrar_pago_extra(
@@ -623,7 +637,13 @@ def upload_database_extras(
             mes_actual_idx = datetime.now().month - 1
             mes_actual_str = months_order[mes_actual_idx].lower() if mes_actual_idx < len(months_order) else "octubre"
             oct_saldo = float(meses_data.get(mes_actual_str, {}).get('saldo', 0.0) or 0.0)
-            db_cliente.saldo_pendiente = max(0.0, oct_saldo)
+            is_eliminado = str(db_cliente.estado or "").strip().upper() == "ELIMINADO"
+            if is_eliminado:
+                db_cliente.saldo_pendiente = 0.0
+                for m_name in months_order:
+                    setattr(db_cliente, f"{m_name.lower()}_saldo", 0.0)
+            else:
+                db_cliente.saldo_pendiente = max(0.0, oct_saldo)
 
             # Flush para tener ID del cliente
             db.flush()

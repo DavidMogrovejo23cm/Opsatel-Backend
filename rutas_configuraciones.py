@@ -736,13 +736,15 @@ def reset_pagos_clientes_extras(db: Session = Depends(get_db)):
                 setattr(c, f"{m}_factura", None)
                 setattr(c, f"{m}_cod", None)
 
-                if i >= limite_ingreso_idx:
+                if str(c.estado or "").strip().upper() == 'ELIMINADO':
+                    setattr(c, f"{m}_saldo", 0.00)
+                elif i >= limite_ingreso_idx:
                     setattr(c, f"{m}_saldo", valor_mensual)
                     total_deuda += valor_mensual
                 else:
                     setattr(c, f"{m}_saldo", 0.00)
 
-            c.saldo_pendiente = total_deuda
+            c.saldo_pendiente = total_deuda if str(c.estado or "").strip().upper() != 'ELIMINADO' else 0.00
 
         db.commit()
         return {
