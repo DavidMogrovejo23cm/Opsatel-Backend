@@ -1135,3 +1135,216 @@ def reset_cliente_ont(
     except Exception as e:
         logger.error(f"Error reiniciando ONT para cliente {cliente_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error reiniciando ONT: {str(e)}")
+
+
+# ============================================================================
+# COMPROBACIÓN DE ACCESO REMOTO (ONT, WIFI 5, WIFI 6)
+# ============================================================================
+
+class RemoteAccessTestRequest(BaseModel):
+    ip: str
+    protocol: Optional[str] = "http"
+    port: Optional[Any] = None
+    device_type: Optional[str] = None
+    cliente_id: Optional[int] = None
+
+@router.post("/test-remote-access", dependencies=[Depends(require_role(["administrador", "tecnico", "secretario"]))])
+def test_remote_access(
+    req: RemoteAccessTestRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Comprueba el acceso remoto HTTP / HTTPS hacia una ONT o Router WiFi (WiFi 5 / WiFi 6).
+    Emula el comportamiento de curl:
+      - WiFi 5: curl http://{ip}:5151
+      - ONT:    curl http://{ip}
+      - WiFi 6: curl -k https://{ip}
+    """
+    import time
+    import re
+    import requests
+    import urllib3
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    raw_ip = str(req.ip or "").strip()
+    if not raw_ip:
+        raise HTTPException(status_code=400, detail="Debe especificar una dirección IP válida")
+
+    # Limpieza inteligente por si el usuario pegó una URL completa (ej: http://172.16.0.61:5151)
+    protocol = str(req.protocol or "http").strip().lower().replace("://", "")
+    port_val = req.port
+    device_type = str(req.device_type or "").strip().lower()
+
+    if raw_ip.startswith("http://"):
+        protocol = "http"
+        raw_ip = raw_ip[len("http://"):]
+    elif raw_ip.startswith("https://"):
+        protocol = "https"
+        raw_ip = raw_ip[len("https://"):]
+
+    # Si la IP incluye puerto en la misma cadena (ej: 172.16.0.61:5151)
+    if ":" in raw_ip and not raw_ip.endswith("/"):
+        parts = raw_ip.split(":", 1)
+        raw_ip = parts[0].strip()
+        if (port_val is None or str(port_val).strip() == "") and parts[1].strip().isdigit():
+            port_val = int(parts[1].strip())
+
+    clean_ip = raw_ip.strip().rstrip("/")
+
+    # Resolver puerto por defecto según tipo de equipo o protocolo
+    final_port = None
+    if port_val is not None and str(port_val).strip() != "":
+        try:
+            final_port = int(str(port_val).strip())
+        except ValueError:
+            pass
+
+    if final_port is None:
+        if device_type == "wifi5":
+            final_port = 5151
+        elif device_type == "wifi6":
+            final_port = 443 if protocol == "https" else None
+        elif device_type == "ont":
+            final_port = 80 if protocol == "http" else None
+
+    # Construir target_url
+    if final_port and not (protocol == "http" and final_port == 80) and not (protocol == "https" and final_port == 443):
+        target_url = f"{protocol}://{clean_ip}:{final_port}"
+    else:
+        target_url = f"{protocol}://{clean_ip}"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+
+    t0 = time.time()
+    try:
+        resp = requests.get(
+            target_url,
+            timeout=6,
+            verify=False,
+            allow_redirects=True,
+            headers=headers
+        )
+        latency_ms = round((time.time() - t0) * 1000)
+        status_code = resp.status_code
+        text_content = resp.text or ""
+
+        # Detección inteligente del tipo de dispositivo en base al contenido HTML/XML
+        title_m = re.search(r'<title[^>]*>(.*?)</title>', text_content, re.IGNORECASE | re.DOTALL)
+        page_title = title_m.group(1).strip() if title_m else None
+
+        device_detected = "Equipo Web Activo"
+        if "tpEncrypt" in text_content or "App=new $.su.App" in text_content or "ruIspAutoConfig" in text_content or final_port == 5151:
+            device_detected = "Router WiFi 5 (TP-Link)"
+        elif "/webpages/index.html" in text_content or "webpages" in text_content or ("xhtml" in text_content and protocol == "https"):
+            device_detected = "Router WiFi 6"
+        elif "302 Moved" in text_content or "Moved Temporarily" in text_content:
+            device_detected = "ONT Web Interface (Redirección 302)"
+        elif "EchoLife" in text_content or "Huawei" in text_content:
+            device_detected = "ONT Huawei"
+        elif "FiberHome" in text_content:
+            device_detected = "ONT FiberHome"
+        elif "ZTE" in text_content:
+            device_detected = "ONT ZTE"
+
+        snippet = text_content[:450].strip() if text_content else f"HTTP {status_code} OK (Respuesta sin cuerpo)"
+
+        # Registrar en metadata del cliente si se proporcionó cliente_id
+        if req.cliente_id:
+            try:
+                cliente = db.query(models.Cliente).filter(models.Cliente.id == req.cliente_id).first()
+                if cliente:
+                    existing_data = {}
+                    if cliente.dispositivo:
+                        raw_val = str(cliente.dispositivo).strip()
+                        if raw_val.startswith("{") and raw_val.endswith("}"):
+                            try:
+                                existing_data = json.loads(raw_val)
+                            except Exception:
+                                existing_data = {"texto": raw_val}
+                        else:
+                            existing_data = {"texto": raw_val}
+                    existing_data["acceso_remoto"] = {
+                        "verificado": True,
+                        "url": target_url,
+                        "tipo": device_detected,
+                        "status_code": status_code,
+                        "latencia_ms": latency_ms,
+                        "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    cliente.dispositivo = json.dumps(existing_data, ensure_ascii=False)
+                    db.commit()
+            except Exception as save_err:
+                logger.warning(f"No se pudo registrar acceso remoto en cliente {req.cliente_id}: {save_err}")
+
+        return {
+            "success": True,
+            "url": target_url,
+            "ip": clean_ip,
+            "protocol": protocol,
+            "port": final_port,
+            "status_code": status_code,
+            "latency_ms": latency_ms,
+            "page_title": page_title,
+            "device_detected": device_detected,
+            "snippet": snippet,
+            "message": f"Acceso remoto verificado con éxito (HTTP {status_code}) en {latency_ms} ms."
+        }
+
+    except requests.exceptions.ConnectTimeout:
+        latency_ms = round((time.time() - t0) * 1000)
+        return {
+            "success": False,
+            "url": target_url,
+            "ip": clean_ip,
+            "protocol": protocol,
+            "port": final_port,
+            "latency_ms": latency_ms,
+            "error_type": "ConnectTimeout",
+            "message": f"Tiempo de espera agotado al conectar a {target_url} (> 6s). Verifique que el equipo esté encendido y que la IP {clean_ip} sea accesible en la red."
+        }
+    except requests.exceptions.ReadTimeout:
+        latency_ms = round((time.time() - t0) * 1000)
+        return {
+            "success": False,
+            "url": target_url,
+            "ip": clean_ip,
+            "protocol": protocol,
+            "port": final_port,
+            "latency_ms": latency_ms,
+            "error_type": "ReadTimeout",
+            "message": f"El equipo en {target_url} aceptó la conexión pero no devolvió datos en el tiempo límite."
+        }
+    except requests.exceptions.ConnectionError as ce:
+        latency_ms = round((time.time() - t0) * 1000)
+        err_msg = str(ce)
+        if "Connection refused" in err_msg or "WinError 10061" in err_msg:
+            detail_msg = f"Conexión rechazada en el puerto {final_port or (80 if protocol == 'http' else 443)}. El puerto podría estar cerrado o no es el correcto."
+        else:
+            detail_msg = f"No se pudo establecer conexión con {clean_ip}. Verifique conectividad o enrutamiento."
+        return {
+            "success": False,
+            "url": target_url,
+            "ip": clean_ip,
+            "protocol": protocol,
+            "port": final_port,
+            "latency_ms": latency_ms,
+            "error_type": "ConnectionError",
+            "message": detail_msg
+        }
+    except Exception as e:
+        latency_ms = round((time.time() - t0) * 1000)
+        return {
+            "success": False,
+            "url": target_url,
+            "ip": clean_ip,
+            "protocol": protocol,
+            "port": final_port,
+            "latency_ms": latency_ms,
+            "error_type": type(e).__name__,
+            "message": f"Error al probar acceso remoto: {str(e)}"
+        }
