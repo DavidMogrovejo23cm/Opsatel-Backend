@@ -62,7 +62,7 @@ def wait_for_db(host='db', port=3306, max_attempts=30, delay=2):
     db_pass = os.getenv('MYSQL_ROOT_PASSWORD', '')
     db_name = os.getenv('MYSQL_DATABASE', '')
     
-    database_url = os.getenv('DATABASE_URL', '')
+    database_url = os.getenv('DATABASE_URL', 'mysql+pymysql://root:@localhost/opsatel')
     if database_url:
         try:
             parsed = urllib.parse.urlparse(database_url)
@@ -160,7 +160,7 @@ def init_db(max_retries=12, retry_interval=5):
 # Ejecutar inicialización ANTES de importar rutas
 init_db()
 
-from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance, asistencia, whatsapp, olt_tasks, caja, peliculas
+from routes import auth, clientes, extras, hoja_ruta, tickets, callcenter, balance, asistencia, whatsapp, olt_tasks, caja, peliculas, backup
 import rutas_configuraciones
 
 # ========================================================================
@@ -229,6 +229,7 @@ app.include_router(olt_tasks.router)
 from routes import libreqos
 app.include_router(libreqos.router)
 app.include_router(peliculas.router)
+app.include_router(backup.router)
 
 # pyrefly: ignore [missing-import]
 from fastapi.staticfiles import StaticFiles
