@@ -230,6 +230,7 @@ from routes import libreqos
 app.include_router(libreqos.router)
 app.include_router(peliculas.router)
 app.include_router(backup.router)
+app.include_router(backup.router, prefix="/clientes")
 
 # pyrefly: ignore [missing-import]
 from fastapi.staticfiles import StaticFiles
