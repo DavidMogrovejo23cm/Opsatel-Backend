@@ -5,59 +5,23 @@
   "hora_corte": "01:00",
   "auto_suspension_enabled": false,
   "clientes_exentos_corte": [],
-  "backup_auto_enabled": true,
-  "backup_auto_frecuencia": "cada_5min",
+  "backup_auto_enabled": false,
+  "backup_auto_frecuencia": "cada_dia",
   "backup_auto_hora": "02:00",
   "backup_auto_dia_semana": 6,
   "backup_auto_dia_mes": 1,
   "backup_auto_retencion_dias": 30,
-  "backup_telegram_enabled": true,
-  "backup_telegram_bot_token": "8810839607:AAGRJGVEtAygrkYIk0VFAscXcl_pwDJ_iCo",
-  "backup_telegram_chat_id": "8847409326",
+  "backup_telegram_enabled": false,
+  "backup_telegram_bot_token": "",
+  "backup_telegram_chat_id": "",
   "backup_email_enabled": false,
   "backup_smtp_host": "smtp.gmail.com",
   "backup_smtp_port": 587,
   "backup_smtp_user": "",
   "backup_smtp_password": "",
   "backup_email_destinatario": "",
-  "ultimo_respaldo_automatico": {
-    "fecha": "2026-10-20 18:10:00",
-    "archivo": "backup_opsatel_20261020_181000.sql",
-    "tamano_mb": 4.16,
-    "estado": "exitoso",
-    "motivo": "programado"
-  },
-  "historial_respaldos": [
-    {
-      "fecha": "2026-10-20 18:10:00",
-      "archivo": "backup_opsatel_20261020_181000.sql",
-      "tamano_mb": 4.16,
-      "motivo": "programado",
-      "canal": "Telegram",
-      "destinatario_id": "8847409326",
-      "estado": "exitoso",
-      "detalle": "Enviado a Telegram ID 8847409326"
-    },
-    {
-      "fecha": "2026-10-20 18:05:00",
-      "archivo": "backup_opsatel_20261020_180500.sql",
-      "tamano_mb": 4.16,
-      "motivo": "programado",
-      "canal": "Telegram",
-      "destinatario_id": "8847409326",
-      "estado": "exitoso",
-      "detalle": "Enviado a Telegram ID 8847409326"
-    },
-    {
-      "fecha": "2026-10-20 18:03:18",
-      "archivo": "backup_opsatel_20261020_180318.sql",
-      "tamano_mb": 4.16,
-      "motivo": "manual-inmediato",
-      "canal": "Telegram",
-      "destinatario_id": "8847409326",
-      "estado": "exitoso",
-      "detalle": "Enviado a Telegram ID 8847409326"
-    }
-  ],
+  "ultimo_respaldo_automatico": null,
+  "historial_respaldos": [],
+  "historial_configuraciones": [],
   "dias_permanencia": 1.0
 }

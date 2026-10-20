@@ -21,7 +21,7 @@ DEFAULT_CONFIG = {
     "hora_corte": "01:00",
     "auto_suspension_enabled": True,
     "clientes_exentos_corte": [],
-    "backup_auto_enabled": True,
+    "backup_auto_enabled": False,
     "backup_auto_frecuencia": "cada_dia",
     "backup_auto_hora": "02:00",
     "backup_auto_dia_semana": 6,
@@ -37,7 +37,8 @@ DEFAULT_CONFIG = {
     "backup_smtp_password": "",
     "backup_email_destinatario": "",
     "ultimo_respaldo_automatico": None,
-    "historial_respaldos": []
+    "historial_respaldos": [],
+    "historial_configuraciones": []
 }
 
 def get_config():

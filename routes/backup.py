@@ -789,7 +789,7 @@ def get_auto_backup_config():
     """Obtiene la configuración actual de respaldos automáticos programados."""
     cfg = get_config()
     return {
-        "enabled": bool(cfg.get("backup_auto_enabled", True)),
+        "enabled": bool(cfg.get("backup_auto_enabled", False)),
         "frecuencia": str(cfg.get("backup_auto_frecuencia", "cada_dia")),
         "hora": str(cfg.get("backup_auto_hora", "02:00")),
         "dia_semana": int(cfg.get("backup_auto_dia_semana", 6)),
@@ -805,7 +805,8 @@ def get_auto_backup_config():
         "smtp_password": str(cfg.get("backup_smtp_password", "")),
         "email_destinatario": str(cfg.get("backup_email_destinatario", "")),
         "ultimo_respaldo": cfg.get("ultimo_respaldo_automatico"),
-        "historial": cfg.get("historial_respaldos", [])
+        "historial": cfg.get("historial_respaldos", []),
+        "historial_configuraciones": cfg.get("historial_configuraciones", [])
     }
 
 
@@ -814,6 +815,13 @@ def limpiar_historial_backup():
     """Limpia el historial de registros de respaldos automáticos."""
     save_config({"historial_respaldos": []})
     return {"success": True, "message": "Historial de respaldos limpiado correctamente."}
+
+
+@router.delete("/historial-configuraciones")
+def limpiar_historial_configuraciones():
+    """Limpia el historial de cambios de configuraciones de respaldo."""
+    save_config({"historial_configuraciones": []})
+    return {"success": True, "message": "Historial de cambios de configuración limpiado correctamente."}
 
 
 @router.put("/config")
@@ -845,6 +853,29 @@ def update_auto_backup_config(data: AutoBackupConfigRequest):
     if tg_token and tg_chat and not data.telegram_enabled:
         tg_enabled = True
 
+    # Registrar en el historial de configuraciones realizadas
+    cfg_actual = get_config()
+    hist_cfg = cfg_actual.get("historial_configuraciones", [])
+    if not isinstance(hist_cfg, list):
+        hist_cfg = []
+
+    tg_token_masked = ""
+    if tg_token:
+        tg_token_masked = f"{tg_token[:6]}...{tg_token[-4:]}" if len(tg_token) > 10 else "••••••••"
+
+    hist_cfg.insert(0, {
+        "fecha": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "frecuencia": frecuencia,
+        "hora": data.hora if frecuencia not in ["cada_5min", "cada_hora"] else "Automático",
+        "dia_semana": data.dia_semana if data.dia_semana is not None else 6,
+        "dia_mes": data.dia_mes if data.dia_mes is not None else 1,
+        "retencion_dias": data.retencion_dias,
+        "telegram_chat_id": tg_chat or "No configurado",
+        "telegram_token_enmascarado": tg_token_masked or "No configurado",
+        "enabled": data.enabled
+    })
+    hist_cfg = hist_cfg[:30]
+
     save_config({
         "backup_auto_enabled": data.enabled,
         "backup_auto_frecuencia": frecuencia,
@@ -860,7 +891,8 @@ def update_auto_backup_config(data: AutoBackupConfigRequest):
         "backup_smtp_port": data.smtp_port or 587,
         "backup_smtp_user": (data.smtp_user or "").strip(),
         "backup_smtp_password": (data.smtp_password or "").strip(),
-        "backup_email_destinatario": email_dest
+        "backup_email_destinatario": email_dest,
+        "historial_configuraciones": hist_cfg
     })
     
     try:
