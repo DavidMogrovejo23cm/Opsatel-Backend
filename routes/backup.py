@@ -7,6 +7,7 @@
 """
 import io
 import os
+import re
 import json
 import datetime
 from decimal import Decimal
@@ -195,6 +196,8 @@ SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO';
             create_result = cursor.fetchone()
             if create_result and len(create_result) > 1:
                 create_stmt = create_result[1]
+                # Normalizar colaciones para máxima compatibilidad (MySQL 8 / MariaDB / MySQL 5.7)
+                create_stmt = re.sub(r'utf8mb4_0900_[a-z0-9_]+', 'utf8mb4_unicode_ci', create_stmt, flags=re.IGNORECASE)
                 yield f"{create_stmt};\n\n"
 
             # 2. Volcado de datos de la tabla
@@ -334,6 +337,9 @@ async def importar_backup_sql(file: UploadFile = File(...)):
         except UnicodeDecodeError:
             sql_text = content_bytes.decode("latin-1")
 
+        # Normalizar colaciones de MySQL 8.0 incompatibles con MariaDB / MySQL 5.7
+        sql_text = re.sub(r'utf8mb4_0900_[a-z0-9_]+', 'utf8mb4_unicode_ci', sql_text, flags=re.IGNORECASE)
+
         statements = split_sql_statements(sql_text)
         if not statements:
             raise HTTPException(
@@ -368,15 +374,9 @@ async def importar_backup_sql(file: UploadFile = File(...)):
                     executed_count += 1
 
                     # Extraer nombre de tabla para estadísticas
-                    upper_stmt = clean.upper()
-                    if "CREATE TABLE" in upper_stmt or "DROP TABLE" in upper_stmt or "INSERT INTO" in upper_stmt:
-                        words = clean.replace("`", "").replace('"', '').split()
-                        for idx, w in enumerate(words):
-                            if w.upper() in ("TABLE", "INTO") and idx + 1 < len(words):
-                                raw_tbl = words[idx + 1].split("(")[0].strip()
-                                if raw_tbl:
-                                    tables_affected.add(raw_tbl)
-                                break
+                    match = re.search(r'(?:CREATE\s+TABLE|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|INSERT\s+INTO|ALTER\s+TABLE)\s+[`"]?([a-zA-Z0-9_]+)[`"]?', clean, flags=re.IGNORECASE)
+                    if match:
+                        tables_affected.add(match.group(1))
                 except Exception as stmt_err:
                     logger.warning(f"Aviso ejecutando sentencia [{clean[:60]}...]: {stmt_err}")
                     # Continuar con la siguiente sentencia para no abortar si es un setting no compatible
