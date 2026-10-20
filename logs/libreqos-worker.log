@@ -4737,3 +4737,689 @@ WHERE worker_heartbeats.worker_name = %(worker_name_1)s
  LIMIT %(param_1)s]
 [parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
 (Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:48:13] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:48:13] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 48, 13, 402028), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:48:23] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:48:23] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 48, 23, 414549), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:48:33] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:48:33] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 48, 33, 441556), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:48:43] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:48:43] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 48, 43, 466687), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:48:53] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:48:53] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 48, 53, 491818), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:03] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:03] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 49, 3, 516119), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:13] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:13] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 49, 13, 540334), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:23] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:23] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 49, 23, 587658), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:33] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:33] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 49, 33, 616935), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:43] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:43] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 49, 43, 648690), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:53] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:49:53] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 49, 53, 690594), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:03] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:03] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 50, 3, 714947), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:13] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:13] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 50, 13, 744478), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:23] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:23] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 50, 23, 784076), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:33] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:33] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 50, 33, 823552), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:43] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:43] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 50, 43, 866966), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:53] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:50:53] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 50, 53, 909343), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:03] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:03] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 51, 3, 953906), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:13] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:13] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 51, 13, 996291), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:24] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:24] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 51, 24, 17344), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:34] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:34] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 51, 34, 399688), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:44] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:44] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 51, 44, 442350), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:54] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:51:54] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 51, 54, 488207), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:04] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:04] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 52, 4, 533038), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:14] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:14] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 52, 14, 582446), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:24] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:24] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 52, 24, 637968), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:34] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:34] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 52, 34, 682840), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:44] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:44] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 52, 44, 730815), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:54] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:52:54] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 52, 54, 758531), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:04] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:04] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 53, 4, 788375), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:14] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:14] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 53, 14, 832685), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:24] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:24] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 53, 24, 856752), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:34] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:34] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 53, 34, 883028), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:44] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:44] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 53, 44, 905075), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:54] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:53:54] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 53, 54, 937278), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:04] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:04] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 54, 4, 954438), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:14] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:14] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 54, 14, 982196), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:25] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:25] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 54, 25, 14456), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:35] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:35] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 54, 35, 55302), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:45] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:45] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 54, 45, 92140), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:55] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:54:55] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 54, 55, 123902), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:05] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:05] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 55, 5, 162575), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:15] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:15] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 55, 15, 195450), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:25] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:25] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 55, 25, 231813), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:35] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:35] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 55, 35, 285520), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:45] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:45] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 55, 45, 306992), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:55] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:55:55] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 55, 55, 330642), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:56:05] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:56:05] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 56, 5, 363005), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:56:15] [ERROR] Error actualizando heartbeat: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.worker_heartbeats' doesn't exist")
+[SQL: SELECT worker_heartbeats.worker_name AS worker_heartbeats_worker_name, worker_heartbeats.pid AS worker_heartbeats_pid, worker_heartbeats.hostname AS worker_heartbeats_hostname, worker_heartbeats.status AS worker_heartbeats_status, worker_heartbeats.cycle_count AS worker_heartbeats_cycle_count, worker_heartbeats.processed_count AS worker_heartbeats_processed_count, worker_heartbeats.error_count AS worker_heartbeats_error_count, worker_heartbeats.last_seen AS worker_heartbeats_last_seen, worker_heartbeats.started_at AS worker_heartbeats_started_at 
+FROM worker_heartbeats 
+WHERE worker_heartbeats.worker_name = %(worker_name_1)s 
+ LIMIT %(param_1)s]
+[parameters: {'worker_name_1': 'libreqos_worker', 'param_1': 1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+[2026-10-19 18:56:15] [ERROR] Error inesperado en ciclo del worker: (pymysql.err.ProgrammingError) (1146, "Table 'opsatel.libreqos_jobs' doesn't exist")
+[SQL: SELECT libreqos_jobs.id AS libreqos_jobs_id, libreqos_jobs.cliente_id AS libreqos_jobs_cliente_id, libreqos_jobs.libreqos_server_id AS libreqos_jobs_libreqos_server_id, libreqos_jobs.operation AS libreqos_jobs_operation, libreqos_jobs.payload AS libreqos_jobs_payload, libreqos_jobs.status AS libreqos_jobs_status, libreqos_jobs.priority AS libreqos_jobs_priority, libreqos_jobs.retry_count AS libreqos_jobs_retry_count, libreqos_jobs.max_retries AS libreqos_jobs_max_retries, libreqos_jobs.next_retry_at AS libreqos_jobs_next_retry_at, libreqos_jobs.result AS libreqos_jobs_result, libreqos_jobs.error AS libreqos_jobs_error, libreqos_jobs.correlation_id AS libreqos_jobs_correlation_id, libreqos_jobs.created_by AS libreqos_jobs_created_by, libreqos_jobs.processed_by AS libreqos_jobs_processed_by, libreqos_jobs.created_at AS libreqos_jobs_created_at, libreqos_jobs.started_at AS libreqos_jobs_started_at, libreqos_jobs.completed_at AS libreqos_jobs_completed_at 
+FROM libreqos_jobs 
+WHERE libreqos_jobs.status IN (%(status_1_1)s, %(status_1_2)s) AND (libreqos_jobs.next_retry_at IS NULL OR libreqos_jobs.next_retry_at <= %(next_retry_at_1)s) ORDER BY libreqos_jobs.priority DESC, libreqos_jobs.created_at ASC 
+ LIMIT %(param_1)s]
+[parameters: {'next_retry_at_1': datetime.datetime(2026, 10, 19, 23, 56, 15, 413980), 'param_1': 5, 'status_1_1': 'pending', 'status_1_2': 'retry'}]
+(Background on this error at: https://sqlalche.me/e/20/f405)
