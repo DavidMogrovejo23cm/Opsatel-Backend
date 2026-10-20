@@ -508,6 +508,78 @@ def reprogramar_job_suspension():
         except Exception as e:
             print(f"[Scheduler] Error al reprogramar job de suspensión: {e}")
 
+def backup_automatico_diario():
+    """
+    Tarea programada que ejecuta el respaldo automático diario completo de la base de datos.
+    """
+    try:
+        from routes.backup import ejecutar_proceso_backup_automatico
+        print("[Scheduler] [BACKUP] Iniciando ejecución de respaldo automático programado...")
+        res = ejecutar_proceso_backup_automatico(motivo="programado")
+        print(f"[Scheduler] [BACKUP] [OK] Respaldo generado con éxito: {res.get('archivo')} ({res.get('tamano_mb')} MB)")
+    except Exception as e:
+        print(f"[Scheduler] [BACKUP] [ERROR] Error durante el respaldo automático programado: {e}")
+        traceback.print_exc()
+
+def obtener_trigger_backup(cfg):
+    """Calcula el CronTrigger de APScheduler según la frecuencia configurada."""
+    frecuencia = str(cfg.get("backup_auto_frecuencia", "cada_dia")).lower()
+    hora_str = str(cfg.get("backup_auto_hora", "02:00"))
+    parts = hora_str.split(":")
+    h = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 2
+    m = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    dia_semana = int(cfg.get("backup_auto_dia_semana", 6))
+    dia_mes = int(cfg.get("backup_auto_dia_mes", 1))
+
+    if frecuencia == "cada_hora":
+        return CronTrigger(minute=0, second=0, timezone=ECUADOR_TZ)
+    elif frecuencia == "cada_semana":
+        return CronTrigger(day_of_week=dia_semana, hour=h, minute=m, second=0, timezone=ECUADOR_TZ)
+    elif frecuencia == "cada_mes":
+        return CronTrigger(day=dia_mes, hour=h, minute=m, second=0, timezone=ECUADOR_TZ)
+    else:  # cada_dia
+        return CronTrigger(hour=h, minute=m, second=0, timezone=ECUADOR_TZ)
+
+def reprogramar_job_backup():
+    """
+    Reprograma dinámicamente o habilita/deshabilita el trabajo de respaldo automático según config.json.
+    """
+    global scheduler
+    if scheduler is not None and scheduler.running:
+        try:
+            from config_manager import get_config
+            cfg = get_config()
+            enabled = bool(cfg.get("backup_auto_enabled", True))
+            
+            if not enabled:
+                try:
+                    scheduler.remove_job('backup_automatico_diario')
+                    print("[Scheduler] [BACKUP] Job de respaldo automático deshabilitado.")
+                except Exception:
+                    pass
+                return
+
+            trigger = obtener_trigger_backup(cfg)
+            frecuencia = str(cfg.get("backup_auto_frecuencia", "cada_dia"))
+
+            job = scheduler.get_job('backup_automatico_diario')
+            if job:
+                scheduler.reschedule_job(
+                    'backup_automatico_diario',
+                    trigger=trigger
+                )
+            else:
+                scheduler.add_job(
+                    backup_automatico_diario,
+                    trigger=trigger,
+                    id='backup_automatico_diario',
+                    name='Respaldo automático de base de datos',
+                    replace_existing=True
+                )
+            print(f"[Scheduler] [BACKUP] [OK] Job de respaldo automático reprogramado con frecuencia '{frecuencia}'.")
+        except Exception as e:
+            print(f"[Scheduler] [BACKUP] Error al reprogramar job de respaldo automático: {e}")
+
 def iniciar_scheduler():
     """
     Inicia el scheduler en background.
@@ -563,9 +635,24 @@ def iniciar_scheduler():
         name='Suspensión automática por mora',
         replace_existing=True
     )
+
+    # 5. Respaldo automático de base de datos (según frecuencia configurada)
+    if cfg.get("backup_auto_enabled", True):
+        backup_trigger = obtener_trigger_backup(cfg)
+        frecuencia = str(cfg.get("backup_auto_frecuencia", "cada_dia"))
+        
+        scheduler.add_job(
+            backup_automatico_diario,
+            trigger=backup_trigger,
+            id='backup_automatico_diario',
+            name='Respaldo automático de base de datos',
+            replace_existing=True
+        )
+        print(f"[Scheduler] [OK] Respaldo automático programado con frecuencia '{frecuencia}'.")
     
     scheduler.start()
     print(f"[Scheduler] [OK] Scheduler iniciado correctamente (Suspensión programada a las {h:02d}:{m:02d})")
+
 
 def detener_scheduler():
     """

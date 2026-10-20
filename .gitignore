@@ -12,6 +12,8 @@ venv.bak/
 .idea/
 *.sql
 *.sqlite
+backups/
+
 # Node.js
 node_modules/
 package-lock.json

@@ -20,7 +20,23 @@ DEFAULT_CONFIG = {
     "dia_corte": 20,
     "hora_corte": "01:00",
     "auto_suspension_enabled": True,
-    "clientes_exentos_corte": []
+    "clientes_exentos_corte": [],
+    "backup_auto_enabled": True,
+    "backup_auto_frecuencia": "cada_dia",
+    "backup_auto_hora": "02:00",
+    "backup_auto_dia_semana": 6,
+    "backup_auto_dia_mes": 1,
+    "backup_auto_retencion_dias": 30,
+    "backup_telegram_enabled": False,
+    "backup_telegram_bot_token": "",
+    "backup_telegram_chat_id": "",
+    "backup_email_enabled": False,
+    "backup_smtp_host": "smtp.gmail.com",
+    "backup_smtp_port": 587,
+    "backup_smtp_user": "",
+    "backup_smtp_password": "",
+    "backup_email_destinatario": "",
+    "ultimo_respaldo_automatico": None
 }
 
 def get_config():
