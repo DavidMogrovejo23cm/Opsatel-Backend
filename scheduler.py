@@ -531,7 +531,9 @@ def obtener_trigger_backup(cfg):
     dia_semana = int(cfg.get("backup_auto_dia_semana", 6))
     dia_mes = int(cfg.get("backup_auto_dia_mes", 1))
 
-    if frecuencia == "cada_hora":
+    if frecuencia == "cada_5min":
+        return CronTrigger(minute="*/5", second=0, timezone=ECUADOR_TZ)
+    elif frecuencia == "cada_hora":
         return CronTrigger(minute=0, second=0, timezone=ECUADOR_TZ)
     elif frecuencia == "cada_semana":
         return CronTrigger(day_of_week=dia_semana, hour=h, minute=m, second=0, timezone=ECUADOR_TZ)

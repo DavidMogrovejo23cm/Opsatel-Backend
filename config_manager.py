@@ -36,7 +36,8 @@ DEFAULT_CONFIG = {
     "backup_smtp_user": "",
     "backup_smtp_password": "",
     "backup_email_destinatario": "",
-    "ultimo_respaldo_automatico": None
+    "ultimo_respaldo_automatico": None,
+    "historial_respaldos": []
 }
 
 def get_config():

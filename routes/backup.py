@@ -708,7 +708,7 @@ def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
                 res_mail = enviar_alerta_email(host, port, user, pwd, dest, asunto, cuerpo, filepath)
                 email_status = {"activo": True, "resultado": res_mail}
                 
-        # 5. Guardar registro en configuración
+        # 5. Guardar registro en configuración e historial
         registro_respaldo = {
             "fecha": now.strftime("%Y-%m-%d %H:%M:%S"),
             "archivo": filename,
@@ -716,7 +716,31 @@ def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
             "estado": "exitoso",
             "motivo": motivo
         }
-        save_config({"ultimo_respaldo_automatico": registro_respaldo})
+        
+        # Historial detallado con el ID de a quién se mandó
+        tg_ok = telegram_status.get("resultado", {}).get("ok", False)
+        tg_dest = str(cfg.get("backup_telegram_chat_id", "")).strip()
+        historial_entry = {
+            "fecha": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "archivo": filename,
+            "tamano_mb": size_mb,
+            "motivo": motivo,
+            "canal": "Telegram" if cfg.get("backup_telegram_enabled", False) else "Servidor Local",
+            "destinatario_id": tg_dest if cfg.get("backup_telegram_enabled", False) else "Local",
+            "estado": "exitoso" if (not cfg.get("backup_telegram_enabled", False) or tg_ok) else "fallido",
+            "detalle": f"Enviado a Telegram ID {tg_dest}" if tg_ok else (telegram_status.get("resultado", {}).get("error") or "Guardado en servidor")
+        }
+
+        historial = cfg.get("historial_respaldos", [])
+        if not isinstance(historial, list):
+            historial = []
+        historial.insert(0, historial_entry)
+        historial = historial[:50]
+
+        save_config({
+            "ultimo_respaldo_automatico": registro_respaldo,
+            "historial_respaldos": historial
+        })
         
         return {
             "success": True,
@@ -738,7 +762,25 @@ def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
             "error": str(e),
             "motivo": motivo
         }
-        save_config({"ultimo_respaldo_automatico": error_registro})
+        error_historial = {
+            "fecha": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "archivo": filename,
+            "tamano_mb": 0,
+            "motivo": motivo,
+            "canal": "Telegram",
+            "destinatario_id": str(cfg.get("backup_telegram_chat_id", "")).strip() or "N/A",
+            "estado": "error",
+            "detalle": str(e)
+        }
+        historial = cfg.get("historial_respaldos", [])
+        if not isinstance(historial, list):
+            historial = []
+        historial.insert(0, error_historial)
+        historial = historial[:50]
+        save_config({
+            "ultimo_respaldo_automatico": error_registro,
+            "historial_respaldos": historial
+        })
         raise e
 
 
@@ -762,8 +804,16 @@ def get_auto_backup_config():
         "smtp_user": str(cfg.get("backup_smtp_user", "")),
         "smtp_password": str(cfg.get("backup_smtp_password", "")),
         "email_destinatario": str(cfg.get("backup_email_destinatario", "")),
-        "ultimo_respaldo": cfg.get("ultimo_respaldo_automatico")
+        "ultimo_respaldo": cfg.get("ultimo_respaldo_automatico"),
+        "historial": cfg.get("historial_respaldos", [])
     }
+
+
+@router.delete("/historial")
+def limpiar_historial_backup():
+    """Limpia el historial de registros de respaldos automáticos."""
+    save_config({"historial_respaldos": []})
+    return {"success": True, "message": "Historial de respaldos limpiado correctamente."}
 
 
 @router.put("/config")
@@ -771,12 +821,12 @@ def update_auto_backup_config(data: AutoBackupConfigRequest):
     """Actualiza la configuración de respaldos automáticos y reprograma el scheduler."""
     import re
     
-    frecuencias_validas = ["cada_hora", "cada_dia", "cada_semana", "cada_mes"]
+    frecuencias_validas = ["cada_5min", "cada_hora", "cada_dia", "cada_semana", "cada_mes"]
     frecuencia = data.frecuencia.lower() if data.frecuencia else "cada_dia"
     if frecuencia not in frecuencias_validas:
-        raise HTTPException(status_code=400, detail="Frecuencia inválida. Opciones: cada_hora, cada_dia, cada_semana, cada_mes")
+        raise HTTPException(status_code=400, detail="Frecuencia inválida. Opciones: cada_5min, cada_hora, cada_dia, cada_semana, cada_mes")
         
-    if frecuencia != "cada_hora":
+    if frecuencia not in ["cada_5min", "cada_hora"]:
         if not re.match(r"^\d{2}:\d{2}$", data.hora):
             raise HTTPException(status_code=400, detail="El formato de hora debe ser HH:MM (ej. 02:00)")
         
@@ -789,6 +839,12 @@ def update_auto_backup_config(data: AutoBackupConfigRequest):
     if email_dest and not data.email_enabled:
         email_enabled = True
 
+    tg_token = (data.telegram_bot_token or "").strip()
+    tg_chat = (data.telegram_chat_id or "").strip()
+    tg_enabled = data.telegram_enabled
+    if tg_token and tg_chat and not data.telegram_enabled:
+        tg_enabled = True
+
     save_config({
         "backup_auto_enabled": data.enabled,
         "backup_auto_frecuencia": frecuencia,
@@ -796,9 +852,9 @@ def update_auto_backup_config(data: AutoBackupConfigRequest):
         "backup_auto_dia_semana": data.dia_semana if data.dia_semana is not None else 6,
         "backup_auto_dia_mes": data.dia_mes if data.dia_mes is not None else 1,
         "backup_auto_retencion_dias": data.retencion_dias,
-        "backup_telegram_enabled": data.telegram_enabled,
-        "backup_telegram_bot_token": (data.telegram_bot_token or "").strip(),
-        "backup_telegram_chat_id": (data.telegram_chat_id or "").strip(),
+        "backup_telegram_enabled": tg_enabled,
+        "backup_telegram_bot_token": tg_token,
+        "backup_telegram_chat_id": tg_chat,
         "backup_email_enabled": email_enabled,
         "backup_smtp_host": (data.smtp_host or "smtp.gmail.com").strip(),
         "backup_smtp_port": data.smtp_port or 587,
