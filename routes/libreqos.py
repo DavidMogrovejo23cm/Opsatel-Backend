@@ -171,6 +171,64 @@ def run_manual_sync(server_id: int, background_tasks: BackgroundTasks, db: Sessi
     background_tasks.add_task(run_sync)
     return {"success": True, "detail": f"Reconciliación para '{server.name}' iniciada en segundo plano."}
 
+def is_nodo_sayausi(nodo_val) -> bool:
+    """Detecta si un valor de nodo o parroquia es Sayausí."""
+    if not nodo_val:
+        return False
+    import unicodedata
+    s = unicodedata.normalize('NFD', str(nodo_val)).encode('ascii', 'ignore').decode('utf-8').upper()
+    return "SAYAUS" in s
+
+def is_client_for_server(cliente: models.Cliente, server: LibreQoSServer) -> bool:
+    """
+    Determina de manera estricta y excluyente si un cliente pertenece a este servidor LibreQoS:
+    - Servidor Sayausí: ÚNICAMENTE clientes con nodo/parroquia Sayausí o IP 172.18.x.x
+    - Servidor Baños: ÚNICAMENTE clientes de Baños o generales (IP 172.16.x.x) y NUNCA de Sayausí.
+    """
+    s_name = (server.name or "").upper()
+    s_host = (server.host or "").strip()
+    
+    server_is_sayausi = "SAYAUS" in s_name or s_host == "172.30.0.34" or server.ssh_port == 22223
+    
+    cli_ip = (cliente.ip or "").strip()
+    cli_is_sayausi = (
+        is_nodo_sayausi(cliente.nodo)
+        or is_nodo_sayausi(cliente.parroquia)
+        or cli_ip.startswith("172.18.")
+    )
+    
+    if server_is_sayausi:
+        return cli_is_sayausi
+    else:
+        return not cli_is_sayausi
+
+def get_server_active_clients(server: LibreQoSServer, db: Session) -> List[models.Cliente]:
+    """Obtiene los clientes activos correspondientes exclusivamente a la zona de este servidor."""
+    # Auto-asociar OLTs al servidor si estaban huérfanas
+    try:
+        s_name = (server.name or "").upper()
+        if "SAYAUS" in s_name or server.host == "172.30.0.34":
+            olt_s = db.query(models.OLTConfig).filter(models.OLTConfig.nodo_asociado.ilike("%SAYAUS%")).first()
+            if olt_s and olt_s.libreqos_server_id != server.id:
+                olt_s.libreqos_server_id = server.id
+                db.commit()
+        elif "BAN" in s_name or "BA" in s_name or server.host == "172.28.0.4":
+            olt_b = db.query(models.OLTConfig).filter(models.OLTConfig.nodo_asociado.ilike("%BAN%")).first()
+            if olt_b and olt_b.libreqos_server_id != server.id:
+                olt_b.libreqos_server_id = server.id
+                db.commit()
+    except Exception as e:
+        pass
+
+    # Traer todos los clientes activos con IP
+    all_active = db.query(models.Cliente).filter(
+        models.Cliente.estado == "Activo",
+        models.Cliente.ip != None
+    ).all()
+    
+    # Filtrar exclusivamente los que pertenecen a este servidor
+    return [c for c in all_active if is_client_for_server(c, server)]
+
 @router.post("/servers/{server_id}/clean-duplicates", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
 def clean_server_duplicates(server_id: int, db: Session = Depends(get_db)):
     """
@@ -182,24 +240,23 @@ def clean_server_duplicates(server_id: int, db: Session = Depends(get_db)):
     if not server:
         raise HTTPException(status_code=404, detail="Servidor LibreQoS no encontrado.")
 
-    # Mapear todos los clientes activos con IP desde la BD de Opsatel
-    all_clients = db.query(models.Cliente).filter(
-        models.Cliente.estado == "Activo",
-        models.Cliente.ip != None
-    ).all()
+    # Mapear solo los clientes activos que corresponden a la zona de este servidor
+    server_clients = get_server_active_clients(server, db)
 
     db_clients_by_ip = {}
-    for c in all_clients:
+    for c in server_clients:
         ip = (c.ip or "").strip()
         if not ip:
             continue
-        down, up = LibreQoSManager.calculate_speeds(c, db)
+        down_min, up_min, down, up = LibreQoSManager.get_client_qos_profile(c, db)
         safe_name = (c.nombre or f"Cliente_{c.id}").replace(",", " ").replace('"', '').replace("'", "").strip()
         db_clients_by_ip[ip] = {
             "client_id": c.id,
             "name": safe_name,
             "download": down,
-            "upload": up
+            "upload": up,
+            "download_min": down_min,
+            "upload_min": up_min
         }
 
     try:
@@ -232,58 +289,44 @@ def regenerate_server_shaped_devices(server_id: int, db: Session = Depends(get_d
     if not server:
         raise HTTPException(status_code=404, detail="Servidor LibreQoS no encontrado.")
 
-    # 1. Obtener clientes que pertenecen a este servidor según OLTConfig
-    clientes = db.query(models.Cliente).join(
-        models.OLTConfig, models.OLTConfig.nodo_asociado == models.Cliente.nodo
-    ).filter(
-        models.OLTConfig.libreqos_server_id == server.id,
-        models.OLTConfig.active == True,
-        models.Cliente.estado == "Activo",
-        models.Cliente.ip != None
-    ).all()
-
-    # Si no se encontraron por OLT, o si es un nodo directo, buscar clientes cuyos nodos coincidan
-    if not clientes:
-        # Intento secundario: clientes activos con IP
-        clientes = db.query(models.Cliente).filter(
-            models.Cliente.estado == "Activo",
-            models.Cliente.ip != None
-        ).all()
+    # 1. Obtener clientes que pertenecen estrictamente a este servidor
+    clientes = get_server_active_clients(server, db)
 
     seen_ips = set()
     csv_lines = [
         "Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min,Upload Min,Download Max,Upload Max,Comment"
     ]
 
-    count_added = 0
-    for c in clientes:
-        ip = (c.ip or "").strip()
-        if not ip or ip in seen_ips:
-            continue
-        seen_ips.add(ip)
+    with LibreQoSAdapter(server) as adapter:
+        count_added = 0
+        for c in clientes:
+            ip = (c.ip or "").strip()
+            if not ip or ip in seen_ips:
+                continue
+            seen_ips.add(ip)
 
-        down, up = LibreQoSManager.calculate_speeds(c, db)
-        safe_name = (c.nombre or f"Cliente_{c.id}").replace(",", " ").replace('"', '').replace("'", "").strip()
-        line = f"{c.id},{safe_name},{c.id},{c.id},,,{ip},,2,2,{down},{up},"
-        csv_lines.append(line)
-        count_added += 1
+            down_min, up_min, down, up = LibreQoSManager.get_client_qos_profile(c, db)
+            safe_name = adapter._sanitize_name(c.nombre or f"Cliente_{c.id}")
+            cid = adapter._normalize_id(str(c.id))
+            line = f"{cid},{safe_name},{cid},{cid},,,{ip},,{down_min},{up_min},{down},{up},"
+            csv_lines.append(line)
+            count_added += 1
 
-        # Actualizar estado QoS en BD
-        state = LibreQoSManager.get_or_create_qos_state(c.id, db)
-        state.libreqos_server_id = server.id
-        state.ip = ip
-        state.download_mbps = down
-        state.upload_mbps = up
-        state.status = "APPLIED"
-        state.last_applied_at = datetime.utcnow()
-        state.last_verified_at = datetime.utcnow()
+            # Actualizar estado QoS en BD
+            state = LibreQoSManager.get_or_create_qos_state(c.id, db)
+            state.libreqos_server_id = server.id
+            state.ip = ip
+            state.download_mbps = down
+            state.upload_mbps = up
+            state.status = "APPLIED"
+            state.last_applied_at = datetime.utcnow()
+            state.last_verified_at = datetime.utcnow()
 
-    db.commit()
+        db.commit()
 
-    full_csv = "\n".join(csv_lines) + "\n"
+        full_csv = "\n".join(csv_lines) + "\n"
 
-    try:
-        with LibreQoSAdapter(server) as adapter:
+        try:
             res = adapter.write_full_csv(full_csv)
             server.status = "ONLINE"
             server.last_check = datetime.utcnow()
@@ -294,12 +337,12 @@ def regenerate_server_shaped_devices(server_id: int, db: Session = Depends(get_d
                 "server_name": server.name,
                 "total_clients": count_added,
                 "backup_file": res["backup_file"],
-                "message": f"✓ Regeneración completa en {server.name}: {count_added} clientes aprovisionados con sus planes actuales."
+                "message": f"✓ Regeneración completa en {server.name}: {count_added} clientes de la zona aprovisionados con sus planes actuales."
             }
-    except Exception as e:
-        server.last_error = str(e)
-        db.commit()
-        raise HTTPException(status_code=500, detail=f"Error al regenerar ShapedDevices.csv en {server.name}: {str(e)}")
+        except Exception as e:
+            server.last_error = str(e)
+            db.commit()
+            raise HTTPException(status_code=500, detail=f"Error al regenerar ShapedDevices.csv en {server.name}: {str(e)}")
 
 @router.post("/servers/{server_id}/add-custom-ip", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
 def add_custom_ip(server_id: int, req: CustomIpRequest, db: Session = Depends(get_db)):
@@ -320,7 +363,7 @@ def add_custom_ip(server_id: int, req: CustomIpRequest, db: Session = Depends(ge
     matched_client = db.query(models.Cliente).filter(models.Cliente.ip == clean_ip).first()
 
     if matched_client:
-        down, up = LibreQoSManager.calculate_speeds(matched_client, db)
+        down_min, up_min, down, up = LibreQoSManager.get_client_qos_profile(matched_client, db)
         c_id = matched_client.id
         c_name = matched_client.nombre or f"Cliente_{matched_client.id}"
         is_from_db = True
@@ -328,13 +371,15 @@ def add_custom_ip(server_id: int, req: CustomIpRequest, db: Session = Depends(ge
         # Generar un Circuit ID único si no se proveyó
         c_id = req.circuit_id or int(datetime.utcnow().timestamp()) % 1000000 + 900000
         c_name = req.name or f"IP_{clean_ip.replace('.', '_')}"
-        down = req.download_mbps or 100
-        up = req.upload_mbps or 50
+        down = req.download_mbps or 300
+        up = req.upload_mbps or 300
+        down_min = 300
+        up_min = 300
         is_from_db = False
 
     try:
         with LibreQoSAdapter(server) as adapter:
-            success = adapter.provision_client(c_id, clean_ip, down, up, c_name)
+            success = adapter.provision_client(c_id, clean_ip, down, up, c_name, down_min, up_min)
             server.status = "ONLINE"
             server.last_check = datetime.utcnow()
             server.last_error = None
@@ -365,40 +410,27 @@ def sync_missing_clients(server_id: int, db: Session = Depends(get_db)):
     if not server:
         raise HTTPException(status_code=404, detail="Servidor LibreQoS no encontrado.")
 
-    # 1. Obtener clientes teóricos de este servidor
-    clientes = db.query(models.Cliente).join(
-        models.OLTConfig, models.OLTConfig.nodo_asociado == models.Cliente.nodo
-    ).filter(
-        models.OLTConfig.libreqos_server_id == server.id,
-        models.OLTConfig.active == True,
-        models.Cliente.estado == "Activo",
-        models.Cliente.ip != None
-    ).all()
-
-    if not clientes:
-        clientes = db.query(models.Cliente).filter(
-            models.Cliente.estado == "Activo",
-            models.Cliente.ip != None
-        ).all()
+    # 1. Obtener clientes exclusivos de este servidor
+    clientes = get_server_active_clients(server, db)
 
     try:
         with LibreQoSAdapter(server) as adapter:
             # Leer clientes existentes en el CSV
             existing_clients = adapter.list_shaped_clients()
             existing_ips = {row.get("IPv4", "").strip() for row in existing_clients if row.get("IPv4")}
-            existing_ids = {row.get("Circuit ID", "").strip() for row in existing_clients if row.get("Circuit ID")}
+            existing_ids = {adapter._normalize_id(row.get("Circuit ID", "")) for row in existing_clients if row.get("Circuit ID")}
 
             new_lines = []
             added_count = 0
             for c in clientes:
                 ip = (c.ip or "").strip()
-                cid_str = str(c.id)
+                cid_str = adapter._normalize_id(str(c.id))
                 if not ip or ip in existing_ips or cid_str in existing_ids:
                     continue
 
-                down, up = LibreQoSManager.calculate_speeds(c, db)
-                safe_name = (c.nombre or f"Cliente_{c.id}").replace(",", " ").replace('"', '').replace("'", "").strip()
-                line = f"{c.id},{safe_name},{c.id},{c.id},,,{ip},,2,2,{down},{up},"
+                down_min, up_min, down, up = LibreQoSManager.get_client_qos_profile(c, db)
+                safe_name = adapter._sanitize_name(c.nombre or f"Cliente_{c.id}")
+                line = f"{cid_str},{safe_name},{cid_str},{cid_str},,,{ip},,{down_min},{up_min},{down},{up},"
                 new_lines.append(line)
                 existing_ips.add(ip)
                 existing_ids.add(cid_str)
@@ -421,7 +453,7 @@ def sync_missing_clients(server_id: int, db: Session = Depends(get_db)):
                 "success": True,
                 "server_name": server.name,
                 "added_count": added_count,
-                "message": f"✓ {added_count} clientes faltantes de la BD fueron añadidos a LibreQoS." if added_count > 0 else "✓ Todas las IPs de clientes ya están presentes en LibreQoS."
+                "message": f"✓ {added_count} clientes faltantes de la zona fueron añadidos a LibreQoS." if added_count > 0 else "✓ Todas las IPs de clientes de esta zona ya están presentes en LibreQoS."
             }
     except Exception as e:
         server.last_error = str(e)

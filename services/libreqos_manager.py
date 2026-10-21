@@ -37,36 +37,67 @@ class LibreQoSManager:
             return _semaphores[server_id]
 
     @staticmethod
+    def is_sayausi(nodo_val: Any) -> bool:
+        """Determina si un nodo o parroquia corresponde a Sayausí."""
+        if not nodo_val:
+            return False
+        import unicodedata
+        s = unicodedata.normalize('NFD', str(nodo_val)).encode('ascii', 'ignore').decode('utf-8').upper()
+        return "SAYAUS" in s
+
+    @staticmethod
     def resolve_server(cliente: models.Cliente, db: Session) -> Optional[LibreQoSServer]:
         """
         Resuelve el servidor LibreQoS adecuado para el cliente en base a su topología:
-        cliente.nodo -> OLTConfig.nodo_asociado -> OLTConfig.libreqos_server_id -> LibreQoSServer
+        - Si es Sayausí (nodo/parroquia/IP 172.18) -> LibreQoS-SAYAUSI
+        - Si es Baños o General (IP 172.16) -> LibreQoS-OLT-BAÑOS (o servidor de Baños)
         """
-        if not cliente.nodo:
-            logger.warning(f"resolve_server: Cliente {cliente.id} no tiene un nodo asignado.")
-            return None
-            
-        # Buscar la OLT asociada al nodo del cliente
-        # La relación se basa en el nodo_asociado o el nodo del cliente
-        olt = db.query(models.OLTConfig).filter(
-            models.OLTConfig.nodo_asociado == cliente.nodo,
-            models.OLTConfig.active == True
-        ).first()
-        
-        if not olt:
-            # Fallback a buscar por coincidencia parcial o la OLT por defecto
-            olt = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
-            
-        if not olt or not olt.libreqos_server_id:
-            logger.warning(f"resolve_server: No se encontró una OLT activa o asociada con libreqos_server_id para el nodo '{cliente.nodo}'.")
-            return None
-            
-        server = db.query(LibreQoSServer).filter(
-            LibreQoSServer.id == olt.libreqos_server_id,
-            LibreQoSServer.enabled == True
-        ).first()
-        
-        return server
+        cli_ip = (cliente.ip or "").strip()
+        cli_is_sayausi = (
+            LibreQoSManager.is_sayausi(cliente.nodo)
+            or LibreQoSManager.is_sayausi(cliente.parroquia)
+            or cli_ip.startswith("172.18.")
+        )
+
+        if cli_is_sayausi:
+            server = db.query(LibreQoSServer).filter(
+                LibreQoSServer.name.ilike("%SAYAUS%"),
+                LibreQoSServer.enabled == True
+            ).first()
+            if not server:
+                server = db.query(LibreQoSServer).filter(
+                    LibreQoSServer.host == "172.30.0.34",
+                    LibreQoSServer.enabled == True
+                ).first()
+            if server:
+                return server
+        else:
+            # Baños / General
+            server = db.query(LibreQoSServer).filter(
+                LibreQoSServer.name.ilike("%BA%"),
+                LibreQoSServer.enabled == True
+            ).order_by(LibreQoSServer.id.desc()).first()
+            if not server:
+                server = db.query(LibreQoSServer).filter(
+                    LibreQoSServer.host == "172.28.0.4",
+                    LibreQoSServer.enabled == True
+                ).first()
+            if server:
+                return server
+
+        # Fallback a búsqueda por OLTConfig asociada
+        if cliente.nodo:
+            olt = db.query(models.OLTConfig).filter(
+                models.OLTConfig.nodo_asociado == cliente.nodo,
+                models.OLTConfig.active == True
+            ).first()
+            if olt and olt.libreqos_server_id:
+                return db.query(LibreQoSServer).filter(
+                    LibreQoSServer.id == olt.libreqos_server_id,
+                    LibreQoSServer.enabled == True
+                ).first()
+
+        return db.query(LibreQoSServer).filter(LibreQoSServer.enabled == True).first()
 
     @staticmethod
     def get_or_create_qos_state(cliente_id: int, db: Session) -> ClientQoSState:
@@ -83,38 +114,90 @@ class LibreQoSManager:
         return state
 
     @staticmethod
-    def calculate_speeds(cliente: models.Cliente, db: Session) -> Tuple[int, int]:
+    def get_client_qos_profile(cliente: models.Cliente, db: Session) -> Tuple[int, int, int, int]:
         """
-        Calcula las velocidades del plan asignado al cliente.
-        Lógica:
-          Plan registrado en PlanInternet -> max = megas // 2 (bajada y subida iguales).
-          Plan especial (no registrado / sin megas resolubles) -> 300 / 300.
-        """
-        SPECIAL_PLAN_MAX = 300
-        download_mbps = None
+        Calcula el perfil de velocidades QoS (Download Min, Upload Min, Download Max, Upload Max)
+        para ShapedDevices.csv según las directrices de Opsatel:
         
+        1. Planes Especiales (tercera edad, precio_plan_especial > 0 distinto a planes de lista,
+           plan 'Plan Estándar' o no catalogado en planes_internet):
+           -> Mínimo y Máximo 300 Mbps (300, 300, 300, 300).
+           
+        2. Plan de $17.25 ('PLAN PERSONAL' o precio ~ 17.25):
+           -> Mínimo y Máximo 250 Mbps (250, 250, 250, 250).
+           
+        3. Planes Oficiales Superiores ('CONEXION ESTABLE', 'FULL CONECTADO', 'LAG CERO', 'GAMER PRO'):
+           -> Max = megas // 2 (mínimo garantizado 250 Mbps).
+           -> Min = 2 Mbps.
+        """
+        nombre_plan_raw = str(cliente.plan or "").strip().upper()
+        es_tercera_edad = bool(getattr(cliente, 'tercera_edad', False))
+        precio_esp = float(getattr(cliente, 'precio_plan_especial', 0) or 0)
+
+        # 1. Detectar si es Plan Especial
+        es_plan_especial = (
+            es_tercera_edad
+            or (precio_esp > 0 and abs(precio_esp - 17.25) > 0.1 and precio_esp not in [20.54, 23.0, 25.0, 32.2])
+            or "ESPECIAL" in nombre_plan_raw
+            or "ESTANDAR" in nombre_plan_raw
+            or "ESTÁNDAR" in nombre_plan_raw
+        )
+
+        if es_plan_especial:
+            # Requerimiento: Planes especiales deben tener mínimo y máximo 300 Mbps
+            return (300, 300, 300, 300)
+
+        # 2. Detectar si es el Plan de 17.25 ('PLAN PERSONAL' o precio ~ 17.25)
+        es_plan_17_25 = (
+            "PERSONAL" in nombre_plan_raw
+            or "17.25" in nombre_plan_raw
+            or abs(precio_esp - 17.25) < 0.1
+        )
+
+        # Buscar en catálogo oficial de planes_internet
+        plan_rec = None
         if cliente.plan:
             plan_rec = db.query(models.PlanInternet).filter(
                 models.PlanInternet.nombre == cliente.plan
             ).first()
-            if plan_rec and plan_rec.megas:
-                download_mbps = plan_rec.megas
-            else:
-                # Intento de extraer número del string del plan solo si no es un precio con decimales y es >= 50 Mbps
-                if "." not in str(cliente.plan):
-                    import re
-                    nums = re.findall(r'\d+', cliente.plan)
-                    if nums and int(nums[0]) >= 50:
-                        download_mbps = int(nums[0])
+            if not plan_rec:
+                plan_rec = db.query(models.PlanInternet).filter(
+                    models.PlanInternet.nombre.ilike(f"%{cliente.plan}%")
+                ).first()
 
-        # Planes especiales: máximo fijo de 300 bajada / 300 subida
-        if not download_mbps:
-            return SPECIAL_PLAN_MAX, SPECIAL_PLAN_MAX
+        if plan_rec:
+            precio_plan = float(plan_rec.precio or 0)
+            if abs(precio_plan - 17.25) < 0.1 or plan_rec.megas == 100:
+                es_plan_17_25 = True
 
-        # Aplicar regla del usuario: Máximo de bajada y subida son la mitad de lo que tiene el plan (ej: plan de 800 -> 400 DL y 400 UL)
-        download_max = max(2, download_mbps // 2)
-        upload_max = download_max
-        return download_max, upload_max
+        if es_plan_17_25:
+            # Requerimiento: En plan más bajo de 17.25, máximo y mínimo de 250 Mbps (¡nunca 50 ni 100!)
+            return (250, 250, 250, 250)
+
+        # 3. Planes Oficiales superiores en catálogo (600, 650, 700, 800)
+        if plan_rec and plan_rec.megas and plan_rec.megas > 100:
+            down_max = max(250, plan_rec.megas // 2)
+            return (2, 2, down_max, down_max)
+
+        # 4. Intento por número de megas en el texto del plan
+        import re
+        nums = re.findall(r'\d+', nombre_plan_raw)
+        if nums:
+            val = int(nums[0])
+            if val > 100:
+                down_max = max(250, val // 2)
+                return (2, 2, down_max, down_max)
+            elif val == 100:
+                return (250, 250, 250, 250)
+
+        # Fallback a Plan Especial (300/300) para no degradar a ningún cliente a 50
+        return (300, 300, 300, 300)
+
+    @staticmethod
+    def calculate_speeds(cliente: models.Cliente, db: Session) -> Tuple[int, int]:
+        """Calcula velocidades máximas (Download, Upload) para compatibilidad."""
+        down_min, up_min, down_max, up_max = LibreQoSManager.get_client_qos_profile(cliente, db)
+        return down_max, up_max
 
     @classmethod
     def enqueue_job(

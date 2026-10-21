@@ -181,7 +181,7 @@ class LibreQoSAdapter:
         """Regex para grep/sed que coincide con el Circuit ID con o sin ceros a la izquierda."""
         return f"^0*{self._normalize_id(str(client_id))},"
 
-    def _build_csv_line(self, client_id: int, name: str, ip: str, download: int, upload: int) -> str:
+    def _build_csv_line(self, client_id: int, name: str, ip: str, download: int, upload: int, down_min: int = 2, up_min: int = 2) -> str:
         """
         Construye una línea para ShapedDevices.csv siguiendo el formato real de producción.
         
@@ -189,7 +189,7 @@ class LibreQoSAdapter:
         """
         safe_name = self._sanitize_name(name)
         cid = self._normalize_id(str(client_id))
-        return f"{cid},{safe_name},{cid},{cid},,,{ip},,2,2,{download},{upload},"
+        return f"{cid},{safe_name},{cid},{cid},,,{ip},,{down_min},{up_min},{download},{upload},"
 
     def _reload_libreqos(self) -> bool:
         """
@@ -219,12 +219,12 @@ class LibreQoSAdapter:
         count = count_res.stdout.strip() if count_res.success else "?"
         return f"LibreQoS SSH OK - {count} entradas en ShapedDevices.csv"
 
-    def provision_client(self, client_id: int, ip: str, download_mbps: int, upload_mbps: int, comment: str) -> bool:
+    def provision_client(self, client_id: int, ip: str, download_mbps: int, upload_mbps: int, comment: str, down_min: int = 2, up_min: int = 2) -> bool:
         """
         Agrega un cliente al ShapedDevices.csv y recarga LibreQoS.
         Si ya existe (por Circuit ID), lo actualiza en lugar de duplicar.
         """
-        logger.info(f"PROVISION: Cliente {client_id}, IP={ip}, Down={download_mbps}, Up={upload_mbps}, Name={comment}")
+        logger.info(f"PROVISION: Cliente {client_id}, IP={ip}, Down={download_mbps}, Up={upload_mbps}, Min={down_min}/{up_min}, Name={comment}")
 
         # Verificar si ya existe por Circuit ID
         check = self._execute(f"grep -cE '{self._id_regex(client_id)}' {self.csv_path}")
@@ -232,10 +232,10 @@ class LibreQoSAdapter:
         
         if count not in ("", "0"):
             logger.info(f"Cliente {client_id} ya existe en ShapedDevices.csv. Actualizando en vez de duplicar...")
-            return self.update_client(client_id, ip, download_mbps, upload_mbps, comment)
+            return self.update_client(client_id, ip, download_mbps, upload_mbps, comment, down_min, up_min)
 
         # Construir la línea CSV
-        csv_line = self._build_csv_line(client_id, comment, ip, download_mbps, upload_mbps)
+        csv_line = self._build_csv_line(client_id, comment, ip, download_mbps, upload_mbps, down_min, up_min)
         
         # Agregar al final del archivo usando echo (más robusto con UTF-8)
         append_cmd = f'echo "{csv_line}" >> {self.csv_path}'
@@ -254,14 +254,14 @@ class LibreQoSAdapter:
 
         return self._reload_libreqos()
 
-    def update_client(self, client_id: int, ip: str, download_mbps: int, upload_mbps: int, comment: str = "") -> bool:
+    def update_client(self, client_id: int, ip: str, download_mbps: int, upload_mbps: int, comment: str = "", down_min: int = 2, up_min: int = 2) -> bool:
         """
         Actualiza un cliente en ShapedDevices.csv.
         Estrategia: eliminar la línea anterior y agregar la nueva al final.
         """
-        logger.info(f"UPDATE: Cliente {client_id}, IP={ip}, Down={download_mbps}, Up={upload_mbps}")
+        logger.info(f"UPDATE: Cliente {client_id}, IP={ip}, Down={download_mbps}, Up={upload_mbps}, Min={down_min}/{up_min}")
         
-        csv_line = self._build_csv_line(client_id, comment, ip, download_mbps, upload_mbps)
+        csv_line = self._build_csv_line(client_id, comment, ip, download_mbps, upload_mbps, down_min, up_min)
 
         # 1. Eliminar línea anterior por Circuit ID (coincide con "^ID," al inicio, con o sin ceros a la izquierda)
         delete_cmd = f"sed -i '/{self._id_regex(client_id)}/d' {self.csv_path}"
@@ -406,13 +406,16 @@ class LibreQoSAdapter:
                 c_down = str(db_client["download"])
                 c_up = str(db_client["upload"])
                 
+                c_down_min = str(db_client.get("download_min", "2"))
+                c_up_min = str(db_client.get("upload_min", "2"))
+                
                 # Si este Circuit ID ya existe para otra IP de este mismo cliente, usamos los mismos anchos de banda
                 if c_id in used_circuit_ids:
                     prev_down_min, prev_up_min, prev_down_max, prev_up_max = used_circuit_ids[c_id]
                     final_line = f"{c_id},{c_name},{c_id}_{len(clean_rows)},{c_id}_{len(clean_rows)},{parent},{mac},{ip},{ipv6},{prev_down_min},{prev_up_min},{prev_down_max},{prev_up_max},{comment}"
                 else:
-                    used_circuit_ids[c_id] = ("2", "2", c_down, c_up)
-                    final_line = f"{c_id},{c_name},{c_id},{c_id},{parent},{mac},{ip},{ipv6},2,2,{c_down},{c_up},{comment}"
+                    used_circuit_ids[c_id] = (c_down_min, c_up_min, c_down, c_up)
+                    final_line = f"{c_id},{c_name},{c_id},{c_id},{parent},{mac},{ip},{ipv6},{c_down_min},{c_up_min},{c_down},{c_up},{comment}"
 
                 clean_rows.append(final_line)
                 enriched_count += 1
