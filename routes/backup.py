@@ -505,7 +505,14 @@ def enviar_alerta_telegram(bot_token: str, chat_id: str, mensaje: str, filepath:
             "text": mensaje,
             "parse_mode": "Markdown"
         }, timeout=15)
-        
+        if resp.status_code != 200:
+            logger.warning(f"[Telegram Backup] Falló envío con Markdown ({resp.text}), reintentando como texto plano...")
+            clean_text = mensaje.replace("*", "").replace("`", "").replace("_", " ")
+            resp = requests.post(url_msg, json={
+                "chat_id": chat_id,
+                "text": clean_text
+            }, timeout=15)
+
         doc_sent = False
         doc_error = None
         
@@ -666,24 +673,24 @@ def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
         # 2. Aplicar rotación y limpieza de respaldos viejos
         archivos_depurados = limpiar_respaldos_antiguos(dias_retencion=retencion, max_archivos=retencion)
         
-        # 3. Notificación por Telegram (si está habilitado)
+        # 3. Notificación por Telegram (si hay token y chat configurados)
         telegram_status = {"activo": False}
-        if cfg.get("backup_telegram_enabled", False):
-            token = cfg.get("backup_telegram_bot_token", "").strip()
-            chat_id = cfg.get("backup_telegram_chat_id", "").strip()
-            if token and chat_id:
-                texto_tg = (
-                    f"🛡️ *OPSATEL ISP - RESPALDO AUTOMÁTICO*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"✅ *Estado:* Generado exitosamente\n"
-                    f"📁 *Archivo:* `{filename}`\n"
-                    f"📦 *Tamaño:* `{size_mb} MB`\n"
-                    f"🕒 *Fecha:* `{now.strftime('%Y-%m-%d %H:%M:%S')}`\n"
-                    f"🏷️ *Motivo:* `{motivo.capitalize()}`\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                )
-                res_tg = enviar_alerta_telegram(token, chat_id, texto_tg, filepath)
-                telegram_status = {"activo": True, "resultado": res_tg}
+        token = (cfg.get("backup_telegram_bot_token") or "").strip()
+        chat_id = (cfg.get("backup_telegram_chat_id") or "").strip()
+        tg_habilitado = bool(cfg.get("backup_telegram_enabled", False)) or bool(token and chat_id)
+        if tg_habilitado and token and chat_id:
+            texto_tg = (
+                f"🛡️ *OPSATEL ISP - RESPALDO AUTOMÁTICO*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"✅ *Estado:* Generado exitosamente\n"
+                f"📁 *Archivo:* `{filename}`\n"
+                f"📦 *Tamaño:* `{size_mb} MB`\n"
+                f"🕒 *Fecha:* `{now.strftime('%Y-%m-%d %H:%M:%S')}`\n"
+                f"🏷️ *Motivo:* `{motivo.capitalize()}`\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+            res_tg = enviar_alerta_telegram(token, chat_id, texto_tg, filepath)
+            telegram_status = {"activo": True, "resultado": res_tg}
                 
         # 4. Notificación por Correo Electrónico (si está habilitado)
         email_status = {"activo": False}
@@ -786,10 +793,26 @@ def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
 
 @router.get("/config")
 def get_auto_backup_config():
-    """Obtiene la configuración actual de respaldos automáticos programados."""
+    """Obtiene la configuración actual de respaldos automáticos programados y su estado en el scheduler."""
     cfg = get_config()
+    
+    # Obtener estado de scheduler en tiempo real
+    proxima_ejecucion = None
+    scheduler_activo = False
+    try:
+        from scheduler import scheduler as aps_sched
+        if aps_sched and aps_sched.running:
+            scheduler_activo = True
+            job = aps_sched.get_job('backup_automatico_diario')
+            if job and job.next_run_time:
+                proxima_ejecucion = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception as e:
+        logger.warning(f"Aviso consultando proxima ejecucion de backup: {e}")
+
     return {
         "enabled": bool(cfg.get("backup_auto_enabled", False)),
+        "scheduler_activo": scheduler_activo,
+        "proxima_ejecucion": proxima_ejecucion,
         "frecuencia": str(cfg.get("backup_auto_frecuencia", "cada_dia")),
         "hora": str(cfg.get("backup_auto_hora", "02:00")),
         "dia_semana": int(cfg.get("backup_auto_dia_semana", 6)),
@@ -822,6 +845,54 @@ def limpiar_historial_configuraciones():
     """Limpia el historial de cambios de configuraciones de respaldo."""
     save_config({"historial_configuraciones": []})
     return {"success": True, "message": "Historial de cambios de configuración limpiado correctamente."}
+
+
+@router.post("/toggle-status")
+def toggle_auto_backup_status():
+    """Alterna instantáneamente entre Activo/Corriendo y En Pausa sin requerir abrir el formulario."""
+    cfg = get_config()
+    current_enabled = bool(cfg.get("backup_auto_enabled", False))
+    new_enabled = not current_enabled
+    frecuencia = str(cfg.get("backup_auto_frecuencia", "cada_dia"))
+
+    hist_cfg = cfg.get("historial_configuraciones", [])
+    if not isinstance(hist_cfg, list):
+        hist_cfg = []
+
+    tg_token = (cfg.get("backup_telegram_bot_token") or "").strip()
+    tg_chat = (cfg.get("backup_telegram_chat_id") or "").strip()
+    tg_token_masked = f"{tg_token[:6]}...{tg_token[-4:]}" if len(tg_token) > 10 else ("••••••••" if tg_token else "No configurado")
+
+    hist_cfg.insert(0, {
+        "fecha": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "frecuencia": frecuencia,
+        "hora": str(cfg.get("backup_auto_hora", "02:00")) if frecuencia not in ["cada_5min", "cada_hora"] else "Automático",
+        "dia_semana": int(cfg.get("backup_auto_dia_semana", 6)),
+        "dia_mes": int(cfg.get("backup_auto_dia_mes", 1)),
+        "retencion_dias": int(cfg.get("backup_auto_retencion_dias", 30)),
+        "telegram_chat_id": tg_chat or "No configurado",
+        "telegram_token_enmascarado": tg_token_masked,
+        "enabled": new_enabled
+    })
+    hist_cfg = hist_cfg[:30]
+
+    save_config({
+        "backup_auto_enabled": new_enabled,
+        "historial_configuraciones": hist_cfg
+    })
+
+    try:
+        from scheduler import reprogramar_job_backup
+        reprogramar_job_backup()
+    except Exception as e:
+        logger.warning(f"Aviso reprogramando scheduler: {e}")
+
+    estado_txt = "activado y corriendo" if new_enabled else "en pausa"
+    return {
+        "success": True,
+        "enabled": new_enabled,
+        "message": f"Servicio de respaldos automáticos {estado_txt} exitosamente."
+    }
 
 
 @router.put("/config")
@@ -901,7 +972,8 @@ def update_auto_backup_config(data: AutoBackupConfigRequest):
     except Exception as e:
         logger.warning(f"Aviso reprogramando scheduler de backup: {e}")
         
-    return {"success": True, "message": "Configuración de respaldos automáticos guardada exitosamente."}
+    estado_msg = "activo y corriendo automáticamente" if data.enabled else "guardado en pausa"
+    return {"success": True, "message": f"Configuración guardada exitosamente. El servicio está {estado_msg}."}
 
 
 

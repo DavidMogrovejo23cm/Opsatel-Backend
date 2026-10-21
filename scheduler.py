@@ -547,16 +547,19 @@ def reprogramar_job_backup():
     Reprograma dinámicamente o habilita/deshabilita el trabajo de respaldo automático según config.json.
     """
     global scheduler
+    if scheduler is None or not scheduler.running:
+        iniciar_scheduler()
+
     if scheduler is not None and scheduler.running:
         try:
             from config_manager import get_config
             cfg = get_config()
-            enabled = bool(cfg.get("backup_auto_enabled", True))
+            enabled = bool(cfg.get("backup_auto_enabled", False))
             
             if not enabled:
                 try:
                     scheduler.remove_job('backup_automatico_diario')
-                    print("[Scheduler] [BACKUP] Job de respaldo automático deshabilitado.")
+                    print("[Scheduler] [BACKUP] Job de respaldo automático deshabilitado/pausado.")
                 except Exception:
                     pass
                 return
@@ -564,21 +567,16 @@ def reprogramar_job_backup():
             trigger = obtener_trigger_backup(cfg)
             frecuencia = str(cfg.get("backup_auto_frecuencia", "cada_dia"))
 
+            scheduler.add_job(
+                backup_automatico_diario,
+                trigger=trigger,
+                id='backup_automatico_diario',
+                name='Respaldo automático de base de datos',
+                replace_existing=True
+            )
             job = scheduler.get_job('backup_automatico_diario')
-            if job:
-                scheduler.reschedule_job(
-                    'backup_automatico_diario',
-                    trigger=trigger
-                )
-            else:
-                scheduler.add_job(
-                    backup_automatico_diario,
-                    trigger=trigger,
-                    id='backup_automatico_diario',
-                    name='Respaldo automático de base de datos',
-                    replace_existing=True
-                )
-            print(f"[Scheduler] [BACKUP] [OK] Job de respaldo automático reprogramado con frecuencia '{frecuencia}'.")
+            proxima = job.next_run_time if job else "desconocida"
+            print(f"[Scheduler] [BACKUP] [OK] Job de respaldo automático reprogramado con frecuencia '{frecuencia}'. Próxima ejecución: {proxima}")
         except Exception as e:
             print(f"[Scheduler] [BACKUP] Error al reprogramar job de respaldo automático: {e}")
 
