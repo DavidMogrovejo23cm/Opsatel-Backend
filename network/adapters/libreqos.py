@@ -9,6 +9,7 @@ import logging
 import time
 import csv
 import io
+import re
 import paramiko
 from typing import Dict, Any, List, Optional
 
@@ -161,9 +162,24 @@ class LibreQoSAdapter:
     # ── Utilidades CSV ────────────────────────────────────────────────────
 
     def _sanitize_name(self, name: str) -> str:
-        """Sanitiza el nombre del cliente para ser seguro en CSV y en comandos shell."""
-        safe = name.replace(",", " ").replace("'", "").replace('"', '').replace("\\", "")
+        """Sanitiza el nombre del cliente para ser seguro en CSV y en comandos shell.
+        Elimina el prefijo de código con ceros (ej: '000500 - NOMBRE' -> 'NOMBRE')."""
+        safe = (name or "").replace(",", " ").replace("'", "").replace('"', '').replace("\\", "")
+        safe = re.sub(r'^\s*\d+\s*-\s*', '', safe)
         return safe.strip()
+
+    @staticmethod
+    def _normalize_id(value: str) -> str:
+        """Quita ceros a la izquierda de IDs numéricos (ej: '000500' -> '500', '000500_3' -> '500_3')."""
+        value = (value or "").strip()
+        m = re.match(r'^0*(\d+)(_.*)?$', value)
+        if m:
+            return m.group(1) + (m.group(2) or "")
+        return value
+
+    def _id_regex(self, client_id) -> str:
+        """Regex para grep/sed que coincide con el Circuit ID con o sin ceros a la izquierda."""
+        return f"^0*{self._normalize_id(str(client_id))},"
 
     def _build_csv_line(self, client_id: int, name: str, ip: str, download: int, upload: int) -> str:
         """
@@ -172,7 +188,8 @@ class LibreQoSAdapter:
         Formato: Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min,Upload Min,Download Max,Upload Max,Comment
         """
         safe_name = self._sanitize_name(name)
-        return f"{client_id},{safe_name},{client_id},{client_id},,,{ip},,2,2,{download},{upload},"
+        cid = self._normalize_id(str(client_id))
+        return f"{cid},{safe_name},{cid},{cid},,,{ip},,2,2,{download},{upload},"
 
     def _reload_libreqos(self) -> bool:
         """
@@ -210,10 +227,10 @@ class LibreQoSAdapter:
         logger.info(f"PROVISION: Cliente {client_id}, IP={ip}, Down={download_mbps}, Up={upload_mbps}, Name={comment}")
 
         # Verificar si ya existe por Circuit ID
-        check = self._execute(f"grep -c '^{client_id},' {self.csv_path}")
+        check = self._execute(f"grep -cE '{self._id_regex(client_id)}' {self.csv_path}")
         count = check.stdout.strip() if check.success else "0"
         
-        if count != "0":
+        if count not in ("", "0"):
             logger.info(f"Cliente {client_id} ya existe en ShapedDevices.csv. Actualizando en vez de duplicar...")
             return self.update_client(client_id, ip, download_mbps, upload_mbps, comment)
 
@@ -230,7 +247,7 @@ class LibreQoSAdapter:
         logger.info(f"✓ Cliente {client_id} agregado a ShapedDevices.csv: {csv_line}")
         
         # Verificar que se agregó correctamente
-        verify = self._execute(f"grep '^{client_id},' {self.csv_path}")
+        verify = self._execute(f"grep -E '{self._id_regex(client_id)}' {self.csv_path}")
         if not verify.success:
             raise LibreQoSCommandError(f"Verificación fallida: la línea del cliente {client_id} no se encontró después de agregarla.")
         logger.info(f"✓ Verificación OK: {verify.stdout.strip()}")
@@ -246,8 +263,8 @@ class LibreQoSAdapter:
         
         csv_line = self._build_csv_line(client_id, comment, ip, download_mbps, upload_mbps)
 
-        # 1. Eliminar línea anterior por Circuit ID (coincide con "^ID," al inicio)
-        delete_cmd = f"sed -i '/^{client_id},/d' {self.csv_path}"
+        # 1. Eliminar línea anterior por Circuit ID (coincide con "^ID," al inicio, con o sin ceros a la izquierda)
+        delete_cmd = f"sed -i '/{self._id_regex(client_id)}/d' {self.csv_path}"
         res = self._execute(delete_cmd)
         if not res.success:
             raise LibreQoSCommandError(f"Error eliminando línea anterior del cliente {client_id}: {res.stderr}")
@@ -266,13 +283,13 @@ class LibreQoSAdapter:
         logger.info(f"REMOVE: Cliente {client_id}, IP={ip}")
 
         # Verificar si existe
-        check = self._execute(f"grep -c '^{client_id},' {self.csv_path}")
+        check = self._execute(f"grep -cE '{self._id_regex(client_id)}' {self.csv_path}")
         count = check.stdout.strip() if check.success else "0"
-        if count == "0":
+        if count in ("", "0"):
             logger.info(f"Cliente {client_id} no existe en ShapedDevices.csv. Nada que remover (no-op exitoso).")
             return True
 
-        delete_cmd = f"sed -i '/^{client_id},/d' {self.csv_path}"
+        delete_cmd = f"sed -i '/{self._id_regex(client_id)}/d' {self.csv_path}"
         res = self._execute(delete_cmd)
         if not res.success:
             raise LibreQoSCommandError(f"Error eliminando cliente {client_id} de ShapedDevices.csv: {res.stderr}")
@@ -357,18 +374,18 @@ class LibreQoSAdapter:
                 parts.append("")
 
             # Estructura: Circuit ID(0), Circuit Name(1), Device ID(2), Device Name(3), Parent Node(4), MAC(5), IPv4(6), IPv6(7), Down Min(8), Up Min(9), Down Max(10), Up Max(11), Comment(12)
-            cid = parts[0]
+            cid = self._normalize_id(parts[0])
             cname = parts[1]
-            dev_id = parts[2]
-            dev_name = parts[3]
+            dev_id = self._normalize_id(parts[2])
+            dev_name = self._normalize_id(parts[3])
             parent = parts[4]
             mac = parts[5]
             ip = parts[6]
             ipv6 = parts[7]
             down_min = parts[8] or "2"
             up_min = parts[9] or "2"
-            down_max = parts[10] or "100"
-            up_max = parts[11] or "50"
+            down_max = parts[10] or "300"
+            up_max = parts[11] or "300"
             comment = parts[12]
 
             if not ip:
@@ -384,7 +401,7 @@ class LibreQoSAdapter:
             # Verificar si coincide con la Base de Datos
             if db_clients_by_ip and ip in db_clients_by_ip:
                 db_client = db_clients_by_ip[ip]
-                c_id = str(db_client["client_id"])
+                c_id = self._normalize_id(str(db_client["client_id"]))
                 c_name = self._sanitize_name(db_client["name"])
                 c_down = str(db_client["download"])
                 c_up = str(db_client["upload"])

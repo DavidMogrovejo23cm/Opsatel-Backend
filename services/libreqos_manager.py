@@ -87,17 +87,17 @@ class LibreQoSManager:
         """
         Calcula las velocidades del plan asignado al cliente.
         Lógica:
-          Download = megas definidos en PlanInternet.
-          Upload = max(2, download // 2).
+          Plan registrado en PlanInternet -> max = megas // 2 (bajada y subida iguales).
+          Plan especial (no registrado / sin megas resolubles) -> 300 / 300.
         """
-        # Valor por defecto
-        download_mbps = 100
+        SPECIAL_PLAN_MAX = 300
+        download_mbps = None
         
         if cliente.plan:
             plan_rec = db.query(models.PlanInternet).filter(
                 models.PlanInternet.nombre == cliente.plan
             ).first()
-            if plan_rec:
+            if plan_rec and plan_rec.megas:
                 download_mbps = plan_rec.megas
             else:
                 # Intento de extraer número del string del plan solo si no es un precio con decimales y es >= 50 Mbps
@@ -106,6 +106,11 @@ class LibreQoSManager:
                     nums = re.findall(r'\d+', cliente.plan)
                     if nums and int(nums[0]) >= 50:
                         download_mbps = int(nums[0])
+
+        # Planes especiales: máximo fijo de 300 bajada / 300 subida
+        if not download_mbps:
+            return SPECIAL_PLAN_MAX, SPECIAL_PLAN_MAX
+
         # Aplicar regla del usuario: Máximo de bajada y subida son la mitad de lo que tiene el plan (ej: plan de 800 -> 400 DL y 400 UL)
         download_max = max(2, download_mbps // 2)
         upload_max = download_max
@@ -157,7 +162,7 @@ class LibreQoSManager:
             "ip": cliente.ip,
             "download_mbps": download,
             "upload_mbps": upload,
-            "comment": f"{str(cliente.id).zfill(6)} - {cliente.nombre}"
+            "comment": cliente.nombre or f"Cliente_{cliente.id}"
         }
 
         # Para suspensión, sobreescribir velocidades según la política del servidor
