@@ -27,8 +27,7 @@ services:
     container_name: opsatel_backend
     restart: always
     depends_on:
-      db:
-        condition: service_healthy
+      - db
     environment:
       - DB_HOST=db
       - DB_PORT=3306
