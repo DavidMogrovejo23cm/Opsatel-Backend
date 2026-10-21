@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: mariadb:10.11
@@ -49,7 +47,7 @@ services:
 
   frontend:
     build:
-      context: https://github.com/DavidMogrovejo23cm/Opsatel-Frontend.git#main
+      context: ../Opsatel-Frontend
       dockerfile: Dockerfile
     container_name: opsatel_frontend
     restart: always
