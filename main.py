@@ -132,6 +132,13 @@ def init_db(max_retries=12, retry_interval=5):
             Base.metadata.create_all(bind=engine)
             print('Base de datos lista.')
 
+            # Asegurar usuario administrador inicial si es una BD nueva
+            try:
+                from create_users import create_initial_admin
+                create_initial_admin()
+            except Exception as user_err:
+                print(f'Aviso al inicializar usuarios base: {user_err}')
+
             # Corregir formatos inconsistentes (.0) en clientes existentes
             try:
                 from database import SessionLocal

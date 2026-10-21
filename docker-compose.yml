@@ -49,7 +49,7 @@ services:
 
   frontend:
     build:
-      context: ../Opsatel-Frontend
+      context: https://github.com/DavidMogrovejo23cm/Opsatel-Frontend.git#main
       dockerfile: Dockerfile
     container_name: opsatel_frontend
     restart: always
