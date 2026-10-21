@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  db:
+    image: mariadb:10.11
+    container_name: opsatel_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: password123
+      MYSQL_DATABASE: opsatel
+      MYSQL_USER: opsatel
+      MYSQL_PASSWORD: password123
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - opsatel_net
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -uroot -ppassword123 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: opsatel_backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DB_HOST=db
+      - DB_PORT=3306
+      - MYSQL_USER=opsatel
+      - MYSQL_ROOT_PASSWORD=password123
+      - MYSQL_DATABASE=opsatel
+      - DATABASE_URL=mysql+pymysql://opsatel:password123@db:3306/opsatel
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backups:/app/backups
+      - ./uploads:/app/uploads
+      - ./config.json:/app/config.json
+    networks:
+      - opsatel_net
+
+  frontend:
+    build:
+      context: ../Opsatel-Frontend
+      dockerfile: Dockerfile
+    container_name: opsatel_frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    networks:
+      - opsatel_net
+
+volumes:
+  db_data:
+
+networks:
+  opsatel_net:
+    driver: bridge
