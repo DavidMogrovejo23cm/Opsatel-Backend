@@ -119,22 +119,18 @@ class LibreQoSManager:
         Calcula el perfil de velocidades QoS (Download Min, Upload Min, Download Max, Upload Max)
         para ShapedDevices.csv según las directrices de Opsatel:
         
-        1. Planes Especiales (tercera edad, precio_plan_especial > 0 distinto a planes de lista,
-           plan 'Plan Estándar' o no catalogado en planes_internet):
-           -> Mínimo y Máximo 300 Mbps (300, 300, 300, 300).
-           
-        2. Plan de $17.25 ('PLAN PERSONAL' o precio ~ 17.25):
-           -> Mínimo y Máximo 250 Mbps (250, 250, 250, 250).
-           
-        3. Planes Oficiales Superiores ('CONEXION ESTABLE', 'FULL CONECTADO', 'LAG CERO', 'GAMER PRO'):
-           -> Max = megas // 2 (mínimo garantizado 250 Mbps).
-           -> Min = 2 Mbps.
+        - Velocidad mínima de carga y descarga: SIEMPRE 2 Mbps (2, 2).
+        - Velocidad máxima para el plan más bajo (17.25 / PLAN PERSONAL / Especiales): 300 Mbps (300, 300).
+        - Para planes superiores (FULL CONECTADO, LAG CERO, GAMER PRO): megas // 2 (325, 350, 400 Mbps).
         """
+        MIN_SPEED = 2
+        BASE_MAX_SPEED = 300  # Máximo para el plan más bajo y especiales
+
         nombre_plan_raw = str(cliente.plan or "").strip().upper()
         es_tercera_edad = bool(getattr(cliente, 'tercera_edad', False))
         precio_esp = float(getattr(cliente, 'precio_plan_especial', 0) or 0)
 
-        # 1. Detectar si es Plan Especial
+        # 1. Detectar si es Plan Especial o tarifa con descuento
         es_plan_especial = (
             es_tercera_edad
             or (precio_esp > 0 and abs(precio_esp - 17.25) > 0.1 and precio_esp not in [20.54, 23.0, 25.0, 32.2])
@@ -144,8 +140,7 @@ class LibreQoSManager:
         )
 
         if es_plan_especial:
-            # Requerimiento: Planes especiales deben tener mínimo y máximo 300 Mbps
-            return (300, 300, 300, 300)
+            return (MIN_SPEED, MIN_SPEED, BASE_MAX_SPEED, BASE_MAX_SPEED)
 
         # 2. Detectar si es el Plan de 17.25 ('PLAN PERSONAL' o precio ~ 17.25)
         es_plan_17_25 = (
@@ -171,13 +166,12 @@ class LibreQoSManager:
                 es_plan_17_25 = True
 
         if es_plan_17_25:
-            # Requerimiento: En plan más bajo de 17.25, máximo y mínimo de 250 Mbps (¡nunca 50 ni 100!)
-            return (250, 250, 250, 250)
+            return (MIN_SPEED, MIN_SPEED, BASE_MAX_SPEED, BASE_MAX_SPEED)
 
-        # 3. Planes Oficiales superiores en catálogo (600, 650, 700, 800)
+        # 3. Planes Oficiales superiores en catálogo (600 -> 300, 650 -> 325, 700 -> 350, 800 -> 400)
         if plan_rec and plan_rec.megas and plan_rec.megas > 100:
-            down_max = max(250, plan_rec.megas // 2)
-            return (2, 2, down_max, down_max)
+            down_max = max(BASE_MAX_SPEED, plan_rec.megas // 2)
+            return (MIN_SPEED, MIN_SPEED, down_max, down_max)
 
         # 4. Intento por número de megas en el texto del plan
         import re
@@ -185,13 +179,11 @@ class LibreQoSManager:
         if nums:
             val = int(nums[0])
             if val > 100:
-                down_max = max(250, val // 2)
-                return (2, 2, down_max, down_max)
-            elif val == 100:
-                return (250, 250, 250, 250)
+                down_max = max(BASE_MAX_SPEED, val // 2)
+                return (MIN_SPEED, MIN_SPEED, down_max, down_max)
 
-        # Fallback a Plan Especial (300/300) para no degradar a ningún cliente a 50
-        return (300, 300, 300, 300)
+        # Fallback para el plan más bajo o planes no reconocidos
+        return (MIN_SPEED, MIN_SPEED, BASE_MAX_SPEED, BASE_MAX_SPEED)
 
     @staticmethod
     def calculate_speeds(cliente: models.Cliente, db: Session) -> Tuple[int, int]:

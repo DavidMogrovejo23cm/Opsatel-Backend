@@ -373,8 +373,8 @@ def add_custom_ip(server_id: int, req: CustomIpRequest, db: Session = Depends(ge
         c_name = req.name or f"IP_{clean_ip.replace('.', '_')}"
         down = req.download_mbps or 300
         up = req.upload_mbps or 300
-        down_min = 300
-        up_min = 300
+        down_min = 2
+        up_min = 2
         is_from_db = False
 
     try:
