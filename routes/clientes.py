@@ -2483,7 +2483,24 @@ def liquidar_todas_las_deudas(db: Session = Depends(get_db)):
 
 @router.get("/pagos/historial")
 def listar_pagos(db: Session = Depends(get_db)):
-    return db.query(models.Pago).order_by(models.Pago.fecha_pago.desc()).all()
+    """Return a list of payment records enriched with any client excess (saldo a favor)."""
+    pagos = db.query(models.Pago).order_by(models.Pago.fecha_pago.desc()).all()
+    result = []
+    for pago in pagos:
+        cliente = db.query(models.Cliente).filter(models.Cliente.id == pago.cliente_id).first()
+        excedente = 0.0
+        if cliente and float(cliente.saldo or 0) < 0:
+            excedente = abs(float(cliente.saldo))
+        pago_dict = {
+            "id": pago.id,
+            "cliente_id": pago.cliente_id,
+            "monto": float(pago.monto or 0),
+            "metodo_pago": pago.metodo_pago,
+            "fecha_pago": pago.fecha_pago,
+            "excedente": round(excedente, 2),
+        }
+        result.append(pago_dict)
+    return result
 
 import pandas as pd
 import os
