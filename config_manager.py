@@ -42,19 +42,22 @@ DEFAULT_CONFIG = {
 }
 
 def get_config():
-    if not os.path.exists(CONFIG_FILE):
+    if not os.path.isfile(CONFIG_FILE):
         return DEFAULT_CONFIG.copy()
-    with open(CONFIG_FILE, "r") as f:
-        try:
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             merged = DEFAULT_CONFIG.copy()
             merged.update(data)
             return merged
-        except:
-            return DEFAULT_CONFIG.copy()
+    except Exception:
+        return DEFAULT_CONFIG.copy()
 
 def save_config(data):
     config = get_config()
     config.update(data)
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=2)
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+    except Exception as e:
+        print(f"Aviso: No se pudo guardar config.json: {e}")

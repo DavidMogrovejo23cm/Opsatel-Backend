@@ -41,7 +41,6 @@ services:
     volumes:
       - ./backups:/app/backups
       - ./uploads:/app/uploads
-      - ./config.json:/app/config.json
     networks:
       - opsatel_net
 

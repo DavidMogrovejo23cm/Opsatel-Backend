@@ -54,11 +54,25 @@ from sqlalchemy import text
 # ============================================================================
 
 # Ubicaciones importantes (ajustar según deployment)
-LOG_DIR = Path("/var/log/opsatel") if os.path.exists("/var/log") else Path("./logs")
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    LOG_DIR = Path("/var/log/opsatel")
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    _test = LOG_DIR / ".perm_test"
+    _test.touch()
+    _test.unlink()
+except Exception:
+    LOG_DIR = Path("./logs")
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-PID_FILE = Path("/var/run/opsatel-olt-worker.pid") if os.path.exists("/var/run") else Path("./opsatel-olt-worker.pid")
-LOCK_FILE = Path("/var/run/opsatel-olt-worker.lock") if os.path.exists("/var/run") else Path("./opsatel-olt-worker.lock")
+try:
+    _test_pid = Path("/var/run/.perm_test")
+    _test_pid.touch()
+    _test_pid.unlink()
+    PID_FILE = Path("/var/run/opsatel-olt-worker.pid")
+    LOCK_FILE = Path("/var/run/opsatel-olt-worker.lock")
+except Exception:
+    PID_FILE = Path("./opsatel-olt-worker.pid")
+    LOCK_FILE = Path("./opsatel-olt-worker.lock")
 
 LOG_FILE = LOG_DIR / "olt-worker.log"
 LOG_LEVEL = logging.DEBUG if os.getenv("DEBUG", "false").lower() == "true" else logging.INFO
