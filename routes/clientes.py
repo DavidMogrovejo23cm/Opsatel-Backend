@@ -21,6 +21,13 @@ from datetime import datetime
 from .auth import get_current_user, require_role
 from services.smart_parser import parse_unstructured_client_data
 from .balance import normalizar_parroquia
+from PIL import Image, ImageOps
+try:
+    # pyrefly: ignore[missing-import]
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except Exception:
+    pass
 
 import logging
 logger = logging.getLogger("opsatel.routes.clientes")
@@ -655,6 +662,43 @@ def crear_cliente(cliente: schemas.ClienteCreate, db: Session = Depends(get_db))
         )
 
 
+def save_and_optimize_image(upload_file: UploadFile, dest_path_without_ext: str, max_dimension: int = 2048, quality: int = 85) -> str:
+    """
+    Guarda y optimiza una imagen subida (JPEG, PNG, WEBP, HEIC/HEIF de iPhone, etc.).
+    Corrige la orientación EXIF automáticamente (vital para fotos tomadas con celulares).
+    Redimensiona proporcionalmente a max_dimension y comprime en formato JPEG optimizado.
+    Retorna la ruta relativa final con extensión comenzando con '/'.
+    """
+    os.makedirs(os.path.dirname(dest_path_without_ext), exist_ok=True)
+    final_path = f"{dest_path_without_ext}.jpg"
+    try:
+        upload_file.file.seek(0)
+        img = Image.open(upload_file.file)
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "P", "LA"):
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+            img = background
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        if max(img.size) > max_dimension:
+            img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+
+        img.save(final_path, format="JPEG", quality=quality, optimize=True)
+        return f"/{final_path}"
+    except Exception as e:
+        logger.warning(f"Error optimizando imagen con Pillow ({e}), guardando archivo directo")
+        upload_file.file.seek(0)
+        ext = os.path.splitext(upload_file.filename)[1] if upload_file.filename else ".jpg"
+        fallback_path = f"{dest_path_without_ext}{ext}"
+        with open(fallback_path, "wb") as buffer:
+            shutil.copyfileobj(upload_file.file, buffer)
+        return f"/{fallback_path}"
+
+
 @router.post("/{id}/upload-cedula", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 async def upload_cedula(
     id: int, 
@@ -670,8 +714,8 @@ async def upload_cedula(
     upload_dir = "uploads/cedulas"
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Validar límite de memoria/tamaño de 1.5 Megas para cualquier foto
-    MAX_FILE_SIZE = 1600 * 1024 # ~1.56 MB
+    # Validar límite de memoria/tamaño de hasta 25 MB para cualquier foto
+    MAX_FILE_SIZE = 25 * 1024 * 1024 # 25 MB
     for f_obj, f_name in [(frontal, "Frontal"), (posterior, "Posterior"), (fachada, "Fachada")]:
         if f_obj and f_obj.filename:
             f_obj.file.seek(0, os.SEEK_END)
@@ -680,49 +724,23 @@ async def upload_cedula(
             if size > MAX_FILE_SIZE:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"La foto {f_name} supera el límite máximo de 1.5 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
+                    detail=f"La foto {f_name} supera el límite máximo de 20 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
                 )
-    
-    def resolve_ext(f_obj):
-        ext = os.path.splitext(f_obj.filename)[1] if f_obj.filename else ""
-        if not ext:
-            ctype = str(getattr(f_obj, 'content_type', '') or '').lower()
-            if 'jpeg' in ctype or 'jpg' in ctype:
-                ext = ".jpg"
-            elif 'webp' in ctype:
-                ext = ".webp"
-            elif 'gif' in ctype:
-                ext = ".gif"
-            else:
-                ext = ".png"
-        return ext
 
     timestamp = int(datetime.now().timestamp())
 
-    if frontal:
-        ext = resolve_ext(frontal)
-        file_path = f"{upload_dir}/frontal_{id}_{timestamp}{ext}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(frontal.file, buffer)
-        cliente.cedula_frontal = f"/{file_path}"
+    if frontal and frontal.filename:
+        cliente.cedula_frontal = save_and_optimize_image(frontal, f"{upload_dir}/frontal_{id}_{timestamp}")
         
-    if posterior:
-        ext = resolve_ext(posterior)
-        file_path = f"{upload_dir}/posterior_{id}_{timestamp}{ext}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(posterior.file, buffer)
-        cliente.cedula_posterior = f"/{file_path}"
+    if posterior and posterior.filename:
+        cliente.cedula_posterior = save_and_optimize_image(posterior, f"{upload_dir}/posterior_{id}_{timestamp}")
 
-    if fachada:
-        ext = resolve_ext(fachada)
-        file_path = f"{upload_dir}/fachada_{id}_{timestamp}{ext}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(fachada.file, buffer)
-        cliente.foto_fachada = f"/{file_path}"
+    if fachada and fachada.filename:
+        cliente.foto_fachada = save_and_optimize_image(fachada, f"{upload_dir}/fachada_{id}_{timestamp}")
     
     db.commit()
     return {
-        "message": "Imágenes subidas exitosamente",
+        "message": "Imágenes subidas y optimizadas exitosamente",
         "cedula_frontal": cliente.cedula_frontal,
         "cedula_posterior": cliente.cedula_posterior,
         "foto_fachada": cliente.foto_fachada
@@ -735,7 +753,7 @@ async def upload_fachada(id: int, fachada: UploadFile = File(...), db: Session =
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    MAX_FILE_SIZE = 1600 * 1024 # ~1.56 MB
+    MAX_FILE_SIZE = 25 * 1024 * 1024 # 25 MB
     if not fachada or not fachada.filename:
         raise HTTPException(status_code=400, detail="Debe seleccionar una foto de la fachada.")
 
@@ -745,32 +763,17 @@ async def upload_fachada(id: int, fachada: UploadFile = File(...), db: Session =
     if size > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,
-            detail=f"La foto de fachada supera el límite de 1.5 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
+            detail=f"La foto de fachada supera el límite de 20 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
         )
 
     upload_dir = "uploads/cedulas"
     os.makedirs(upload_dir, exist_ok=True)
-    ext = os.path.splitext(fachada.filename)[1] if fachada.filename else ""
-    if not ext:
-        ctype = str(getattr(fachada, 'content_type', '') or '').lower()
-        if 'jpeg' in ctype or 'jpg' in ctype:
-            ext = ".jpg"
-        elif 'webp' in ctype:
-            ext = ".webp"
-        elif 'gif' in ctype:
-            ext = ".gif"
-        else:
-            ext = ".png"
-
     timestamp = int(datetime.now().timestamp())
-    file_path = f"{upload_dir}/fachada_{id}_{timestamp}{ext}"
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(fachada.file, buffer)
-    cliente.foto_fachada = f"/{file_path}"
+    cliente.foto_fachada = save_and_optimize_image(fachada, f"{upload_dir}/fachada_{id}_{timestamp}")
     db.commit()
 
     return {
-        "message": "Foto de fachada subida exitosamente",
+        "message": "Foto de fachada subida y optimizada exitosamente",
         "foto_fachada": cliente.foto_fachada
     }
 
@@ -792,8 +795,8 @@ async def upload_dispositivo(
     upload_dir = "uploads/dispositivos"
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Validar límite de memoria/tamaño de 1.5 Megas (1,572,864 bytes) para cualquier foto
-    MAX_FILE_SIZE = 1572864 # Exactamente 1.5 MB
+    # Validar límite de memoria/tamaño de hasta 25 MB
+    MAX_FILE_SIZE = 25 * 1024 * 1024 # 25 MB
     for f_obj, f_name in [(equipo_ont, "Equipo Bridge/ONT"), (equipo_router, "Router")]:
         if f_obj and f_obj.filename:
             f_obj.file.seek(0, os.SEEK_END)
@@ -802,22 +805,8 @@ async def upload_dispositivo(
             if size > MAX_FILE_SIZE:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"La foto de {f_name} supera el límite máximo de 1.5 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
+                    detail=f"La foto de {f_name} supera el límite máximo de 20 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
                 )
-
-    def resolve_ext(f_obj):
-        ext = os.path.splitext(f_obj.filename)[1] if f_obj.filename else ""
-        if not ext:
-            ctype = str(getattr(f_obj, 'content_type', '') or '').lower()
-            if 'jpeg' in ctype or 'jpg' in ctype:
-                ext = ".jpg"
-            elif 'webp' in ctype:
-                ext = ".webp"
-            elif 'gif' in ctype:
-                ext = ".gif"
-            else:
-                ext = ".png"
-        return ext
 
     timestamp = int(datetime.now().timestamp())
 
@@ -852,18 +841,10 @@ async def upload_dispositivo(
                 except Exception: pass
 
     if equipo_ont and equipo_ont.filename:
-        ext = resolve_ext(equipo_ont)
-        file_path = f"{upload_dir}/ont_{id}_{timestamp}{ext}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(equipo_ont.file, buffer)
-        existing_data["ont"] = f"/{file_path}"
+        existing_data["ont"] = save_and_optimize_image(equipo_ont, f"{upload_dir}/ont_{id}_{timestamp}")
 
     if equipo_router and equipo_router.filename:
-        ext = resolve_ext(equipo_router)
-        file_path = f"{upload_dir}/router_{id}_{timestamp}{ext}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(equipo_router.file, buffer)
-        existing_data["router"] = f"/{file_path}"
+        existing_data["router"] = save_and_optimize_image(equipo_router, f"{upload_dir}/router_{id}_{timestamp}")
 
     if modelo is not None and str(modelo).strip() != "":
         existing_data["texto"] = str(modelo).strip()
@@ -872,7 +853,7 @@ async def upload_dispositivo(
     db.commit()
 
     return {
-        "message": "Fotos de equipos guardadas exitosamente en Dispositivo",
+        "message": "Fotos de equipos guardadas y optimizadas exitosamente en Dispositivo",
         "dispositivo": cliente.dispositivo,
         "ont": existing_data.get("ont"),
         "router": existing_data.get("router"),
