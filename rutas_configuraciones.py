@@ -6,7 +6,7 @@
 @notice Developed with AI assistance.‍​‌​​​‌​​​‌‌​​​​‌​‌‌‌​‌‌​​‌‌​‌​​‌​‌‌​​‌​​​​‌​​​​​​‌​​‌‌​‌​‌‌​‌‌‌‌​‌‌​​‌‌‌​‌‌‌​​‌​​‌‌​‌‌‌‌​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​‌​‌​​‌‌​‌‌‌‌​​‌​​​​​​​‌​‌​​​​‌‌​​​‌‌​​‌​‌​​‌​​‌​​​​​​​‌‌​​‌​​​‌‌​​​​​​‌‌​​‌​​​‌‌​‌‌​​​‌​‌‌‌​​​‌​​​​​​‌​​​​​‌​‌‌​‌‌​​​‌‌​‌‌​​​​‌​​​​​​‌​‌​​‌​​‌‌​‌​​‌​‌‌​​‌‌‌​‌‌​‌​​​​‌‌‌​‌​​​‌‌‌​​‌‌​​‌​​​​​​‌​‌​​‌​​‌‌​​‌​‌​‌‌‌​​‌‌​‌‌​​‌​‌​‌‌‌​​‌​​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​​‌​​​​‌​‌‌‌​​​‌​​​​​​‌​​​‌​​​‌‌​​‌​‌​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​‌‌​​​‌‌​‌‌‌‌​‌‌‌​​​​​‌‌​​‌​‌​‌‌​​‌​​​​‌​​​​​​‌‌‌​‌‌‌​‌‌​‌​​‌​‌‌‌​‌​​​‌‌​‌​​​​​‌​​​​​​‌​​​​​‌​‌​​‌​​‌​​‌​​​​​​‌‌​​​​‌​‌‌‌​​‌‌​‌‌‌​​‌‌​‌‌​‌​​‌​‌‌‌​​‌‌​‌‌‌​‌​​​‌‌​​​​‌​‌‌​‌‌‌​​‌‌​​​‌‌​‌‌​​‌​‌​​‌​‌‌‌​​​‌​​​​​​‌​​​​‌‌​‌‌​‌‌‌‌​‌‌​‌‌‌​​‌‌‌​‌​​​‌‌​​​​‌​‌‌​​​‌‌​‌‌‌​‌​​​​‌‌‌​‌​​​‌​​​​​​‌‌​​‌​​​‌‌​‌‌​‌​‌‌​‌‌‌‌​‌‌​​‌‌‌​‌‌‌​​‌​​‌‌​‌‌‌‌​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​‌​‌​​‌‌​‌‌‌‌​​‌‌‌​​​​​‌‌​‌‌‌​‌​​​​​​​‌‌​​‌‌‌​‌‌​‌‌​‌​‌‌​​​​‌​‌‌​‌​​‌​‌‌​‌‌​​​​‌​‌‌‌​​‌‌​​​‌‌​‌‌​‌‌‌‌​‌‌​‌‌​‌​​‌​‌‌‌​​​‌​​​​​​‌​​​‌‌​​‌‌​‌‌‌‌​‌‌‌​​‌​​‌‌​​‌​‌​‌‌​‌‌‌​​‌‌‌​​‌‌​‌‌​‌​​‌​‌‌​​​‌‌​​‌​​​​​​‌​‌​​‌‌​‌‌​‌​​‌​‌‌​​‌‌‌​​‌‌‌​‌​​​‌​​​​​​‌‌​​​‌​​‌‌​​‌‌​​​‌‌​​‌​​​‌‌​‌‌​​‌‌​​‌​‌​‌‌​​‌​‌​​‌‌​​​​​​‌‌​​‌‌​​‌‌​​‌‌​​‌‌​‌​​​​‌‌​​​‌​​‌‌‌​​​​‌‌​​‌​​​​‌‌​‌​‌​‌‌​​‌​​​‌‌​​​‌‌‍
 @hash bf26ee033418d5dcd984ad8115334e7ce788cfb5d2bd456cf6e6ee21b877a762
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -383,6 +383,10 @@ class SuspensionConfigRequest(BaseModel):
     dia_corte: int
     hora_corte: str
     auto_suspension_enabled: bool
+    nodo_corte: Optional[str] = "TODOS"
+
+class EjecutarCorteManualRequest(BaseModel):
+    nodo: Optional[str] = None
 
 @router.get("/suspension-corte")
 def get_suspension_corte_config():
@@ -390,7 +394,8 @@ def get_suspension_corte_config():
     return {
         "dia_corte": int(config.get("dia_corte", 20)),
         "hora_corte": str(config.get("hora_corte", "01:00")),
-        "auto_suspension_enabled": bool(config.get("auto_suspension_enabled", True))
+        "auto_suspension_enabled": bool(config.get("auto_suspension_enabled", True)),
+        "nodo_corte": str(config.get("nodo_corte", "TODOS"))
     }
 
 @router.put("/suspension-corte")
@@ -405,7 +410,8 @@ def set_suspension_corte_config(data: SuspensionConfigRequest):
     save_config({
         "dia_corte": data.dia_corte,
         "hora_corte": data.hora_corte,
-        "auto_suspension_enabled": data.auto_suspension_enabled
+        "auto_suspension_enabled": data.auto_suspension_enabled,
+        "nodo_corte": (data.nodo_corte or "TODOS").strip()
     })
     try:
         from scheduler import reprogramar_job_suspension
@@ -416,14 +422,31 @@ def set_suspension_corte_config(data: SuspensionConfigRequest):
     return {"message": "Configuración de suspensión por fecha guardada exitosamente"}
 
 @router.post("/suspension-corte/ejecutar-corte-manual")
-def ejecutar_corte_manual_ahora(current_user: models.Usuario = Depends(require_role(["administrador"]))):
+def ejecutar_corte_manual_ahora(
+    payload: Optional[EjecutarCorteManualRequest] = Body(None),
+    current_user: models.Usuario = Depends(require_role(["administrador"]))
+):
     """
     Ejecuta manualmente el corte masivo de morosos en MikroTik en este instante.
+    Puede recibir un 'nodo' específico en el payload, o 'TODOS'.
+    Si no se envía o es vacío, toma el 'nodo_corte' configurado en config.json.
     """
     try:
+        from config_manager import get_config
         from scheduler import suspension_automatica_por_mora
-        suspension_automatica_por_mora(force_run=True)
-        return {"message": "Proceso de suspensión por corte ejecutado exitosamente en MikroTik."}
+        cfg = get_config()
+        nodo_a_cortar = None
+        if payload and payload.nodo is not None and str(payload.nodo).strip() != "":
+            nodo_a_cortar = payload.nodo
+        else:
+            nodo_a_cortar = cfg.get("nodo_corte", "TODOS")
+
+        res = suspension_automatica_por_mora(force_run=True, nodo_filtro=nodo_a_cortar)
+        msg = res.get("message") if (isinstance(res, dict) and "message" in res) else "Proceso de suspensión por corte ejecutado exitosamente en MikroTik."
+        return {
+            "message": msg,
+            "detalles": res
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al ejecutar corte manual: {str(e)}")
 

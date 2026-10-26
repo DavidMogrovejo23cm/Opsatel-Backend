@@ -14,6 +14,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # pyrefly: ignore [missing-import]
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
+from typing import Optional
 import pytz
 from database import SessionLocal
 import models
@@ -402,13 +403,45 @@ def is_nodo_sayausi(nodo_val) -> bool:
     s = unicodedata.normalize('NFD', str(nodo_val)).encode('ascii', 'ignore').decode('utf-8').upper()
     return "SAYAUSI" in s
 
-def suspension_automatica_por_mora(force_run: bool = False):
+def coincide_nodo(cliente_nodo, nodo_filtro) -> bool:
+    """
+    Comprueba si el nodo del cliente coincide con el filtro de nodo.
+    Si nodo_filtro es 'TODOS', None o vacío, coincide con cualquier cliente.
+    Normaliza acentos, espacios y mayúsculas.
+    """
+    if not nodo_filtro:
+        return True
+    
+    import unicodedata
+    def norm(val):
+        if not val:
+            return ""
+        return unicodedata.normalize('NFD', str(val)).encode('ascii', 'ignore').decode('utf-8').strip().upper()
+
+    filtro = norm(nodo_filtro)
+    if filtro in ["TODOS", "ALL", ""]:
+        return True
+
+    c_nodo = norm(cliente_nodo)
+    if not c_nodo:
+        return False
+
+    if c_nodo == filtro:
+        return True
+
+    if c_nodo == f"NODO {filtro}" or filtro == f"NODO {c_nodo}":
+        return True
+
+    return False
+
+def suspension_automatica_por_mora(force_run: bool = False, nodo_filtro: Optional[str] = None):
     """
     Ejecuta el proceso de suspensión automática por corte de fecha (ej. día 20 de cada mes).
     Agrega las IPs de clientes morosos a la lista de MikroTik por nodo:
       - Baños: CLIENTES_SUSPENDIDOS_POR_PAGO
       - Sayausí: CLIENTES_SUSPENDIDOS_POR_PAGOS
     Y cambia el estado del cliente a 'Moroso'.
+    Permite filtrar por nodo específico o 'TODOS'.
     NOTA: No altera ni suspende en LibreQoS, el corte se gestiona exclusivamente en MikroTik.
     """
     from config_manager import get_config
@@ -424,12 +457,20 @@ def suspension_automatica_por_mora(force_run: bool = False):
     if not force_run:
         if not enabled:
             print("[Scheduler] Suspensión automática desactivada en configuración. Omitiendo.")
-            return
+            return {"success": False, "message": "Suspensión automática desactivada en configuración."}
         if dia_actual != dia_corte:
             print(f"[Scheduler] Hoy es día {dia_actual}, la fecha de corte configurada es el día {dia_corte}. Omitiendo corte.")
-            return
+            return {"success": False, "message": f"Hoy no es día de corte ({dia_corte})."}
 
-    print(f"[Scheduler] Iniciando proceso de suspensión por corte de fecha (Día {dia_corte})...")
+    # Determinar qué nodo filtrar
+    if nodo_filtro is None:
+        target_nodo = config_sys.get("nodo_corte", "TODOS")
+    else:
+        target_nodo = nodo_filtro
+
+    nodo_display = target_nodo if target_nodo and str(target_nodo).strip().upper() not in ["TODOS", "ALL", ""] else "TODOS los nodos"
+
+    print(f"[Scheduler] Iniciando proceso de suspensión por corte de fecha (Día {dia_corte}) para: {nodo_display}...")
     db = SessionLocal()
     try:
         hoy_str = ahora.strftime("%Y-%m-%d")
@@ -439,7 +480,16 @@ def suspension_automatica_por_mora(force_run: bool = False):
         ).all()
 
         count = 0
+        omitidos_nodo = 0
+        omitidos_exentos = 0
+        omitidos_prorroga = 0
+
         for c in clientes:
+            # 1. Filtrar por nodo seleccionado
+            if not coincide_nodo(c.nodo, target_nodo):
+                omitidos_nodo += 1
+                continue
+
             saldo_pend = float(c.saldo or 0)
             try:
                 plus_pend = float(c.plus or 0)
@@ -453,6 +503,7 @@ def suspension_automatica_por_mora(force_run: bool = False):
             exentos_corte = config_sys.get("clientes_exentos_corte", [])
             if c.id in exentos_corte or str(c.id) in [str(x) for x in exentos_corte]:
                 print(f"[Scheduler] Omitiendo suspensión del cliente {c.id} ({c.nombre}) por estar en la Lista de Excepciones de corte.")
+                omitidos_exentos += 1
                 continue
 
             # Verificar prórroga de pago
@@ -460,6 +511,7 @@ def suspension_automatica_por_mora(force_run: bool = False):
                 try:
                     if str(c.fecha_prorroga).strip() >= hoy_str:
                         print(f"[Scheduler] Omitiendo suspensión del cliente {c.id} ({c.nombre}) debido a prórroga activa hasta {c.fecha_prorroga}")
+                        omitidos_prorroga += 1
                         continue
                 except Exception as e:
                     print(f"[Scheduler] Error al comparar fecha de prórroga para cliente {c.id}: {e}")
@@ -478,11 +530,19 @@ def suspension_automatica_por_mora(force_run: bool = False):
                     print(f"[Scheduler] Error MikroTik al suspender a {c.nombre} ({c.ip}): {mt_err}")
 
         db.commit()
-        print(f"[Scheduler] Suspensión automática por fecha completada. Clientes marcados como Moroso y suspendidos en MikroTik: {count}")
+        msg_ok = f"Suspensión por corte completada. {count} cliente(s) suspendido(s) en MikroTik ({nodo_display})."
+        print(f"[Scheduler] {msg_ok}")
+        return {
+            "success": True,
+            "total_suspendidos": count,
+            "nodo": nodo_display,
+            "message": msg_ok
+        }
     except Exception as e:
         db.rollback()
         print(f"[Scheduler] Error en suspensión automática por mora: {str(e)}")
         traceback.print_exc()
+        raise e
     finally:
         db.close()
 
