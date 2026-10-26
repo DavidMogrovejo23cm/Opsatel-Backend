@@ -422,6 +422,7 @@ class HojaRuta(Base):
     observacion_tecnico = Column(String(2000))
     parroquia = Column(String(100))
     estado = Column(String(50), default="Pendiente") # Pendiente, Realizado, Cancelado
+    callcenter_ticket_id = Column(Integer, ForeignKey("call_center_tickets.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     cliente_ref = relationship("Cliente")

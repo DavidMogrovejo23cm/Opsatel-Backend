@@ -67,12 +67,13 @@ def actualizar_hoja_ruta(id: int, data: schemas.HojaRutaUpdate, db: Session = De
         is_admin = user_role in ["administrador", "admin"]
         is_staff = is_admin or user_role in ["tecnico", "secretario", "instalador"]
 
-        # 1. Permisos para cambiar el estado: Solo administradores
+        # 1. Permisos para cambiar el estado: Solo administradores (excepto marcar como 'Realizado' por técnicos/staff)
         # Usamos getattr por seguridad si hay problemas de recarga de schemas
         new_estado = getattr(data, 'estado', None)
         estado_previo = db_hoja.estado
         if new_estado is not None and new_estado != db_hoja.estado:
-            if not is_admin:
+            puede_marcar_realizado = is_staff and new_estado == "Realizado"
+            if not is_admin and not puede_marcar_realizado:
                 raise HTTPException(status_code=403, detail="Solo el administrador puede cambiar el estado de la hoja de ruta")
         
         # 2. Permisos generales para editar cualquier campo: Staff autorizado
@@ -96,6 +97,24 @@ def actualizar_hoja_ruta(id: int, data: schemas.HojaRutaUpdate, db: Session = De
         # de lo contrario el listado la volvería a marcar como 'No completado' automáticamente.
         if estado_previo == "No completado" and new_estado in ("Pendiente", "En proceso"):
             db_hoja.created_at = datetime.utcnow()
+
+        # Si la actividad pasa a estado 'Realizado' y tiene ticket de Call Center asociado,
+        # marcar automáticamente el ticket de Call Center como 'SOLUCIONADO'
+        if new_estado == "Realizado":
+            target_cc_id = getattr(db_hoja, 'callcenter_ticket_id', None) or update_data.get('callcenter_ticket_id')
+            if not target_cc_id and db_hoja.observacion:
+                import re
+                m = re.search(r"Ref Ticket Call Center #(\d+)", db_hoja.observacion)
+                if m:
+                    target_cc_id = int(m.group(1))
+            if target_cc_id:
+                try:
+                    cc_ticket = db.query(models.CallCenterTicket).filter(models.CallCenterTicket.id == target_cc_id).first()
+                    if cc_ticket:
+                        cc_ticket.estado = "SOLUCIONADO"
+                        cc_ticket.fecha_cambio_estado = datetime.now().strftime("%Y-%m-%d %H:%M")
+                except Exception as e_cc:
+                    print(f"Aviso actualizando ticket de Call Center vinculado ({target_cc_id}): {e_cc}")
         
         db.commit()
         db.refresh(db_hoja)

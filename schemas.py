@@ -583,6 +583,7 @@ class HojaRutaBase(BaseModel):
     observacion_tecnico: Optional[str] = None
     parroquia: Optional[str] = None
     estado: Optional[str] = "Pendiente"
+    callcenter_ticket_id: Optional[int] = None
 
 class HojaRutaCreate(HojaRutaBase):
     pass
@@ -601,6 +602,7 @@ class HojaRutaUpdate(BaseModel):
     observacion_tecnico: Optional[str] = None
     parroquia: Optional[str] = None
     estado: Optional[str] = None
+    callcenter_ticket_id: Optional[int] = None
 
 class HojaRutaResponse(HojaRutaBase):
     id: int

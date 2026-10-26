@@ -98,6 +98,12 @@ def force_fix_columns():
         ("desde_cliente_id", "INT")
     ]
 
+    # 9. Tabla hoja_ruta
+    table_hoja_ruta = "hoja_ruta"
+    columns_hoja_ruta = [
+        ("callcenter_ticket_id", "INT DEFAULT NULL")
+    ]
+
     process_table(table_clientes, columns_clientes)
     process_table(table_pagos, columns_pagos)
     process_table(table_asistencias, columns_asistencias)
@@ -106,6 +112,7 @@ def force_fix_columns():
     process_table(table_usuarios, columns_usuarios)
     process_table(table_proyectos, columns_proyectos)
     process_table(table_whatsapp_config, columns_whatsapp_config)
+    process_table(table_hoja_ruta, columns_hoja_ruta)
     
     # Ampliar columnas existentes que requieren mayor tamaño
     modify_columns = [
