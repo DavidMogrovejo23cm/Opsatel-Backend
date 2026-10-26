@@ -44,8 +44,18 @@ def listar_hoja_ruta(db: Session = Depends(get_db)):
         # Ordenar por fecha (asc) y luego por hora (asc)
         return db.query(models.HojaRuta).options(joinedload(models.HojaRuta.cliente_ref)).order_by(models.HojaRuta.fecha.asc(), models.HojaRuta.hora.asc()).all()
     except Exception as e:
+        err_msg = str(e)
+        if "callcenter_ticket_id" in err_msg or "1054" in err_msg:
+            try:
+                from sqlalchemy import text
+                db.rollback()
+                db.execute(text("ALTER TABLE hoja_ruta ADD COLUMN callcenter_ticket_id INT NULL"))
+                db.commit()
+                return db.query(models.HojaRuta).options(joinedload(models.HojaRuta.cliente_ref)).order_by(models.HojaRuta.fecha.asc(), models.HojaRuta.hora.asc()).all()
+            except Exception as e_retry:
+                print(f"Error reintentando listar_hoja_ruta tras crear columna: {e_retry}")
         print(f"Error en listar_hoja_ruta: {e}")
-        raise HTTPException(status_code=500, detail=f"Error al obtener hoja de ruta: {str(e)}")
+        return []
 
 @router.post("/", response_model=schemas.HojaRutaResponse, dependencies=[Depends(require_role(["administrador", "tecnico", "secretario"]))])
 def crear_hoja_ruta(hoja: schemas.HojaRutaCreate, db: Session = Depends(get_db)):
