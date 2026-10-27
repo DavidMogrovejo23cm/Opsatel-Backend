@@ -1,165 +1,177 @@
-# 🚀 DOCUMENTACIÓN TÉCNICA - BACKEND OPSATEL
+# 📘 DOCUMENTACIÓN TÉCNICA Y OPERATIVA - BACKEND OPSATEL
 
-Este documento proporciona una visión detallada de la arquitectura, lógica de negocio y funcionamiento del backend del sistema de gestión ISP **Opsatel**.
-
----
-
-## 🛠️ 1. Arquitectura y Tecnologías
-La API está construida con un stack moderno y eficiente diseñado para manejar grandes volúmenes de datos de clientes y automatizar procesos técnicos.
-
-*   **Framework:** [FastAPI](https://fastapi.tiangolo.com/) (Python) - Proporciona alto rendimiento y generación automática de documentación (Swagger).
-*   **Base de Datos:** [MySQL](https://www.mysql.com/) - Motor relacional para persistencia de datos complejos.
-*   **ORM:** [SQLAlchemy](https://www.sqlalchemy.org/) - Mapeo objeto-relacional para interactuar con la DB de forma segura.
-*   **Autenticación:** [JWT (JSON Web Tokens)](https://jwt.io/) - Seguridad basada en tokens con roles definidos.
-*   **Procesamiento de Datos:** [Pandas](https://pandas.pydata.org/) - Generación de reportes dinámicos en Excel.
-*   **Servidor:** [Uvicorn](https://www.uvicorn.org/) - Servidor ASGI para ejecución en tiempo real.
+Documento maestro de especificación de arquitectura, lógica de negocio, modelo de datos y operación del sistema backend de **Opsatel**.
 
 ---
 
-## 📂 2. Estructura del Proyecto
-El código está organizado de forma modular para facilitar su mantenimiento:
+## 1. Visión General del Sistema
+
+El backend de **Opsatel** es el núcleo de cómputo, almacenamiento y orquestación del ISP. Proporciona una interfaz RESTful robusta y asíncrona construida sobre **FastAPI**, interactuando con una base de datos relacional **MySQL** a través de **SQLAlchemy ORM**.
+
+Sus responsabilidades esenciales comprenden:
+*   **Gestión del Ciclo de Vida del Cliente:** Registro, validación geográfica, cálculo algorítmico de red, aprovisionamiento en OLT, facturación y suspensión/reactivación.
+*   **Aprovisionamiento de Infraestructura GPON:** Cálculo de colisiones de red, secuenciación de puertos PON y generación de comandos nativos para OLTs Huawei.
+*   **Contabilidad y Tesorería Independiente:** Aislamiento estricto de conceptos de facturación (Internet recurrente, Plus IPTV y cargos Adicionales extraordinarios).
+*   **Soporte al Cliente y Operaciones de Campo (CRM & Field Dispatch):** Módulo de Call Center integrado de forma bidireccional con la Hoja de Ruta técnica, con control de SLA y expiración automática de tareas tras 24 horas.
+*   **Automatización de Mensajería y Bot Asistente:** Pasarela de comunicación bidireccional con WhatsApp para recordatorios de pago y soporte automatizado con Inteligencia Artificial.
+*   **Integridad de Datos y Respaldos:** Creación y restauración validada de volcados SQL sin interrupción del servicio.
+
+---
+
+## 2. Pila Tecnológica y Dependencias
+
+*   **Lenguaje de Programación:** Python 3.10+
+*   **Framework Web:** FastAPI 0.100+
+*   **Servidor ASGI:** Uvicorn con soporte de workers asíncronos
+*   **Capa ORM:** SQLAlchemy 2.0+
+*   **Base de Datos Relacional:** MySQL 8.0 / MariaDB 10.5+ (con soporte transaccional InnoDB)
+*   **Seguridad:** PyJWT, Passlib (algoritmo Bcrypt para hashing seguro de credenciales)
+*   **Análisis y Reportes:** Pandas y Openpyxl para generación de hojas de cálculo de cierres mensuales
+*   **Procesamiento de Lenguaje Natural (IA):** API de Anthropic Claude para extracción estructurada de datos no formateados
+*   **Bridge de Mensajería:** Node.js 18+ con `whatsapp-web.js` para conexión de sesión web
+
+---
+
+## 3. Modelo Relacional de Base de Datos
 
 ```text
-opsatel/
-├── main.py                 # Punto de entrada de la aplicación y configuración de CORS.
-├── database.py             # Configuración de la conexión MySQL y sesión de SQLAlchemy.
-├── models.py               # Definición de las tablas de la base de datos (Entidades).
-├── schemas.py              # Definición de modelos Pydantic (Validación de datos API).
-├── auth_utils.py           # Utilidades para hashing de contraseñas y generación de JWT.
-├── routes/                 # Directorio de controladores de rutas
-│   ├── auth.py             # Gestión de login, registro y usuarios.
-│   └── clientes.py         # Lógica central: Clientes, pagos, scripts y reportes.
-├── rutas_configuraciones.py # CRUD de Nodos, Planes, Bancos y Puertos.
-├── uploads/                # Directorio de almacenamiento de imágenes (Cédulas).
-├── rutas_reportes/         # Almacenamiento de reportes Excel generados.
-└── [scripts_varios].py     # Herramientas de mantenimiento, seeding y correcciones de DB.
++------------------------------------+          +------------------------------------+
+|              Cliente               |          |                Pago                |
+| (hoja_de_c__lculo_sin_t__tulo)     |          |         (historial_pagos)          |
++------------------------------------+          +------------------------------------+
+| id (PK)                            | 1      * | id (PK)                            |
+| cedula (Index)                     |<---------| cliente_id (FK)                    |
+| nombres, apellidos                 |          | monto_total                        |
+| telefono, correo                   |          | monto_internet                     |
+| direccion, coordenadas_gps         |          | monto_plus                         |
+| nodo, puerto, id_port              |          | monto_adicional                    |
+| service_port, ip, mac              |          | metodo_pago (Efectivo/Pichincha...) |
+| plan, precio_plan, plus            |          | referencia, cortesia_mode          |
+| saldo, pago_mensual, adicional     |          | fecha_pago, registrado_por         |
+| estado (Pendiente/Activo/Cortado)  |          +------------------------------------+
+| tiempo, fecha_firma, foto_cedula   |
++------------------------------------+
+         | 1                      | 1
+         |                        |
+         | *                      | *
++--------------------+   +------------------------------------+
+|  CallCenterTicket  |   |              HojaRuta              |
++--------------------+   +------------------------------------+
+| id (PK)            |   | id (PK)                            |
+| cliente_id (FK)    |   | cliente_id (FK, Nullable)          |
+| nombres_reporte    | 1 | callcenter_ticket_id (FK, Nullable)|<---+
+| telefono_contacto  |---| tecnico_responsable                |    |
+| motivo_llamada     |   | fecha, hora, tipo_actividad        |    |
+| prioridad, estado  | * | estado (Pendiente/Completado...)   |----+
+| resolucion         |   | observaciones, created_at          |
++--------------------+   +------------------------------------+
 ```
 
----
-
-## 🗄️ 3. Modelo de Datos (DB Schema)
-El sistema utiliza un esquema relacional con las siguientes entidades principales:
-
-*   **`Cliente` (`hoja_de_c__lculo_sin_t__tulo`):** Tabla central. Almacena datos personales, geográficos (Nodo/Puerto), técnicos (IP, ONT, Scripts) y financieros (Saldo, Pagos).
-*   **`Usuario`:** Gestión de accesos con roles (`administrador`, `secretario`, `tecnico`, `instalador`).
-*   **`Pago`:** Historial detallado de transacciones financieras por cliente.
-*   **`Nodo`:** Entidad geográfica que define el prefijo IP base (Ej: 172.16).
-*   **`Puerto`:** Subdivisiones físicas/lógicas dentro de un nodo para organizar ONTs.
-*   **`PlanInternet`:** Catálogo de velocidades y precios mensuales.
-*   **`Banco`:** Lista de entidades financieras permitidas para pagos.
-*   **`ReporteMensual`:** Registro de archivos Excel generados históricamente.
+### Entidades Secundarias y Catálogos:
+*   **`Usuario`:** Credenciales del sistema (`id`, `username`, `hashed_password`, `rol`, `is_active`).
+*   **`Nodo`:** Zonas geográficas de distribución (`id`, `nombre`, `prefijo_ip`, `descripcion`).
+*   **`Puerto`:** Puertos GPON asignados por cada nodo (`id`, `nodo_id`, `numero_puerto`).
+*   **`PlanInternet`:** Planes comerciales (`id`, `nombre`, `velocidad_mbps`, `precio_mensual`).
+*   **`Banco`:** Cuentas autorizadas (`id`, `nombre`, `numero_cuenta`, `titular`).
+*   **`FinanzasBase`:** Registros de caja inicial (`caja_chica_base`, `banco_pichincha_base`, `coop_jep_base`).
+*   **`Asistencia`:** Control laboral (`empleado_nombre`, `tipo_registro`, `timestamp`).
+*   **`ClienteExtra` / `PagoExtra`:** Registro contable paralelo para contratos temporales o servicios especiales.
 
 ---
 
-## 🔐 4. Sistema de Seguridad y Roles (RBAC)
-El sistema implementa un control de acceso basado en roles para proteger la integridad de los datos:
+## 4. Control de Acceso Basado en Roles (RBAC)
 
-| Rol | Permisos Principales |
+El middleware de seguridad valida en cada solicitud el token Bearer JWT y contrasta el campo `rol` del usuario contra los permisos definidos en el endpoint:
+
+| Rol | Privilegios y Alcance |
 | :--- | :--- |
-| **Administrador** | Acceso total, gestión de usuarios, facturación global, eliminación de datos. |
-| **Secretario** | Gestión de clientes, registro de pagos, generación de reportes, edición de planes. |
-| **Técnico** | Configuración técnica de clientes, generación de scripts GPON, actualización de potencia (NAP). |
-| **Instalador** | Similar al técnico, enfocado en el despliegue inicial en campo. |
+| **`administrador`** | Control total sin restricciones. Gestión de usuarios, facturación mensual global, cierres de ciclo, configuración de nodos/planes/bancos, respaldos de base de datos y eliminación permanente de registros. |
+| **`secretario`** | Gestión operativa comercial y de cobranza. Alta de prospectos, cobro y registro de pagos desglosados, consulta de clientes, gestión de tickets de call center y emisión de reportes. |
+| **`tecnico`** | Aprovisionamiento técnico en campo. Visualización y cambio de estados en Hoja de Ruta, cálculo de parámetros técnicos (IP, ONT ID, Service Port), generación de scripts OLT Huawei y visualización de tickets de averías. Al ingresar al sistema, es canalizado por defecto a la agenda de campo. |
+| **`instalador`** | Funciones de despliegue físico y conexión de acometidas de fibra en el domicilio del cliente. |
 
 ---
 
-## ⚙️ 5. Lógica de Negocio Crucial
+## 5. Algoritmos y Reglas de Negocio Clave
 
-### A. Flujo de Estados del Cliente
-1.  **Pendiente:** Cliente registrado pero sin instalación física.
-2.  **En Activación:** Etapa donde el equipo técnico asigna IP, ONT y genera scripts.
-3.  **Activo:** Cliente operando normalmente, genera deudas mensuales automáticas.
+### A. Algoritmo de Cálculo Técnico (Aprovisionamiento GPON)
+Ubicación: `routes/clientes.py -> @router.get("/siguiente-valor-tecnico")`
+1.  **ONT ID (`id_port`):** Se realiza una consulta agregada `SELECT MAX(id_port) FROM clientes WHERE nodo = :nodo AND puerto = :puerto`. El valor devuelto es incrementado en 1 para garantizar que dentro de un mismo puerto PON nunca existan dos ONTs con el mismo identificador.
+2.  **Service Port:** La OLT Huawei exige que los identificadores de servicio (`service-port`) sean únicos en todo el chasis. Se ejecuta `SELECT MAX(service_port) FROM clientes` en toda la base y se asigna el valor subsiguiente.
+3.  **Dirección IP:** Utilizando el prefijo IP configurado para el nodo (ejemplo: `172.16`), se genera la IP dinámica con la convención:
+    $$\text{IP} = \text{prefijo} \,.\, \text{numero\_puerto} \,.\, (\text{id\_port} + 1)$$
+4.  **Generación de Comandos CLI:** Se construyen las directivas Huawei para asociar el perfil de línea, el puerto de servicio y la VLAN correspondiente al plan contratado.
 
-### B. Generación de Automatismos Técnicos (OLT Huawei)
-El backend calcula automáticamente los siguientes valores para evitar colisiones:
-*   **ID Port (ONT ID):** Se autoincrementa por cada Puerto específico.
-*   **Service Port:** Autoincremento global para asegurar unicidad en la OLT.
-*   **IP Dinámica:** Basada en la fórmula: `{Prefijo_Nodo}.{Num_Puerto}.{ONT_ID + 1}`.
-*   **Scripts:** Generación de comandos `ont add`, `service-port` y `native-vlan` listos para copiar y pegar.
+### B. Separación Contable del Cargo "Adicional"
+Ubicación: `routes/clientes.py -> @router.post("/{id}/pagar")`
+*   El modelo `Pago` persiste de forma aislada las cantidades:
+    *   `monto_internet`: Descuenta la deuda de mensualidades atrasadas o actuales del cliente.
+    *   `monto_plus`: Cubre el costo de servicios de streaming / IPTV.
+    *   `monto_adicional`: Liquida exclusivamente valores por venta de routers, cables o traslados.
+*   **Regla de Negocio:** Un abono realizado a un concepto adicional **no reduce** la deuda acumulada de mensualidades de internet, evitando que clientes suspendidos por falta de pago sean reactivados fraudulentamente sin pagar su servicio de conectividad.
 
-### C. Ciclo Financiero y Facturación
-El sistema maneja un ciclo mensual riguroso para evitar errores contables:
-1.  **Facturación Mensual Global:** Suma el valor del Plan + Plus al saldo de todos los clientes "Activos". Requiere que el mes anterior esté "Cerrado".
-2.  **Cierre de Mes:** Resetea los contadores de `pago_mensual` para iniciar el nuevo ciclo desde cero, manteniendo la deuda/saldo pendiente.
-3.  **Generación de Reporte:** Exporta a Excel los cobros efectuados del mes y realiza el cierre automático.
+### C. Normalización y Extracción con Inteligencia Artificial
+Ubicación: `routes/clientes.py -> @router.post("/parse-smart")`
+*   Técnica de procesamiento con **Anthropic Claude**:
+    1.  El backend extrae los nombres válidos de Nodos, Planes y Parroquias desde la base de datos MySQL en tiempo real.
+    2.  Envía el texto crudo pegado por el usuario al modelo con instrucciones estrictas de extracción JSON.
+    3.  Limpia cédulas ecuatorianas asegurando 10 dígitos (añadiendo ceros iniciales si el portapapeles los omitió).
+    4.  Mapea variaciones coloquiales ("nodo los baños", "plan 50") al registro oficial correspondiente.
 
----
+### D. Ciclo de SLA y Auto-Expiración en Hoja de Ruta
+Ubicación: `routes/hoja_ruta.py -> @router.get("/")`
+*   Cada vez que se solicita la lista de tareas de campo, se ejecuta una transacción previa en la base de datos:
+    *   Registros con `created_at <= (NOW() - 24 horas)` que mantengan estado `Pendiente` o `En proceso` son actualizados automáticamente a `No completado`.
+    *   Si el registro carece de `created_at`, se evalúa el campo `fecha` contra la fecha actual del servidor.
+*   Esto previene que órdenes de servicio desatendidas queden ocultas en el flujo de trabajo diario.
 
-## 📡 6. Endpoints Principales (Resumen)
-
-### Autenticación (`/auth`)
-*   `POST /login`: Retorna token JWT y datos del usuario.
-*   `POST /register`: (Solo Admin) Crea nuevos usuarios de sistema.
-
-### Gestión de Clientes (`/clientes`)
-*   `GET /`: Lista todos los clientes.
-*   `POST /`: Crea un nuevo prospecto de cliente.
-*   `GET /siguiente-valor-tecnico`: Calcula IP, ID Port y genera comandos OLT en tiempo real.
-*   `PATCH /{id}/configuracion-tecnica`: Finaliza la instalación y activa al cliente.
-*   `POST /{id}/pagar`: Registra un pago y liquida saldos/plus/adicionales.
-*   `POST /facturacion-mensual-global`: Ejecuta el cobro masivo del mes.
-
-### Configuración (`/configuraciones`)
-*   CRUD completo para `nodos`, `planes`, `bancos` y `puertos`.
-
----
-
-## 🛠️ 7. Herramientas de Mantenimiento
-Existen scripts especializados en la raíz del proyecto para tareas administrativas:
-*   `create_users.py`: Inicializa usuarios base (Admin: `admin123`).
-*   `seed_configuraciones.py`: Carga nodos (Baños, Sayausí), planes y puertos iniciales.
-*   `sync_db.py`: Sincroniza automáticamente cambios en las columnas de `models.py` con MySQL.
-*   `cleanup_database.py`: Limpia registros de prueba o inconsistentes.
+### E. Integración Call Center -> Hoja de Ruta
+Ubicación: `routes/callcenter.py -> @router.post("/tickets/{id}/agendar-hoja-ruta")`
+*   Permite a la secretaria o agente de soporte convertir con un solo clic un reclamo telefónico en una orden de trabajo de campo.
+*   Crea el registro en la tabla `hoja_ruta` vinculando la clave foránea `callcenter_ticket_id`, permitiendo trazabilidad bidireccional entre la llamada de reclamo y la solución en el domicilio del cliente.
 
 ---
 
-## 🚀 8. Instrucciones de Despliegue (Local)
-1. Instalar dependencias: `pip install -r requirements.txt`.
-2. Configurar DB en `database.py`: `SQLALCHEMY_DATABASE_URL`.
-3. Ejecutar inicialización: `python create_users.py` y `python seed_configuraciones.py`.
-4. Iniciar servidor: `uvicorn main:app --reload`.
+## 6. Módulos y Enrutadores REST
 
----
-**Nota:** Esta documentación refleja el estado actual del backend y debe actualizarse ante cambios significativos en los modelos o lógica financiera.
-
----
-
-## 🆕 9. Actualizaciones Recientes (v1.2)
-
-### A. Mejoras en Lógica Financiera (Independencia Contable)
-Se refactorizó el sistema de cobros para aislar el cargo "Adicional":
-*   **Base de Datos (`historial_pagos`):** Se implementó la columna `monto_adicional`.
-*   **Registro de Pagos (`POST /clientes/{id}/pagar`):** Los abonos ingresados como "Adicional" **no** disminuyen el saldo base de la deuda por internet/IPTV (`total_pago`). Esto garantiza que los cobros extraordinarios (instalaciones, ventas de routers) se mantengan independientes de la facturación recurrente.
-*   **Frontend Sincronizado:** El dashboard y el modal interactivo de pagos del UI reflejan ahora el cálculo aislado, acumulando el "TOTAL" recaudado en la "Vista General" sin contaminar la contabilidad de la deuda pendiente.
-
-### B. Gestión de Contratos (Campo `tiempo`)
-Se optimizó el modelo de creación de clientes para incluir métricas de permanencia:
-*   **Esquema `ClienteCreate`:** Incorporación del campo `tiempo` (duración del contrato en meses).
-*   **Endpoint (`POST /clientes/`):** La ruta captura el tiempo estipulado desde la venta inicial.
-*   **Frontend (UX):** Se eliminó la edición manual del "Tiempo" en el panel administrativo, y se trasladó la captura de este valor al formulario inicial de Ventas, protegiendo los parámetros comerciales.
-
-### C. Configuración de Finanzas Base y Dashboard Global
-Se añadió un sistema para gestionar y visualizar la liquidez real de las cuentas principales:
-*   **Base de Datos (`FinanzasBase`):** Nueva tabla `finanzas_base` que centraliza los montos estáticos establecidos (Caja Chica, Pichincha, JEP).
-*   **Nuevos Endpoints (`/configuraciones/finanzas-base`):** Rutas integradas para permitir a los administradores fijar valores base de arranque de caja.
-*   **Cálculo Asíncrono en Dashboard (`GET /clientes/dashboard-stats`):** El backend suma automáticamente todos los ingresos registrados y los acumula a los valores preconfigurados, entregando el parámetro consolidado de `finanzas_globales`.
-*   **Representación Visual:** Implementación de un gráfico `BarChart` en el panel de control del cliente que grafica de manera interactiva el saldo total acumulado de cada institución bancaria en el momento, optimizando la visibilidad de cuentas.
+| Módulo / Archivo | Prefijo de Ruta | Responsabilidad Principal |
+| :--- | :--- | :--- |
+| `routes/auth.py` | `/auth` | Autenticación de usuarios, tokens JWT, roles y altas de operadores |
+| `routes/clientes.py` | `/clientes` | Núcleo de clientes, estados, pagos, aprovisionamiento OLT y facturación |
+| `routes/balance.py` | `/balance` | Consolidación contable de ingresos por bancos, caja chica y registro de egresos |
+| `routes/callcenter.py` | `/callcenter` | CRM de incidentes telefónicos, categorización y derivación técnica |
+| `routes/hoja_ruta.py` | `/hoja-ruta` | Despacho de personal de campo, cronograma de visitas y SLA de 24h |
+| `routes/asistencia.py` | `/asistencia` | Marcación biométrica/digital de ingreso y egreso de trabajadores |
+| `routes/backup.py` | `/backup` | Volcados SQL automáticos, descarga y restauración con validación de integridad |
+| `routes/whatsapp.py` | `/whatsapp` | Monitoreo del socket web, código QR y orquestación de campañas masivas |
+| `routes/extras.py` | `/extras` | Gestión paralela de clientes y cobranzas especiales |
+| `routes/bulk_activation.py`| `/bulk-activation` | Procesamiento en lote para activación de ONTs detectadas |
+| `routes/olt_tasks.py` | `/olt` | Envío asíncrono de comandos directos al chasis OLT |
+| `routes/discovery.py` | `/discovery` | Sondeo de equipos no configurados en puertos PON |
+| `routes/libreqos.py` | `/libreqos` | Sincronización con el motor de conformación de tráfico y colas FQ_CoDel |
+| `routes/caja.py` | `/caja` | Arqueo físico diario de efectivo en caja |
+| `rutas_configuraciones.py`| `/configuraciones`| Catálogo de Nodos, Puertos, Planes, Bancos y fondos de arranque financiero |
 
 ---
 
-## 🆕 10. Clasificación Inteligente de Datos (v1.3)
+## 7. Mantenimiento y Operación
 
-Se implementó una capa de Inteligencia Artificial (IA) capaz de procesar textos desestructurados o datos crudos semi-estructurados y clasificarlos automáticamente a los campos correspondientes de la base de datos de clientes:
+### Procedimiento de Sincronización de Base de Datos
+Si se introducen nuevos campos o modelos en `models.py`:
+```bash
+# Ejecutar el sincronizador automático
+python sync_db.py
+```
+Este script analiza las diferencias entre los metadatos de SQLAlchemy y las tablas en MySQL, ejecutando las sentencias `ALTER TABLE` necesarias sin afectar la información existente.
 
-### A. Endpoint `/clientes/parse-smart` (IA Inteligente)
-*   **Método:** `POST /clientes/parse-smart`
-*   **Payload:** `{"text": "texto crudo a interpretar"}`
-*   **Funcionamiento:**
-    1. Consulta dinámicamente la lista de Nodos, Parroquias y Planes de Internet vigentes en la base de datos.
-    2. Envía el texto a Claude (`claude-3-5-haiku-20241022`) junto con estas listas utilizando un prompt optimizado para extracción de entidades.
-    3. Normaliza automáticamente campos críticos:
-        *   **Cédula:** Elimina guiones y puntos, valida longitud, agrega ceros iniciales si es necesario.
-        *   **Teléfono:** Limpia formatos de celular.
-        *   **Booleans:** Detecta automáticamente si califica para tercera edad/discapacidad o si tiene IPTV activado.
-        *   **Fuzzy Mapping:** Mapea variaciones de texto (ej: "sayausi", "30 megas") al nombre exacto del Nodo o Plan registrado en la base de datos para evitar discrepancias.
-    4. Devuelve un objeto JSON estructurado con todos los campos listos para poblar el formulario del frontend.
+### Respaldo y Restauración de Emergencia
+Los respaldos se almacenan en el directorio `backups/` con formato de fecha y hora:
+*   **Creación manual por terminal:**
+    ```bash
+    mysqldump -u root -p opsatel > backups/backup_manual_$(date +%Y%m%d_%H%M%S).sql
+    ```
+*   **Restauración por API:** Disponible a través de `POST /backup/restaurar` subiendo el archivo `.sql` validado.
+
+---
+
+*Documento de especificación técnica del Backend Opsatel.*

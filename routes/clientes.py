@@ -1918,9 +1918,6 @@ def actualizar_datos_tecnicos(
         cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
         if not cliente:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
-        
-        # Log para depuración
-        print(f"DEBUG: Activando cliente {id}. MAC: {data.mac}, IP: {data.ip}, Puerto: {data.puerto}")
     
         # 1. Validar ID_PORT (per-port)
         if data.id_port:
