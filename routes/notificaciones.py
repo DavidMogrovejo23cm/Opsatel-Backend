@@ -10,52 +10,8 @@ from typing import List, Optional
 from datetime import datetime
 import models
 from database import get_db
-from .auth import get_current_user
 
 router = APIRouter(prefix="/notificaciones", tags=["notificaciones"])
-
-def _asegurar_tabla_notificaciones(db: Session):
-    """Verifica si la tabla está vacía y siembra cambios existentes en clientes activos para primer uso"""
-    try:
-        total = db.query(models.NotificacionCliente).count()
-        if total == 0:
-            clientes_activos = db.query(models.Cliente).filter(
-                func.lower(models.Cliente.estado) == "activo",
-                or_(
-                    (models.Cliente.comentarios.isnot(None)) & (models.Cliente.comentarios != ""),
-                    (models.Cliente.observaciones.isnot(None)) & (models.Cliente.observaciones != "")
-                )
-            ).order_by(models.Cliente.id.desc()).limit(20).all()
-
-            for c in clientes_activos:
-                if c.comentarios and str(c.comentarios).strip():
-                    db.add(models.NotificacionCliente(
-                        cliente_id=c.id,
-                        cliente_nombre=c.nombre or f"Cliente #{c.id}",
-                        cliente_ip=c.ip or "",
-                        campo="Comentario",
-                        valor_anterior="",
-                        valor_nuevo=str(c.comentarios).strip(),
-                        usuario="sistema",
-                        leido=False,
-                        fecha=datetime.utcnow()
-                    ))
-                if c.observaciones and str(c.observaciones).strip():
-                    db.add(models.NotificacionCliente(
-                        cliente_id=c.id,
-                        cliente_nombre=c.nombre or f"Cliente #{c.id}",
-                        cliente_ip=c.ip or "",
-                        campo="Observación",
-                        valor_anterior="",
-                        valor_nuevo=str(c.observaciones).strip(),
-                        usuario="sistema",
-                        leido=False,
-                        fecha=datetime.utcnow()
-                    ))
-            db.commit()
-    except Exception as e:
-        print(f"Aviso al sembrar notificaciones iniciales: {e}")
-        db.rollback()
 
 @router.get("/")
 @router.get("")
@@ -64,14 +20,11 @@ def listar_notificaciones(
     limit: int = Query(100, description="Límite de resultados"),
     db: Session = Depends(get_db)
 ):
-    _asegurar_tabla_notificaciones(db)
-    
     query = db.query(models.NotificacionCliente)
     if solo_no_leidas:
         query = query.filter(models.NotificacionCliente.leido == False)
         
     notificaciones = query.order_by(desc(models.NotificacionCliente.fecha)).limit(limit).all()
-    
     unread_count = db.query(models.NotificacionCliente).filter(models.NotificacionCliente.leido == False).count()
     
     return {
@@ -96,7 +49,6 @@ def listar_notificaciones(
 
 @router.get("/count")
 def contador_no_leidas(db: Session = Depends(get_db)):
-    _asegurar_tabla_notificaciones(db)
     count = db.query(models.NotificacionCliente).filter(models.NotificacionCliente.leido == False).count()
     return {"count": count}
 
