@@ -5,7 +5,6 @@
 @notice Developed with AI assistance.‍​‌​​​‌​​​‌‌​​​​‌​‌‌‌​‌‌​​‌‌​‌​​‌​‌‌​​‌​​​​‌​​​​​​‌​​‌‌​‌​‌‌​‌‌‌‌​‌‌​​‌‌‌​‌‌‌​​‌​​‌‌​‌‌‌‌​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​‌​‌​​‌‌​‌‌‌‌​​‌​​​​​​​‌​‌​​​​‌‌​​​‌‌​​‌​‌​​‌​​‌​​​​​​​‌‌​​‌​​​‌‌​​​​​​‌‌​​‌​​​‌‌​‌‌​​​‌​‌‌‌​​​‌​​​​​​‌​​​​​‌​‌‌​‌‌​​​‌‌​‌‌​​​​‌​​​​​​‌​‌​​‌​​‌‌​‌​​‌​‌‌​​‌‌‌​‌‌​‌​​​​‌‌‌​‌​​​‌‌‌​​‌‌​​‌​​​​​​‌​‌​​‌​​‌‌​​‌​‌​‌‌‌​​‌‌​‌‌​​‌​‌​‌‌‌​​‌​​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​​‌​​​​‌​‌‌‌​​​‌​​​​​​‌​​​‌​​​‌‌​​‌​‌​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​‌‌​​​‌‌​‌‌‌‌​‌‌‌​​​​​‌‌​​‌​‌​‌‌​​‌​​​​‌​​​​​​‌‌‌​‌‌‌​‌‌​‌​​‌​‌‌‌​‌​​​‌‌​‌​​​​​‌​​​​​​‌​​​​​‌​‌​​‌​​‌​​‌​​​​​​‌‌​​​​‌​‌‌‌​​‌‌​‌‌‌​​‌‌​‌‌​‌​​‌​‌‌‌​​‌‌​‌‌‌​‌​​​‌‌​​​​‌​‌‌​‌‌‌​​‌‌​​​‌‌​‌‌​​‌​‌​​‌​‌‌‌​​​‌​​​​​​‌​​​​‌‌​‌‌​‌‌‌‌​‌‌​‌‌‌​​‌‌‌​‌​​​‌‌​​​​‌​‌‌​​​‌‌​‌‌‌​‌​​​​‌‌‌​‌​​​‌​​​​​​‌‌​​‌​​​‌‌​‌‌​‌​‌‌​‌‌‌‌​‌‌​​‌‌‌​‌‌‌​​‌​​‌‌​‌‌‌‌​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​‌​‌​​‌‌​‌‌‌‌​​‌‌‌​​​​​‌‌​‌‌‌​‌​​​​​​​‌‌​​‌‌‌​‌‌​‌‌​‌​‌‌​​​​‌​‌‌​‌​​‌​‌‌​‌‌​​​​‌​‌‌‌​​‌‌​​​‌‌​‌‌​‌‌‌‌​‌‌​‌‌​‌​​‌​‌‌‌​​​‌​​​​​​‌​​​‌‌​​‌‌​‌‌‌‌​‌‌‌​​‌​​‌‌​​‌​‌​‌‌​‌‌‌​​‌‌‌​​‌‌​‌‌​‌​​‌​‌‌​​​‌‌​​‌​​​​​​‌​‌​​‌‌​‌‌​‌​​‌​‌‌​​‌‌‌​​‌‌‌​‌​​​‌​​​​​​‌‌​​​‌​​‌‌​​‌‌​​​‌‌​​‌​​​‌‌​‌‌​​‌‌​​‌​‌​‌‌​​‌​‌​​‌‌​​​​​​‌‌​​‌‌​​‌‌​​‌‌​​‌‌​‌​​​​‌‌​​​‌​​‌‌‌​​​​‌‌​​‌​​​​‌‌​‌​‌​‌‌​​‌​​​‌‌​​​‌‌‍
 @hash bf26ee033418d5dcd984ad8115334e7ce788cfb5d2bd456cf6e6ee21b877a762
 """
-from typing import Optional
 from database import engine
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
@@ -1720,8 +1719,6 @@ def actualizar_cliente_general(
     estado_prev = cliente.estado
     ip_prev = cliente.ip
     plan_prev = cliente.plan
-    comentarios_prev = cliente.comentarios
-    observaciones_prev = cliente.observaciones
 
     # Detectar cambio a estado Finiquito (Fantasma histórico)
     es_finiquito = data.estado and str(data.estado).strip().lower() == "finiquito"
@@ -1882,41 +1879,6 @@ def actualizar_cliente_general(
         except Exception as hr_ubi_err:
             logger.warning(f"Aviso al sincronizar ubicacion_cliente en HojaRuta: {hr_ubi_err}")
 
-    # Notificación de cambios en Comentario u Observación para clientes activos
-    es_activo = (str(cliente.estado or "").strip().lower() == "activo") or (data.estado and str(data.estado).strip().lower() == "activo")
-    if es_activo:
-        username_act = getattr(current_user, "username", "admin") if current_user else "admin"
-        if data.comentarios is not None:
-            old_c = str(comentarios_prev or "").strip()
-            new_c = str(data.comentarios or "").strip()
-            if old_c != new_c:
-                db.add(models.NotificacionCliente(
-                    cliente_id=cliente.id,
-                    cliente_nombre=cliente.nombre or f"Cliente #{cliente.id}",
-                    cliente_ip=cliente.ip or "",
-                    campo="Comentario",
-                    valor_anterior=old_c,
-                    valor_nuevo=new_c,
-                    usuario=username_act,
-                    leido=False,
-                    fecha=datetime.utcnow()
-                ))
-        if data.observaciones is not None:
-            old_o = str(observaciones_prev or "").strip()
-            new_o = str(data.observaciones or "").strip()
-            if old_o != new_o:
-                db.add(models.NotificacionCliente(
-                    cliente_id=cliente.id,
-                    cliente_nombre=cliente.nombre or f"Cliente #{cliente.id}",
-                    cliente_ip=cliente.ip or "",
-                    campo="Observación",
-                    valor_anterior=old_o,
-                    valor_nuevo=new_o,
-                    usuario=username_act,
-                    leido=False,
-                    fecha=datetime.utcnow()
-                ))
-
     _stats_cache = None
     db.commit()
 
@@ -2067,18 +2029,11 @@ def actualizar_datos_tecnicos(
 
 
 @router.patch("/{id}/administracion", dependencies=[Depends(require_role(["administrador", "secretario"]))])
-def actualizar_administracion(
-    id: int, 
-    data: schemas.ClienteUpdateAdmin, 
-    db: Session = Depends(get_db),
-    current_user: Optional[models.Usuario] = Depends(get_current_user)
-):
+def actualizar_administracion(id: int, data: schemas.ClienteUpdateAdmin, db: Session = Depends(get_db)):
     cliente = db.query(models.Cliente).filter(models.Cliente.id == id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     
-    comentarios_prev = cliente.comentarios
-    observaciones_prev = cliente.observaciones
     was_mantenimiento = getattr(cliente, 'mantenimiento', False)
     was_custom_price = getattr(cliente, 'precio_plan_especial', None) is not None and float(cliente.precio_plan_especial or 0) > 0
 
@@ -2109,42 +2064,6 @@ def actualizar_administracion(
 
     sync_cliente_balances(cliente, db)
     verificar_y_reactivar_cliente_por_pago_completo(cliente, db, motivo="ACTUALIZAR_ADMINISTRACION")
-
-    # Notificación de cambios en Comentario u Observación para clientes activos
-    es_activo = (str(cliente.estado or "").strip().lower() == "activo") or (data.estado and str(data.estado).strip().lower() == "activo")
-    if es_activo:
-        username_act = getattr(current_user, "username", "admin") if current_user else "admin"
-        if data.comentarios is not None:
-            old_c = str(comentarios_prev or "").strip()
-            new_c = str(data.comentarios or "").strip()
-            if old_c != new_c:
-                db.add(models.NotificacionCliente(
-                    cliente_id=cliente.id,
-                    cliente_nombre=cliente.nombre or f"Cliente #{cliente.id}",
-                    cliente_ip=cliente.ip or "",
-                    campo="Comentario",
-                    valor_anterior=old_c,
-                    valor_nuevo=new_c,
-                    usuario=username_act,
-                    leido=False,
-                    fecha=datetime.utcnow()
-                ))
-        if data.observaciones is not None:
-            old_o = str(observaciones_prev or "").strip()
-            new_o = str(data.observaciones or "").strip()
-            if old_o != new_o:
-                db.add(models.NotificacionCliente(
-                    cliente_id=cliente.id,
-                    cliente_nombre=cliente.nombre or f"Cliente #{cliente.id}",
-                    cliente_ip=cliente.ip or "",
-                    campo="Observación",
-                    valor_anterior=old_o,
-                    valor_nuevo=new_o,
-                    usuario=username_act,
-                    leido=False,
-                    fecha=datetime.utcnow()
-                ))
-
     db.commit()
     return {"message": "Datos de administración actualizados"}
 
