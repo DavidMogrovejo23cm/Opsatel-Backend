@@ -833,3 +833,18 @@ class MovimientoInterno(Base):
     mes = Column(String(20), nullable=False, index=True)# YYYY-MM
     observacion = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class NotificacionCliente(Base):
+    """Registro de notificaciones de cambios en comentarios u observaciones de clientes activos"""
+    __tablename__ = "notificaciones_clientes"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    cliente_id = Column(Integer, index=True, nullable=False)
+    cliente_nombre = Column(String(255), nullable=True)
+    cliente_ip = Column(String(50), nullable=True)
+    campo = Column(String(50), nullable=False)  # "Comentario" o "Observación"
+    valor_anterior = Column(Text, nullable=True)
+    valor_nuevo = Column(Text, nullable=True)
+    usuario = Column(String(100), nullable=True, default="sistema")
+    leido = Column(Boolean, default=False, index=True)
+    fecha = Column(DateTime, default=datetime.datetime.utcnow, index=True)
