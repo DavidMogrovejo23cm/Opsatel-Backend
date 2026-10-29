@@ -10,6 +10,8 @@ import os
 import re
 import json
 import gzip
+import zipfile
+import shutil
 import datetime
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -31,7 +33,9 @@ logger = logging.getLogger("backup")
 router = APIRouter(prefix="/backup", tags=["backup"])
 
 BACKUP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backups"))
+UPLOADS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploads"))
 os.makedirs(BACKUP_DIR, exist_ok=True)
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 
 def format_sql_value(val) -> str:
     """Formatea valores de Python al estándar exacto de MySQL/SQL."""
@@ -296,58 +300,211 @@ def stream_sqlite_dump() -> Generator[str, None, None]:
             pass
 
 
-@router.get("/export-sql")
-def exportar_backup_sql():
+def generar_paquete_backup_zip(zip_filepath: str, motivo: str = "manual") -> dict:
     """
-    Genera y descarga en tiempo real un archivo .sql con el volcado completo e íntegro
-    de toda la base de datos (estructura de tablas, índices, llaves y datos exactos).
+    Genera un paquete ZIP integral (.zip) que contiene:
+    1. database.sql (volcado completo con estructura y datos exactos de la BD)
+    2. uploads/ (todas las imágenes de cédulas, dispositivos, fotos de fachadas, pagos, etc.)
+    3. manifest.json (metadatos del respaldo)
     """
+    os.makedirs(os.path.dirname(zip_filepath), exist_ok=True)
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    temp_sql_path = f"{zip_filepath}.tmp.sql"
+    
+    total_img_count = 0
+    total_img_bytes = 0
+    dialect = engine.dialect.name
+    
     try:
-        now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"backup_opsatel_{now_str}.sql"
-
-        if engine.dialect.name == "sqlite":
+        # 1. Escribir volcado SQL a archivo temporal sin saturar la RAM
+        if dialect == "sqlite":
             generator = stream_sqlite_dump()
         else:
             generator = stream_mysql_dump()
+            
+        with open(temp_sql_path, "w", encoding="utf-8") as f_sql:
+            for chunk in generator:
+                f_sql.write(chunk)
+                
+        sql_size_bytes = os.path.getsize(temp_sql_path)
+        
+        # 2. Empaquetar en archivo ZIP
+        with zipfile.ZipFile(zip_filepath, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zip_out:
+            # 2a. Guardar database.sql
+            zip_out.write(temp_sql_path, arcname="database.sql")
+            
+            # 2b. Guardar toda la carpeta uploads/ recursivamente (imágenes de cédulas, dispositivos, etc.)
+            if os.path.exists(UPLOADS_DIR):
+                for root, dirs, files in os.walk(UPLOADS_DIR):
+                    for file in files:
+                        file_full = os.path.join(root, file)
+                        if os.path.isfile(file_full):
+                            rel = os.path.relpath(file_full, UPLOADS_DIR)
+                            arcname = f"uploads/{rel}".replace("\\", "/")
+                            zip_out.write(file_full, arcname=arcname)
+                            total_img_count += 1
+                            try:
+                                total_img_bytes += os.path.getsize(file_full)
+                            except Exception:
+                                pass
+                                
+            # 2c. Guardar manifest.json
+            manifest = {
+                "sistema": "Opsatel ISP Management System",
+                "version": "2.0",
+                "tipo_respaldo": "completo_zip",
+                "fecha": now_str,
+                "motivo": motivo,
+                "motor_db": dialect,
+                "sql_size_bytes": sql_size_bytes,
+                "total_imagenes_uploads": total_img_count,
+                "uploads_size_bytes": total_img_bytes
+            }
+            zip_out.writestr("manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
+            
+        final_zip_size = os.path.getsize(zip_filepath)
+        size_mb = round(final_zip_size / (1024 * 1024), 2)
+        
+        return {
+            "success": True,
+            "archivo": os.path.basename(zip_filepath),
+            "tamano_mb": size_mb,
+            "tamano_bytes": final_zip_size,
+            "total_imagenes": total_img_count,
+            "sql_size_mb": round(sql_size_bytes / (1024 * 1024), 2),
+            "fecha": now_str
+        }
+    finally:
+        # Limpiar archivo SQL temporal
+        if os.path.exists(temp_sql_path):
+            try:
+                os.remove(temp_sql_path)
+            except Exception:
+                pass
 
-        return StreamingResponse(
-            generator,
-            media_type="application/sql",
+
+@router.get("/export-zip")
+@router.get("/export-sql")
+def exportar_backup_completo():
+    """
+    Genera y descarga en tiempo real un paquete ZIP completo (.zip)
+    con el volcado íntegro de la base de datos (database.sql) y todas las imágenes (uploads/).
+    """
+    try:
+        now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"backup_opsatel_{now_str}.zip"
+        filepath = os.path.join(BACKUP_DIR, filename)
+
+        info = generar_paquete_backup_zip(filepath, motivo="descarga_manual_zip")
+
+        # Limpiar respaldos viejos en disco
+        cfg = get_config()
+        retencion = int(cfg.get("backup_auto_retencion_dias", 30))
+        limpiar_respaldos_antiguos(dias_retencion=retencion, max_archivos=retencion)
+
+        return FileResponse(
+            filepath,
+            media_type="application/zip",
+            filename=filename,
             headers={
                 "Content-Disposition": f"attachment; filename={filename}",
                 "Cache-Control": "no-cache",
-                "X-Opsatel-Backup": "Full-Database-SQL"
+                "X-Opsatel-Backup": "Full-Package-ZIP",
+                "X-Opsatel-Images": str(info.get("total_imagenes", 0))
             }
         )
     except Exception as e:
-        logger.error(f"Error generando backup SQL: {e}")
+        logger.error(f"Error generando backup ZIP: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al generar el respaldo SQL: {str(e)}"
+            detail=f"Error al generar el respaldo completo ZIP: {str(e)}"
         )
 
 
+@router.post("/import-zip")
 @router.post("/import-sql")
-async def importar_backup_sql(file: UploadFile = File(...)):
+async def importar_backup_completo(file: UploadFile = File(...)):
     """
-    Restaura la base de datos a partir de un archivo .sql completo.
+    Restaura el sistema completo a partir de un archivo .zip (base de datos + imágenes)
+    o a partir de un archivo .sql clásico (retrocompatibilidad).
     Deshabilita temporalmente verificaciones de claves foráneas para recrear exactamente
     todas las tablas y registros sin pérdidas ni errores de integridad.
     """
-    if not file.filename.lower().endswith(".sql"):
+    filename = file.filename or ""
+    filename_lower = filename.lower()
+
+    if not (filename_lower.endswith(".zip") or filename_lower.endswith(".sql")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El archivo proporcionado debe ser un archivo de respaldo SQL con extensión .sql"
+            detail="El archivo proporcionado debe ser un archivo de respaldo con extensión .zip o .sql"
         )
 
+    now_stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    clean_upload_name = os.path.basename(filename)
+    temp_upload_path = os.path.join(BACKUP_DIR, f"temp_upload_{now_stamp}_{clean_upload_name}")
+
     try:
-        content_bytes = await file.read()
-        # Intentar decodificar con utf-8, con fallback a latin-1 para compatibilidad total
-        try:
-            sql_text = content_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            sql_text = content_bytes.decode("latin-1")
+        # Guardar archivo subido en disco temporalmente para no agotar la RAM
+        with open(temp_upload_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        sql_text = ""
+        imagenes_restauradas = 0
+        es_zip = zipfile.is_zipfile(temp_upload_path) or filename_lower.endswith(".zip")
+
+        if es_zip:
+            with zipfile.ZipFile(temp_upload_path, "r") as zip_in:
+                # 1. Localizar archivo SQL dentro del ZIP
+                sql_candidates = [
+                    name for name in zip_in.namelist()
+                    if name.lower().endswith(".sql") and not name.startswith("__MACOSX")
+                ]
+                if not sql_candidates:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="El archivo .zip no contiene ningún volcado de base de datos (.sql) válido."
+                    )
+
+                # Priorizar 'database.sql' si existe, o el primer archivo .sql encontrado
+                sql_name = "database.sql" if "database.sql" in sql_candidates else sql_candidates[0]
+                sql_bytes = zip_in.read(sql_name)
+                try:
+                    sql_text = sql_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    sql_text = sql_bytes.decode("latin-1")
+
+                # 2. Restaurar imágenes y archivos dentro de UPLOADS_DIR
+                for member in zip_in.infolist():
+                    if member.is_dir():
+                        continue
+                    m_name = member.filename.replace("\\", "/")
+                    if m_name.startswith("__MACOSX") or m_name.lower().endswith(".sql") or m_name == "manifest.json":
+                        continue
+
+                    # Obtener la ruta relativa limpia dentro de uploads
+                    if m_name.startswith("uploads/"):
+                        rel_sub = m_name[len("uploads/"):]
+                    else:
+                        rel_sub = m_name
+
+                    # Prevenir ataques de Zip Slip (path traversal)
+                    target_path = os.path.abspath(os.path.join(UPLOADS_DIR, rel_sub))
+                    if not target_path.startswith(UPLOADS_DIR):
+                        logger.warning(f"Intento de path traversal ignorado en zip: {member.filename}")
+                        continue
+
+                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                    with zip_in.open(member) as src, open(target_path, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    imagenes_restauradas += 1
+        else:
+            # Archivo .sql tradicional plano
+            with open(temp_upload_path, "rb") as f_sql_in:
+                content_bytes = f_sql_in.read()
+                try:
+                    sql_text = content_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    sql_text = content_bytes.decode("latin-1")
 
         # Normalizar colaciones de MySQL 8.0 incompatibles con MariaDB / MySQL 5.7
         sql_text = re.sub(r'utf8mb4_0900_[a-z0-9_]+', 'utf8mb4_unicode_ci', sql_text, flags=re.IGNORECASE)
@@ -356,7 +513,7 @@ async def importar_backup_sql(file: UploadFile = File(...)):
         if not statements:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El archivo .sql no contiene sentencias SQL válidas para ejecutar."
+                detail="El archivo de volcado SQL no contiene sentencias válidas para ejecutar."
             )
 
         raw_conn = engine.raw_connection()
@@ -374,24 +531,18 @@ async def importar_backup_sql(file: UploadFile = File(...)):
 
             for stmt in statements:
                 clean = stmt.strip()
-                if not clean:
-                    continue
-
-                # Omitir comentarios puros si los hubiera
-                if clean.startswith("--") or clean.startswith("#"):
+                if not clean or clean.startswith("--") or clean.startswith("#"):
                     continue
 
                 try:
                     cursor.execute(clean)
                     executed_count += 1
 
-                    # Extraer nombre de tabla para estadísticas
                     match = re.search(r'(?:CREATE\s+TABLE|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|INSERT\s+INTO|ALTER\s+TABLE)\s+[`"]?([a-zA-Z0-9_]+)[`"]?', clean, flags=re.IGNORECASE)
                     if match:
                         tables_affected.add(match.group(1))
                 except Exception as stmt_err:
                     logger.warning(f"Aviso ejecutando sentencia [{clean[:60]}...]: {stmt_err}")
-                    # Continuar con la siguiente sentencia para no abortar si es un setting no compatible
 
             # Restaurar chequeos de claves foráneas
             if engine.dialect.name != "sqlite":
@@ -408,13 +559,21 @@ async def importar_backup_sql(file: UploadFile = File(...)):
             except Exception:
                 pass
 
+        tipo_msg = (
+            f"Respaldo completo (.zip) restaurado con éxito. Se ejecutaron {executed_count} sentencias SQL ({len(tables_affected)} tablas) y se restauraron {imagenes_restauradas} imágenes/archivos."
+            if es_zip else
+            f"Base de datos (.sql) restaurada exitosamente desde '{file.filename}'. Se ejecutaron {executed_count} sentencias SQL ({len(tables_affected)} tablas)."
+        )
+
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
                 "success": True,
-                "message": f"Base de datos restaurada exitosamente desde '{file.filename}'.",
+                "message": tipo_msg,
                 "total_sentencias": executed_count,
                 "tablas_afectadas": len(tables_affected),
+                "imagenes_restauradas": imagenes_restauradas,
+                "tipo_archivo": "zip" if es_zip else "sql",
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         )
@@ -422,11 +581,18 @@ async def importar_backup_sql(file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error restaurando base de datos: {e}")
+        logger.error(f"Error restaurando respaldo: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error durante la restauración de la base de datos: {str(e)}"
+            detail=f"Error durante la restauración del respaldo: {str(e)}"
         )
+    finally:
+        # Limpiar archivo temporal de subida
+        if os.path.exists(temp_upload_path):
+            try:
+                os.remove(temp_upload_path)
+            except Exception:
+                pass
 
 
 @router.get("/info")
@@ -516,7 +682,7 @@ def enviar_alerta_telegram(bot_token: str, chat_id: str, mensaje: str, filepath:
         doc_sent = False
         doc_error = None
         
-        # Enviar archivo .sql si existe
+        # Enviar archivo de respaldo (.zip o .sql) si existe
         if filepath and os.path.exists(filepath):
             url_doc = f"https://api.telegram.org/bot{bot_token}/sendDocument"
             filename = os.path.basename(filepath)
@@ -525,12 +691,16 @@ def enviar_alerta_telegram(bot_token: str, chat_id: str, mensaje: str, filepath:
             # Límite oficial de Telegram Bot API es 50MB (usamos 45MB como margen de seguridad)
             if filesize <= 45 * 1024 * 1024:
                 try:
+                    mime_type = "application/zip" if filename.lower().endswith(".zip") else (
+                        "application/gzip" if filename.lower().endswith(".gz") else "application/sql"
+                    )
+                    caption_txt = f"🗄️ Copia de Respaldo Completa (BD + Fotos): {filename}" if filename.lower().endswith(".zip") else f"🗄️ Copia de Respaldo Base de Datos: {filename}"
                     with open(filepath, "rb") as f_doc:
                         resp_doc = requests.post(
                             url_doc,
-                            data={"chat_id": chat_id, "caption": f"🗄️ Copia de Respaldo Base de Datos: {filename}"},
-                            files={"document": (filename, f_doc, "application/sql")},
-                            timeout=120
+                            data={"chat_id": chat_id, "caption": caption_txt},
+                            files={"document": (filename, f_doc, mime_type)},
+                            timeout=180
                         )
                         if resp_doc.status_code == 200:
                             doc_sent = True
@@ -570,8 +740,14 @@ def enviar_alerta_email(smtp_host: str, smtp_port: int, smtp_user: str, smtp_pas
             filesize = os.path.getsize(filepath)
             filename = os.path.basename(filepath)
             
-            # Si pesa entre 3MB y 40MB, comprimirlo con gzip para que el email sea ligero
-            if filesize > 3 * 1024 * 1024 and filesize <= 40 * 1024 * 1024:
+            if filename.lower().endswith(".zip") and filesize <= 25 * 1024 * 1024:
+                with open(filepath, "rb") as f_in:
+                    part = MIMEBase("application", "zip")
+                    part.set_payload(f_in.read())
+                    encoders.encode_base64(part)
+                    part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+                    msg.attach(part)
+            elif filesize > 3 * 1024 * 1024 and filesize <= 40 * 1024 * 1024:
                 try:
                     with open(filepath, "rb") as f_in:
                         gz_data = gzip.compress(f_in.read(), compresslevel=6)
@@ -620,7 +796,7 @@ def limpiar_respaldos_antiguos(dias_retencion: int = 30, max_archivos: int = 30)
     
     archivos = []
     for f in os.listdir(BACKUP_DIR):
-        if f.endswith(".sql") or f.endswith(".sql.gz"):
+        if f.endswith(".zip") or f.endswith(".sql") or f.endswith(".sql.gz"):
             p = os.path.join(BACKUP_DIR, f)
             if os.path.isfile(p):
                 mtime = datetime.datetime.fromtimestamp(os.path.getmtime(p))
@@ -646,29 +822,22 @@ def limpiar_respaldos_antiguos(dias_retencion: int = 30, max_archivos: int = 30)
 
 def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
     """
-    Genera el archivo .sql en disco, aplica política de rotación y envía notificaciones configuradas.
+    Genera el paquete completo .zip (Base de datos + Fotos) en disco,
+    aplica política de rotación y envía notificaciones configuradas (Telegram / Correo).
     """
     now = datetime.datetime.now()
     stamp = now.strftime("%Y%m%d_%H%M%S")
-    filename = f"backup_opsatel_{stamp}.sql"
+    filename = f"backup_opsatel_{stamp}.zip"
     filepath = os.path.join(BACKUP_DIR, filename)
     
     cfg = get_config()
     retencion = int(cfg.get("backup_auto_retencion_dias", 30))
     
     try:
-        # 1. Generar y escribir el volcado SQL directamente a disco
-        if engine.dialect.name == "sqlite":
-            generator = stream_sqlite_dump()
-        else:
-            generator = stream_mysql_dump()
-            
-        with open(filepath, "w", encoding="utf-8") as f_out:
-            for chunk in generator:
-                f_out.write(chunk)
-                
-        size_bytes = os.path.getsize(filepath)
-        size_mb = round(size_bytes / (1024 * 1024), 2)
+        # 1. Generar el paquete ZIP completo con DB y uploads/
+        res_info = generar_paquete_backup_zip(filepath, motivo=motivo)
+        size_mb = res_info.get("tamano_mb", 0)
+        total_img = res_info.get("total_imagenes", 0)
         
         # 2. Aplicar rotación y limpieza de respaldos viejos
         archivos_depurados = limpiar_respaldos_antiguos(dias_retencion=retencion, max_archivos=retencion)
@@ -680,11 +849,12 @@ def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
         tg_habilitado = bool(cfg.get("backup_telegram_enabled", False)) or bool(token and chat_id)
         if tg_habilitado and token and chat_id:
             texto_tg = (
-                f"🛡️ *OPSATEL ISP - RESPALDO AUTOMÁTICO*\n"
+                f"🛡️ *OPSATEL ISP - RESPALDO AUTOMÁTICO COMPLETO*\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"✅ *Estado:* Generado exitosamente\n"
+                f"✅ *Estado:* Generado exitosamente (.ZIP)\n"
                 f"📁 *Archivo:* `{filename}`\n"
                 f"📦 *Tamaño:* `{size_mb} MB`\n"
+                f"🖼️ *Fotos respaldadas:* `{total_img}`\n"
                 f"🕒 *Fecha:* `{now.strftime('%Y-%m-%d %H:%M:%S')}`\n"
                 f"🏷️ *Motivo:* `{motivo.capitalize()}`\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -701,12 +871,13 @@ def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
             pwd = cfg.get("backup_smtp_password", "").strip()
             dest = cfg.get("backup_email_destinatario", "").strip()
             if host and user and dest:
-                asunto = f"[OPSATEL ISP] Respaldo de Base de Datos - {now.strftime('%Y-%m-%d %H:%M')}"
+                asunto = f"[OPSATEL ISP] Respaldo Completo de Base de Datos y Fotos - {now.strftime('%Y-%m-%d %H:%M')}"
                 cuerpo = (
-                    f"Respaldo automático de la base de datos de Opsatel ISP generado exitosamente.\n\n"
+                    f"Respaldo automático completo de Opsatel ISP generado exitosamente.\n\n"
                     f"Detalles:\n"
-                    f"- Archivo: {filename}\n"
+                    f"- Archivo: {filename} (.zip)\n"
                     f"- Tamaño: {size_mb} MB\n"
+                    f"- Imágenes respaldadas: {total_img}\n"
                     f"- Fecha: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
                     f"- Motivo: {motivo}\n"
                     f"- Retención configurada: {retencion} días\n\n"
@@ -720,6 +891,7 @@ def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
             "fecha": now.strftime("%Y-%m-%d %H:%M:%S"),
             "archivo": filename,
             "tamano_mb": size_mb,
+            "total_imagenes": total_img,
             "estado": "exitoso",
             "motivo": motivo
         }
@@ -731,6 +903,7 @@ def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
             "fecha": now.strftime("%Y-%m-%d %H:%M:%S"),
             "archivo": filename,
             "tamano_mb": size_mb,
+            "total_imagenes": total_img,
             "motivo": motivo,
             "canal": "Telegram" if cfg.get("backup_telegram_enabled", False) else "Servidor Local",
             "destinatario_id": tg_dest if cfg.get("backup_telegram_enabled", False) else "Local",
@@ -751,14 +924,17 @@ def ejecutar_proceso_backup_automatico(motivo: str = "programado") -> dict:
         
         return {
             "success": True,
-            "mensaje": f"Respaldo '{filename}' ({size_mb} MB) generado exitosamente en el servidor.",
+            "mensaje": f"Respaldo completo '{filename}' ({size_mb} MB, {total_img} fotos) generado exitosamente en el servidor.",
             "archivo": filename,
             "tamano_mb": size_mb,
+            "total_imagenes": total_img,
             "fecha": now.strftime("%Y-%m-%d %H:%M:%S"),
             "archivos_depurados": archivos_depurados,
             "telegram": telegram_status,
             "email": email_status
         }
+        
+
         
     except Exception as e:
         logger.error(f"Error generando respaldo automático: {e}")
@@ -985,18 +1161,20 @@ def listar_archivos_backup():
         
     archivos = []
     for f in os.listdir(BACKUP_DIR):
-        if f.endswith(".sql") or f.endswith(".sql.gz"):
+        if f.endswith(".zip") or f.endswith(".sql") or f.endswith(".sql.gz"):
             p = os.path.join(BACKUP_DIR, f)
             if os.path.isfile(p):
                 stat = os.stat(p)
                 mtime = datetime.datetime.fromtimestamp(stat.st_mtime)
                 size_mb = round(stat.st_size / (1024 * 1024), 2)
+                tipo = "ZIP (BD + Fotos)" if f.endswith(".zip") else "SQL (Solo BD)"
                 archivos.append({
                     "nombre": f,
                     "tamano_mb": size_mb,
                     "tamano_bytes": stat.st_size,
                     "fecha": mtime.strftime("%Y-%m-%d %H:%M:%S"),
-                    "mtime_timestamp": stat.st_mtime
+                    "mtime_timestamp": stat.st_mtime,
+                    "tipo": tipo
                 })
                 
     archivos.sort(key=lambda x: x["mtime_timestamp"], reverse=True)
@@ -1007,14 +1185,20 @@ def listar_archivos_backup():
 def descargar_archivo_backup(filename: str):
     """Descarga al navegador un archivo de respaldo específico almacenado en el servidor."""
     clean_name = os.path.basename(filename)
-    if not (clean_name.endswith(".sql") or clean_name.endswith(".sql.gz")):
+    if not (clean_name.endswith(".zip") or clean_name.endswith(".sql") or clean_name.endswith(".sql.gz")):
         raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
         
     filepath = os.path.join(BACKUP_DIR, clean_name)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="El archivo de respaldo solicitado no existe en el servidor.")
         
-    media_type = "application/gzip" if clean_name.endswith(".gz") else "application/sql"
+    if clean_name.endswith(".zip"):
+        media_type = "application/zip"
+    elif clean_name.endswith(".gz"):
+        media_type = "application/gzip"
+    else:
+        media_type = "application/sql"
+
     return FileResponse(
         filepath,
         filename=clean_name,
@@ -1027,7 +1211,7 @@ def descargar_archivo_backup(filename: str):
 def eliminar_archivo_backup(filename: str):
     """Elimina permanentemente un archivo de respaldo del servidor."""
     clean_name = os.path.basename(filename)
-    if not (clean_name.endswith(".sql") or clean_name.endswith(".sql.gz")):
+    if not (clean_name.endswith(".zip") or clean_name.endswith(".sql") or clean_name.endswith(".sql.gz")):
         raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
         
     filepath = os.path.join(BACKUP_DIR, clean_name)
