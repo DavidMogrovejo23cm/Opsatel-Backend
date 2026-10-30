@@ -18,7 +18,7 @@ import whatsapp_service
 import requests
 import time
 import random
-from typing import Optional
+from typing import Optional, List, Dict, Union
 import urllib.parse
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
@@ -264,6 +264,38 @@ def registrar_mensaje_chat(db: Session, numero: str, rol: str, mensaje: str, cli
 CANCELLED_DIFUSIONES = set()
 GLOBAL_CANCEL_REQUESTED = False
 
+def extract_port_number(val: Optional[str]) -> Optional[str]:
+    if not val:
+        return None
+    s = str(val).strip()
+    if '/' in s:
+        parts = [p.strip() for p in s.split('/') if p.strip()]
+        if parts:
+            m = re.search(r'\d+', parts[-1])
+            return m.group() if m else None
+    m = re.search(r'\d+', s)
+    return m.group() if m else None
+
+def matches_puerto(cliente_puerto: Optional[str], selected_puertos: List[str]) -> bool:
+    if not selected_puertos:
+        return True
+    if not cliente_puerto:
+        return False
+    c_str = str(cliente_puerto).strip().lower()
+    c_num = extract_port_number(c_str)
+    
+    for sp in selected_puertos:
+        s_str = str(sp).strip().lower()
+        if c_str == s_str:
+            return True
+        s_num = extract_port_number(s_str)
+        if s_num is not None and c_num is not None:
+            if s_num == c_num:
+                return True
+        elif s_str in c_str or c_str in s_str:
+            return True
+    return False
+
 def send_global_broadcast_task(
     mensaje: str,
     nodo: Optional[str],
@@ -277,7 +309,8 @@ def send_global_broadcast_task(
     desde_id: Optional[int] = None,
     hasta_id: Optional[int] = None,
     limite_mensajes: Optional[int] = None,
-    difusion_id: Optional[int] = None
+    difusion_id: Optional[int] = None,
+    puertos: Optional[List[str]] = None
 ):
     global GLOBAL_CANCEL_REQUESTED
     db = db_session_factory()
@@ -347,6 +380,22 @@ def send_global_broadcast_task(
         else:
             nodo_label = "Todos los nodos"
 
+        # Filtro de Puertos
+        puertos_clean = [str(p).strip() for p in puertos if str(p).strip()] if puertos else []
+        if puertos_clean:
+            puerto_conds = []
+            for p in puertos_clean:
+                p_str = str(p).strip()
+                puerto_conds.append(models.Cliente.puerto.ilike(f"%{p_str}%"))
+                p_num = extract_port_number(p_str)
+                if p_num:
+                    puerto_conds.append(models.Cliente.puerto == p_num)
+                    puerto_conds.append(models.Cliente.puerto.ilike(f"%puerto {p_num}%"))
+                    puerto_conds.append(models.Cliente.puerto.ilike(f"%/{p_num}"))
+                    puerto_conds.append(models.Cliente.puerto.ilike(f"%/{p_num}/%"))
+            if puerto_conds:
+                query = query.filter(or_(*puerto_conds))
+
         # Filtro por ID inicial (Continuar desde ID X)
         if desde_id is not None and int(desde_id) > 0:
             query = query.filter(models.Cliente.id >= int(desde_id))
@@ -368,7 +417,8 @@ def send_global_broadcast_task(
         if limite_mensajes and int(limite_mensajes) > 0:
             rango_info += f" [Límite: {limite_mensajes}]"
 
-        alcance_label = f"{estado_label} ({nodo_label}){rango_info}".strip()
+        puertos_info = f" | Puertos: {', '.join(puertos_clean)}" if puertos_clean else ""
+        alcance_label = f"{estado_label} ({nodo_label}{puertos_info}){rango_info}".strip()
         # Parámetros de pausas y lotes
         delay_a = float(delay_min) if delay_min and float(delay_min) >= 1.0 else 25.0
         delay_b = float(delay_max) if delay_max and float(delay_max) >= delay_a else max(delay_a, 45.0)
@@ -386,6 +436,8 @@ def send_global_broadcast_task(
             if not c or not c.celular:
                 continue
             if c.id in seen_ids:
+                continue
+            if puertos_clean and not matches_puerto(c.puerto, puertos_clean):
                 continue
 
             num_principal = whatsapp_service.format_whatsapp_number(c.celular)
@@ -1341,7 +1393,16 @@ def enviar_whatsapp_global(
         
         estado_label = (payload.estado or "ACTIVO").strip().upper()
         nodo_label = payload.nodo.strip() if payload.nodo and str(payload.nodo).strip() and str(payload.nodo).lower() not in ["todos", "all"] else "Todos los nodos"
-        alcance_est = f"Clientes {estado_label} ({nodo_label})"
+        
+        puertos_list = None
+        if payload.puertos:
+            if isinstance(payload.puertos, list):
+                puertos_list = [str(p).strip() for p in payload.puertos if str(p).strip()]
+            elif isinstance(payload.puertos, str):
+                puertos_list = [p.strip() for p in payload.puertos.split(',') if p.strip()]
+
+        puertos_label = f" | Puertos: {', '.join(puertos_list)}" if puertos_list else ""
+        alcance_est = f"Clientes {estado_label} ({nodo_label}{puertos_label})"
         
         dif_reg = models.WhatsAppDifusionHistorial(
             tipo="difusion_masiva",
@@ -1378,7 +1439,8 @@ def enviar_whatsapp_global(
         payload.desde_id,
         payload.hasta_id,
         payload.limite_mensajes,
-        difusion_id
+        difusion_id,
+        puertos_list
     )
     
     msg_detalle = "Difusión masiva iniciada en segundo plano con protección anti-bloqueo."
@@ -1392,7 +1454,7 @@ def enviar_whatsapp_global(
     }
 
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict, Union
 import urllib.parse
 
 class WhatsAppWebhookPayload(BaseModel):

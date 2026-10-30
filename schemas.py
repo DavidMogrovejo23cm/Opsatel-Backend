@@ -789,6 +789,7 @@ class WhatsAppGlobalSend(BaseModel):
     desde_id: Optional[int] = None
     hasta_id: Optional[int] = None
     limite_mensajes: Optional[int] = None
+    puertos: Optional[Union[List[str], str]] = None
 
 class WhatsAppAdministradorCreate(BaseModel):
     numero: str
