@@ -689,12 +689,14 @@ def programar_whatsapp(
         # Guardar configuración programada
         filtro_clientes = payload.filtro_clientes or "todos"
         desde_cid = payload.desde_cliente_id if (payload.desde_cliente_id and int(payload.desde_cliente_id) > 0) else None
+        nodo_val = payload.nodo.strip() if payload.nodo and str(payload.nodo).strip() and str(payload.nodo).lower() not in ["todos", "all", "todos los nodos"] else None
         config = models.WhatsAppConfiguracion(
             hora_programada=hora,
             mensaje_programado=mensaje,
             activo=True,
             enviar_a_todos=(filtro_clientes == "todos"),
             filtro_clientes=filtro_clientes,
+            nodo=nodo_val,
             fecha_programada=fecha_obj,
             recurrencia=recurrencia,
             desde_cliente_id=desde_cid,
@@ -710,6 +712,8 @@ def programar_whatsapp(
         elif fecha:
             msg_resp += f" el día {fecha}"
             
+        if nodo_val:
+            msg_resp += f" (Nodo: {nodo_val})"
         if desde_cid:
             msg_resp += f" (Iniciando desde Cliente ID #{desde_cid})"
             
@@ -781,6 +785,7 @@ def listar_configuraciones(db: Session = Depends(get_db)):
                 "activo": c.activo,
                 "enviar_a_todos": c.enviar_a_todos,
                 "filtro_clientes": getattr(c, 'filtro_clientes', 'todos') or 'todos',
+                "nodo": getattr(c, 'nodo', None),
                 "recurrencia": getattr(c, 'recurrencia', 'diario') or 'diario',
                 "dia_mes": dia_m,
                 "fecha": fecha_str,
@@ -811,6 +816,7 @@ def obtener_configuracion(db: Session = Depends(get_db)):
             "mensaje": config.mensaje_programado,
             "enviar_a_todos": config.enviar_a_todos,
             "filtro_clientes": getattr(config, 'filtro_clientes', 'todos') or 'todos',
+            "nodo": getattr(config, 'nodo', None),
             "fecha": fecha_str,
             "dia_mes": dia_m,
             "recurrencia": getattr(config, 'recurrencia', 'diario') or 'diario',
@@ -901,6 +907,12 @@ def actualizar_configuracion(
                 config.desde_cliente_id = int(payload.desde_cliente_id)
             else:
                 config.desde_cliente_id = None
+
+        if payload.nodo is not None:
+            if payload.nodo == "vaciar" or str(payload.nodo).lower() in ["todos", "all", "todos los nodos", ""]:
+                config.nodo = None
+            else:
+                config.nodo = payload.nodo.strip()
             
         db.commit()
         

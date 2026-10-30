@@ -90,6 +90,7 @@ def enviar_whatsapp_programado():
 
             filtro = getattr(config, 'filtro_clientes', 'todos') or 'todos'
             desde_cid = getattr(config, 'desde_cliente_id', None)
+            nodo_config = getattr(config, 'nodo', None)
             query_clientes = db.query(models.Cliente).filter(
                 func.upper(models.Cliente.estado).in_(["ACTIVO", "ACTIVA"]),
                 models.Cliente.celular != None,
@@ -103,6 +104,18 @@ def enviar_whatsapp_programado():
                 # Solo clientes al día (saldo <= 0 o None)
                 query_clientes = query_clientes.filter(
                     or_(models.Cliente.saldo == None, models.Cliente.saldo <= 0)
+                )
+
+            # Filtro de Nodo / Parroquia si está configurado
+            nodo_clean = nodo_config.strip() if nodo_config and str(nodo_config).strip() and str(nodo_config).lower() not in ["todos", "all", "todos los nodos"] else None
+            if nodo_clean:
+                from routes.whatsapp import remove_accents
+                clean_nodo_norm = remove_accents(nodo_clean)
+                query_clientes = query_clientes.filter(
+                    or_(
+                        models.Cliente.nodo.ilike(f"%{clean_nodo_norm}%"),
+                        models.Cliente.parroquia.ilike(f"%{clean_nodo_norm}%")
+                    )
                 )
 
             # Filtro para continuar desde cierto cliente específico (ID)
@@ -167,6 +180,9 @@ def enviar_whatsapp_programado():
                 alcance_desc = "Clientes activos AL DÍA (Sin deuda)"
             else:
                 alcance_desc = "TODOS los clientes activos"
+
+            if nodo_clean:
+                alcance_desc += f" (Nodo: {nodo_clean})"
 
             if desde_cid and int(desde_cid) > 0:
                 alcance_desc += f" [Desde ID #{desde_cid}]"

@@ -754,6 +754,7 @@ class WhatsAppConfiguracionCreate(BaseModel):
     mensaje: str
     enviar_a_todos: Optional[bool] = True
     filtro_clientes: Optional[str] = "todos"  # todos, deuda, al_dia / pago
+    nodo: Optional[str] = None # Filtro por Nodo / Parroquia (opcional)
     fecha: Optional[str] = None # Formato: YYYY-MM-DD
     recurrencia: Optional[str] = "diario" # diario, mensual, unico
     dia_mes: Optional[int] = None # 1 al 31 para mensual
@@ -765,6 +766,7 @@ class WhatsAppConfiguracionUpdate(BaseModel):
     activo: Optional[bool] = None
     enviar_a_todos: Optional[bool] = None
     filtro_clientes: Optional[str] = None  # todos, deuda, al_dia / pago
+    nodo: Optional[str] = None # Filtro por Nodo / Parroquia (opcional)
     fecha: Optional[str] = None # Formato: YYYY-MM-DD, o "vaciar" si se quiere eliminar
     recurrencia: Optional[str] = None # diario, mensual, unico
     dia_mes: Optional[int] = None # 1 al 31 para mensual

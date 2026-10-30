@@ -28,7 +28,10 @@ from datetime import datetime
 from typing import List, Optional
 
 # pyrefly: ignore [missing-import]
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+# pyrefly: ignore [missing-import]
+from fastapi.responses import StreamingResponse
+import asyncio
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel
 # pyrefly: ignore [missing-import]
@@ -1027,6 +1030,196 @@ def ver_potencia_ont(
     except Exception as e:
         logger.error(f"Error consultando potencia ONT para cliente {cliente_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error consultando potencia: {str(e)}")
+
+
+@router.get("/clientes/{cliente_id}/potencia-stream")
+async def stream_potencia_ont(
+    request: Request,
+    cliente_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(require_role(["administrador", "soporte", "tecnico"]))
+):
+    """
+    Stream Server-Sent Events (SSE) de potencia óptica de la ONT en tiempo real.
+    Mantiene la sesión OLT abierta durante el streaming para consultar cada ~3 segundos
+    sin reconectar ni re-autenticar por SSH en cada muestra.
+    Al cerrar el cliente la conexión (cerrar modal o salir), se desconecta la OLT limpiamente.
+    """
+    cliente = db.query(models.Cliente).filter(models.Cliente.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    last_task = db.query(models.OLTTask).filter(
+        models.OLTTask.cliente_id == cliente.id,
+        models.OLTTask.action == 'add_ont'
+    ).order_by(models.OLTTask.id.desc()).first()
+
+    task_payload = {}
+    task_resp = {}
+    if last_task:
+        try:
+            if isinstance(last_task.payload, str):
+                task_payload = json.loads(last_task.payload)
+            elif isinstance(last_task.payload, dict):
+                task_payload = last_task.payload
+        except Exception:
+            pass
+        try:
+            if isinstance(last_task.response_json, str):
+                task_resp = json.loads(last_task.response_json)
+            elif isinstance(last_task.response_json, dict):
+                task_resp = last_task.response_json
+        except Exception:
+            pass
+
+    gpon_port = task_resp.get('gpon_port') or task_payload.get('gpon_port') or getattr(cliente, "puerto", None)
+    ont_id_str = task_resp.get('ont_id') or task_payload.get('ont_id') or getattr(cliente, "id_port", None)
+
+    if not gpon_port or ont_id_str is None:
+        raise HTTPException(status_code=400, detail="El cliente no tiene puerto GPON asignado")
+
+    if "/" not in str(gpon_port):
+        import re
+        match = re.search(r"\d+", str(gpon_port))
+        if not match:
+            raise HTTPException(status_code=400, detail=f"Puerto GPON inválido: {gpon_port}")
+        frame = "1" if is_nodo_sayausi(getattr(cliente, "nodo", "")) else "0"
+        gpon_port = f"0/{frame}/{match.group()}"
+
+    try:
+        ont_id = int(str(ont_id_str).strip())
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"ONT ID inválido: {ont_id_str}")
+
+    olt_config = None
+    if last_task and last_task.olt_id:
+        olt_config = db.query(models.OLTConfig).filter(
+            models.OLTConfig.id == last_task.olt_id,
+            models.OLTConfig.active == True
+        ).first()
+
+    if not olt_config:
+        nodo = getattr(cliente, "nodo", None)
+        if nodo:
+            is_sayausi_nodo = is_nodo_sayausi(nodo)
+            olt_config = db.query(models.OLTConfig).filter(
+                models.OLTConfig.active == True,
+                or_(
+                    models.OLTConfig.nodo_asociado == nodo,
+                    models.OLTConfig.nodo_asociado.ilike("%SAYAUS%") if is_sayausi_nodo else models.OLTConfig.nodo_asociado.ilike("%BAN%"),
+                    models.OLTConfig.nodo_asociado == None,
+                    models.OLTConfig.nodo_asociado == ""
+                )
+            ).first()
+        else:
+            olt_config = db.query(models.OLTConfig).filter(models.OLTConfig.active == True).first()
+
+    if not olt_config:
+        raise HTTPException(status_code=503, detail="No hay OLT activa configurada para este nodo")
+
+    async def event_generator():
+        olt = OLTInterface(
+            host=olt_config.host,
+            port=olt_config.port or 22,
+            username=olt_config.username,
+            password=olt_config.password,
+            timeout=15,
+            max_retries=2
+        )
+        try:
+            # Notificar que se está iniciando la sesión OLT
+            init_msg = json.dumps({
+                "type": "init",
+                "status": "connecting",
+                "message": f"Conectando a {olt_config.nombre}...",
+                "cliente_id": cliente_id,
+                "nombre": cliente.nombre,
+                "gpon_port": gpon_port,
+                "ont_id": ont_id,
+                "olt": olt_config.nombre
+            })
+            yield f"data: {init_msg}\n\n"
+
+            connected = await asyncio.to_thread(olt.connect)
+            if not connected:
+                err_msg = json.dumps({
+                    "type": "error",
+                    "status": "connection_failed",
+                    "message": "No se pudo conectar a la OLT Huawei"
+                })
+                yield f"data: {err_msg}\n\n"
+                return
+
+            connected_msg = json.dumps({
+                "type": "status",
+                "status": "connected",
+                "message": "Sesión OLT establecida. Monitoreando en tiempo real...",
+                "gpon_port": gpon_port,
+                "ont_id": ont_id,
+                "olt": olt_config.nombre
+            })
+            yield f"data: {connected_msg}\n\n"
+
+            # Monitoreo continuo (máximo 300 lecturas ~ 15 minutos continuos de seguridad)
+            iteration = 0
+            while iteration < 300:
+                if await request.is_disconnected():
+                    logger.info(f"[potencia-stream] Cliente HTTP desconectado para cliente #{cliente_id}")
+                    break
+
+                try:
+                    power_data = await asyncio.to_thread(olt.check_ont_power, gpon_port, ont_id)
+                except Exception as p_err:
+                    logger.warning(f"[potencia-stream] Error al medir potencia: {p_err}")
+                    power_data = {}
+
+                now_dt = datetime.now()
+                sample_payload = {
+                    "type": "sample",
+                    "iteration": iteration + 1,
+                    "time": now_dt.strftime("%H:%M:%S"),
+                    "timestamp": now_dt.timestamp(),
+                    "cliente_id": cliente_id,
+                    "nombre": cliente.nombre,
+                    "gpon_port": gpon_port,
+                    "ont_id": ont_id,
+                    "olt": olt_config.nombre,
+                    "potencia": power_data or {}
+                }
+
+                yield f"data: {json.dumps(sample_payload)}\n\n"
+                iteration += 1
+
+                # Espera 3 segundos fraccionada en cheques de desconexión cada 0.5s
+                for _ in range(6):
+                    if await request.is_disconnected():
+                        break
+                    await asyncio.sleep(0.5)
+
+        except asyncio.CancelledError:
+            logger.info(f"[potencia-stream] Stream cancelado por el cliente para cliente #{cliente_id}")
+        except Exception as e:
+            logger.error(f"[potencia-stream] Error en stream para cliente #{cliente_id}: {e}")
+            try:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            except Exception:
+                pass
+        finally:
+            logger.info(f"[potencia-stream] Desconectando OLT de forma limpia para cliente #{cliente_id}")
+            try:
+                await asyncio.to_thread(olt.disconnect)
+            except Exception as disc_e:
+                logger.warning(f"[potencia-stream] Error al desconectar OLT: {disc_e}")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @router.post("/clientes/{cliente_id}/reset-ont", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
