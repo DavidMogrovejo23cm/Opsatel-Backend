@@ -417,7 +417,7 @@ def send_global_broadcast_task(
         if limite_mensajes and int(limite_mensajes) > 0:
             rango_info += f" [Límite: {limite_mensajes}]"
 
-        puertos_info = f" | Puertos: {', '.join(puertos_clean)}" if puertos_clean else ""
+        puertos_info = f" | Puertos: {', '.join([p if 'puerto' in str(p).lower() else f'Puerto {p}' for p in puertos_clean])}" if puertos_clean else ""
         alcance_label = f"{estado_label} ({nodo_label}{puertos_info}){rango_info}".strip()
         # Parámetros de pausas y lotes
         delay_a = float(delay_min) if delay_min and float(delay_min) >= 1.0 else 25.0
@@ -1401,7 +1401,7 @@ def enviar_whatsapp_global(
             elif isinstance(payload.puertos, str):
                 puertos_list = [p.strip() for p in payload.puertos.split(',') if p.strip()]
 
-        puertos_label = f" | Puertos: {', '.join(puertos_list)}" if puertos_list else ""
+        puertos_label = f" | Puertos: {', '.join([p if 'puerto' in str(p).lower() else f'Puerto {p}' for p in puertos_list])}" if puertos_list else ""
         alcance_est = f"Clientes {estado_label} ({nodo_label}{puertos_label})"
         
         dif_reg = models.WhatsAppDifusionHistorial(
