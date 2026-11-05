@@ -471,6 +471,8 @@ class Egreso(Base):
     fecha = Column(String(50))          # YYYY-MM-DD
     mes = Column(String(20))            # YYYY-MM  → para filtrado rápido
     metodo_pago = Column(String(100), default="Efectivo")
+    estado = Column(String(50), default="Realizado")    # "Realizado", "Pendiente"
+    gasto_fijo_id = Column(Integer, ForeignKey("gastos_fijos_balance.id", ondelete="SET NULL"), nullable=True)
     notas = Column(String(255))
 
 

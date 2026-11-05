@@ -104,6 +104,13 @@ def force_fix_columns():
         ("callcenter_ticket_id", "INT DEFAULT NULL")
     ]
 
+    # 10. Tabla egresos_balance
+    table_egresos = "egresos_balance"
+    columns_egresos = [
+        ("estado", "VARCHAR(50) DEFAULT 'Realizado'"),
+        ("gasto_fijo_id", "INT DEFAULT NULL")
+    ]
+
     process_table(table_clientes, columns_clientes)
     process_table(table_pagos, columns_pagos)
     process_table(table_asistencias, columns_asistencias)
@@ -113,6 +120,7 @@ def force_fix_columns():
     process_table(table_proyectos, columns_proyectos)
     process_table(table_whatsapp_config, columns_whatsapp_config)
     process_table(table_hoja_ruta, columns_hoja_ruta)
+    process_table(table_egresos, columns_egresos)
     
     # Ampliar columnas existentes que requieren mayor tamaño
     modify_columns = [

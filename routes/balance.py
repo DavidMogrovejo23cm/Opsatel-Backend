@@ -40,6 +40,8 @@ class EgresoCreate(BaseModel):
     fecha: str              # YYYY-MM-DD
     mes: str                # "2026-04"
     metodo_pago: Optional[str] = "Efectivo"
+    estado: Optional[str] = "Realizado"  # "Realizado" o "Pendiente"
+    gasto_fijo_id: Optional[int] = None
     notas: Optional[str] = None
 
 class EgresoUpdate(BaseModel):
@@ -50,6 +52,8 @@ class EgresoUpdate(BaseModel):
     fecha: Optional[str] = None
     mes: Optional[str] = None
     metodo_pago: Optional[str] = None
+    estado: Optional[str] = None
+    gasto_fijo_id: Optional[int] = None
     notas: Optional[str] = None
 
 class ProyectoCreate(BaseModel):
@@ -138,15 +142,62 @@ class GastoFijoUpdate(BaseModel):
 
 
 # ====================================================================
-# EGRESOS CRUD
+# EGRESOS CRUD Y SINCRONIZACIÓN DE GASTOS FIJOS
 # ====================================================================
+
+def sincronizar_gastos_fijos_mes(mes: str, db: Session):
+    """
+    Garantiza que para el mes indicado, cada gasto fijo activo tenga su registro en egresos_balance.
+    En un nuevo mes (o cuando arranca el mes), el gasto fijo se inicializa en estado 'Pendiente'.
+    De esta manera, aparece en la lista de gastos pero NO se suma al balance neto hasta que
+    sea marcado como 'Realizado'.
+    """
+    if not mes or len(mes) < 7:
+        return
+    mes_str = str(mes)[:7]
+    gastos_fijos = db.query(models.GastoFijo).filter(models.GastoFijo.activo == True).all()
+    if not gastos_fijos:
+        return
+
+    egresos_existentes = db.query(models.Egreso).filter(
+        models.Egreso.mes == mes_str,
+        models.Egreso.gasto_fijo_id.isnot(None)
+    ).all()
+    gf_registrados_ids = {eg.gasto_fijo_id for eg in egresos_existentes}
+
+    modificado = False
+    for gf in gastos_fijos:
+        if gf.id not in gf_registrados_ids:
+            nuevo_eg = models.Egreso(
+                descripcion=gf.descripcion,
+                categoria=gf.categoria or "operacional",
+                subcategoria="Gasto Fijo",
+                monto=gf.monto or 0.0,
+                fecha=f"{mes_str}-01",
+                mes=mes_str,
+                metodo_pago=gf.metodo_pago or "Efectivo",
+                estado="Pendiente",  # En un nuevo mes aparece en PENDIENTE
+                gasto_fijo_id=gf.id,
+                notas=gf.notas
+            )
+            db.add(nuevo_eg)
+            modificado = True
+
+    if modificado:
+        db.commit()
 
 @router.get("/egresos")
 def listar_egresos(mes: Optional[str] = None, db: Session = Depends(get_db)):
+    if mes:
+        sincronizar_gastos_fijos_mes(mes, db)
+    else:
+        mes_actual = datetime.date.today().strftime("%Y-%m")
+        sincronizar_gastos_fijos_mes(mes_actual, db)
+
     q = db.query(models.Egreso)
     if mes:
         q = q.filter(models.Egreso.mes == mes)
-    return q.order_by(models.Egreso.fecha.desc()).all()
+    return q.order_by(models.Egreso.fecha.desc(), models.Egreso.id.desc()).all()
 
 @router.post("/egresos", dependencies=[Depends(require_role(["administrador"]))])
 def crear_egreso(data: EgresoCreate, db: Session = Depends(get_db)):
@@ -517,6 +568,9 @@ def crear_gasto_fijo(data: GastoFijoCreate, db: Session = Depends(get_db)):
     db.add(obj)
     db.commit()
     db.refresh(obj)
+    if obj.activo:
+        mes_actual = datetime.date.today().strftime("%Y-%m")
+        sincronizar_gastos_fijos_mes(mes_actual, db)
     return obj
 
 @router.patch("/gastos-fijos/{id}", dependencies=[Depends(require_role(["administrador"]))])
@@ -527,6 +581,18 @@ def actualizar_gasto_fijo(id: int, data: GastoFijoUpdate, db: Session = Depends(
     for k, v in data.dict(exclude_none=True).items():
         setattr(obj, k, v)
     db.commit()
+    
+    # Si se desactiva (activo=False), eliminar los egresos que todavía estén 'Pendiente'
+    if data.activo is False:
+        db.query(models.Egreso).filter(
+            models.Egreso.gasto_fijo_id == id,
+            models.Egreso.estado == "Pendiente"
+        ).delete(synchronize_session=False)
+        db.commit()
+    elif obj.activo:
+        mes_actual = datetime.date.today().strftime("%Y-%m")
+        sincronizar_gastos_fijos_mes(mes_actual, db)
+
     return {"message": "Gasto fijo actualizado"}
 
 @router.delete("/gastos-fijos/{id}", dependencies=[Depends(require_role(["administrador"]))])
@@ -534,6 +600,13 @@ def eliminar_gasto_fijo(id: int, db: Session = Depends(get_db)):
     obj = db.query(models.GastoFijo).filter(models.GastoFijo.id == id).first()
     if not obj:
         raise HTTPException(status_code=404, detail="Gasto fijo no encontrado")
+    # Limpiar egresos pendientes asociados
+    db.query(models.Egreso).filter(
+        models.Egreso.gasto_fijo_id == id,
+        models.Egreso.estado == "Pendiente"
+    ).delete(synchronize_session=False)
+    # A los ya realizados, desvincular el ID para preservar el historial contable
+    db.query(models.Egreso).filter(models.Egreso.gasto_fijo_id == id).update({"gasto_fijo_id": None})
     db.delete(obj)
     db.commit()
     return {"message": "Gasto fijo eliminado"}
@@ -619,9 +692,13 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
     # Separación contable: Recuento Normal (Operacional) excluye IPTV Plus y Clientes Extras
     total_ingresos = round(total_internet + adicional_total, 2)
 
+    # Asegurar que para este mes, los gastos fijos activos existan (en nuevo mes arrancan como Pendiente)
+    sincronizar_gastos_fijos_mes(mes, db)
+
     egresos_mes = db.query(models.Egreso).filter(models.Egreso.mes == mes).all()
     egresos_por_cat = {}
     total_egresos_global = 0.0
+    total_egresos_pendientes = 0.0
 
     egresos_op_ef = egresos_op_pich = egresos_op_jep = 0.0
     egresos_iptv_ef = egresos_iptv_pich = egresos_iptv_jep = 0.0
@@ -632,6 +709,14 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
 
     for eg in egresos_mes:
         m_val = float(eg.monto or 0)
+        est = (eg.estado or "Realizado").strip().capitalize()
+        
+        # SI ESTÁ EN PENDIENTE: no se suma a balance ni reduce los bancos
+        if est == "Pendiente":
+            total_egresos_pendientes += m_val
+            continue
+
+        # SI ES REALIZADO: sí se suma a balance
         total_egresos_global += m_val
         egresos_por_cat.setdefault(eg.categoria, 0.0)
         egresos_por_cat[eg.categoria] += m_val
@@ -662,27 +747,34 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
             else:
                 egresos_op_ef += m_val
 
-    # Gastos fijos activos: se suman siempre en cada mes (Operacionales)
+    # Gastos fijos activos y su estado en este mes (los egresos ya fueron sincronizados arriba)
     gastos_fijos = db.query(models.GastoFijo).filter(models.GastoFijo.activo == True).all()
     total_gastos_fijos = 0.0
+    total_gastos_fijos_realizados = 0.0
+    total_gastos_fijos_pendientes = 0.0
     gastos_fijos_lista = []
+    eg_fijos_map = {eg.gasto_fijo_id: eg for eg in egresos_mes if eg.gasto_fijo_id}
+
     for gf in gastos_fijos:
         monto_gf = float(gf.monto or 0)
         total_gastos_fijos += monto_gf
-        total_egresos_global += monto_gf
-        total_egresos_op += monto_gf
-        egresos_por_cat[gf.categoria] = egresos_por_cat.get(gf.categoria, 0.0) + monto_gf
-        gastos_fijos_lista.append({
-            "id": gf.id, "descripcion": gf.descripcion, "monto": monto_gf,
-            "categoria": gf.categoria, "metodo_pago": gf.metodo_pago, "notas": gf.notas
-        })
-        metodo_gf = (gf.metodo_pago or "").upper().strip()
-        if "PICHINCHA" in metodo_gf:
-            egresos_op_pich += monto_gf
-        elif "JEP" in metodo_gf or "GUAYAQUIL" in metodo_gf:
-            egresos_op_jep += monto_gf
+        eg_asoc = eg_fijos_map.get(gf.id)
+        est_gf = (eg_asoc.estado if eg_asoc and eg_asoc.estado else "Pendiente").capitalize()
+        if est_gf == "Realizado":
+            total_gastos_fijos_realizados += monto_gf
         else:
-            egresos_op_ef += monto_gf
+            total_gastos_fijos_pendientes += monto_gf
+
+        gastos_fijos_lista.append({
+            "id": gf.id,
+            "egreso_id": eg_asoc.id if eg_asoc else None,
+            "descripcion": gf.descripcion,
+            "monto": monto_gf,
+            "categoria": gf.categoria,
+            "metodo_pago": gf.metodo_pago,
+            "notas": gf.notas,
+            "estado": est_gf
+        })
 
     proyectos = db.query(models.Proyecto).all()
     proyectos_activos = [p for p in proyectos if (p.fecha_inicio or "")[:7] <= mes and (not p.fecha_fin or (p.fecha_fin or "")[:7] >= mes)]
@@ -867,13 +959,18 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
             "lista": [
                 {"id": e.id, "descripcion": e.descripcion, "categoria": e.categoria,
                  "subcategoria": e.subcategoria, "monto": float(e.monto),
-                 "fecha": e.fecha, "metodo_pago": e.metodo_pago, "notas": e.notas}
+                 "fecha": e.fecha, "metodo_pago": e.metodo_pago, "notas": e.notas,
+                 "estado": (e.estado or "Realizado").capitalize(),
+                 "gasto_fijo_id": e.gasto_fijo_id}
                 for e in egresos_mes
             ],
             "gastos_fijos": gastos_fijos_lista,
             "total_gastos_fijos": total_gastos_fijos,
-            "total": total_egresos_op,
-            "total_global": total_egresos_global,
+            "total_gastos_fijos_realizados": round(total_gastos_fijos_realizados, 2),
+            "total_gastos_fijos_pendientes": round(total_gastos_fijos_pendientes, 2),
+            "total": round(total_egresos_op, 2),
+            "total_pendientes": round(total_egresos_pendientes, 2),
+            "total_global": round(total_egresos_global, 2),
             "bancos": {
                 "efectivo": round(egresos_op_ef, 2),
                 "pichincha": round(egresos_op_pich, 2),
@@ -1070,8 +1167,8 @@ def reporte_anual(anio: int, db: Session = Depends(get_db)):
             t_adic     += float(p.monto_adicional or 0)
         t_extras  = sum(float(getattr(e, f"{month_key}_pago", 0) or 0) for e in extras_all)
         t_ingresos = t_internet + t_plus + t_adic + t_extras
-        egresos_mes_lst = [eg for eg in egresos_all if eg.mes == mes_str]
-        t_egresos  = sum(float(eg.monto or 0) for eg in egresos_mes_lst) + total_gf_mensual
+        egresos_mes_lst = [eg for eg in egresos_all if eg.mes == mes_str and (eg.estado or "Realizado").capitalize() == "Realizado"]
+        t_egresos  = sum(float(eg.monto or 0) for eg in egresos_mes_lst)
         t_egresos_iptv = sum(float(eg.monto or 0) for eg in egresos_mes_lst if "IPTV" in (eg.metodo_pago or "").upper())
         balance    = t_ingresos - t_egresos
         data_mensual.append({
@@ -2249,6 +2346,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     df_desglose = pd.DataFrame(data_desglose)
 
     # ── HOJA 4: EGRESOS ──
+    sincronizar_gastos_fijos_mes(mes, db)
     egresos_mes = db.query(models.Egreso).filter(models.Egreso.mes == mes).all()
     egresos_data = []
     total_egresos = 0.0
@@ -2256,43 +2354,30 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
 
     for eg in egresos_mes:
         monto_val = float(eg.monto or 0.0)
-        total_egresos += monto_val
-        egresos_por_cat[eg.categoria] = egresos_por_cat.get(eg.categoria, 0.0) + monto_val
+        est = (eg.estado or "Realizado").capitalize()
+        if est == "Realizado":
+            total_egresos += monto_val
+            egresos_por_cat[eg.categoria] = egresos_por_cat.get(eg.categoria, 0.0) + monto_val
         egresos_data.append({
             "FECHA": eg.fecha or "",
+            "ESTADO": est,
             "DESCRIPCION": eg.descripcion,
-            "CATEGORIA": eg.categoria.upper(),
+            "CATEGORIA": (eg.categoria or "").upper(),
             "SUBCATEGORIA": eg.subcategoria or "GENERAL",
             "METODO PAGO": eg.metodo_pago or "Efectivo",
             "MONTO": monto_val,
             "NOTAS": eg.notas or ""
         })
 
-    # Gastos fijos activos
-    gastos_fijos = db.query(models.GastoFijo).filter(models.GastoFijo.activo == True).all()
-    for gf in gastos_fijos:
-        monto_gf = float(gf.monto or 0.0)
-        total_egresos += monto_gf
-        egresos_por_cat[gf.categoria] = egresos_por_cat.get(gf.categoria, 0.0) + monto_gf
-        egresos_data.append({
-            "FECHA": f"{mes}-01",
-            "DESCRIPCION": f"[FIJO] {gf.descripcion}",
-            "CATEGORIA": gf.categoria.upper(),
-            "SUBCATEGORIA": "GASTO RECURRENTE",
-            "METODO PAGO": gf.metodo_pago or "Efectivo",
-            "MONTO": monto_gf,
-            "NOTAS": gf.notas or ""
-        })
-
     df_egresos = pd.DataFrame(egresos_data)
     if not df_egresos.empty:
         df_egresos = df_egresos.sort_values(by=["CATEGORIA", "FECHA"])
         df_egresos.loc[len(df_egresos)] = {
-            "FECHA": "TOTAL GENERAL", "DESCRIPCION": "", "CATEGORIA": "", "SUBCATEGORIA": "", "METODO PAGO": "",
+            "FECHA": "TOTAL GENERAL", "ESTADO": "REALIZADOS", "DESCRIPCION": "", "CATEGORIA": "", "SUBCATEGORIA": "", "METODO PAGO": "",
             "MONTO": total_egresos, "NOTAS": ""
         }
     else:
-        df_egresos = pd.DataFrame(columns=["FECHA", "DESCRIPCION", "CATEGORIA", "SUBCATEGORIA", "METODO PAGO", "MONTO", "NOTAS"])
+        df_egresos = pd.DataFrame(columns=["FECHA", "ESTADO", "DESCRIPCION", "CATEGORIA", "SUBCATEGORIA", "METODO PAGO", "MONTO", "NOTAS"])
 
     # ── HOJA 5: PROYECTOS ──
     proyectos = db.query(models.Proyecto).all()
