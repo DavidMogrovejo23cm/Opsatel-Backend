@@ -1053,6 +1053,8 @@ def reporte_anual(anio: int, db: Session = Depends(get_db)):
     extras_all = db.query(models.ClienteExtra).all()
     egresos_all = db.query(models.Egreso).filter(models.Egreso.mes.like(f"{anio}-%")).all()
     proyectos_all = db.query(models.Proyecto).all()
+    gastos_fijos_activos = db.query(models.GastoFijo).filter(models.GastoFijo.activo == True).all()
+    total_gf_mensual = sum(float(gf.monto or 0) for gf in gastos_fijos_activos)
 
     data_mensual = []
     total_anual_ingresos = total_anual_egresos = total_anual_balance = 0.0
@@ -1069,7 +1071,7 @@ def reporte_anual(anio: int, db: Session = Depends(get_db)):
         t_extras  = sum(float(getattr(e, f"{month_key}_pago", 0) or 0) for e in extras_all)
         t_ingresos = t_internet + t_plus + t_adic + t_extras
         egresos_mes_lst = [eg for eg in egresos_all if eg.mes == mes_str]
-        t_egresos  = sum(float(eg.monto or 0) for eg in egresos_mes_lst)
+        t_egresos  = sum(float(eg.monto or 0) for eg in egresos_mes_lst) + total_gf_mensual
         t_egresos_iptv = sum(float(eg.monto or 0) for eg in egresos_mes_lst if "IPTV" in (eg.metodo_pago or "").upper())
         balance    = t_ingresos - t_egresos
         data_mensual.append({
