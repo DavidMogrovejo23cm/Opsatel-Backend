@@ -298,7 +298,12 @@ def eliminar_egreso(id: int, db: Session = Depends(get_db)):
 
 @router.get("/proyectos")
 def listar_proyectos(db: Session = Depends(get_db)):
-    return db.query(models.Proyecto).order_by(models.Proyecto.fecha_inicio.desc()).all()
+    proyectos = db.query(models.Proyecto).order_by(models.Proyecto.fecha_inicio.desc()).all()
+    # Los proyectos pendientes/en progreso aparecen al inicio y los completados al final
+    return sorted(
+        proyectos,
+        key=lambda p: (1 if (p.estado or "").strip().lower() == "completado" else 0)
+    )
 
 @router.post("/proyectos", dependencies=[Depends(require_role(["administrador"]))])
 def crear_proyecto(data: ProyectoCreate, db: Session = Depends(get_db)):
@@ -843,7 +848,14 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
         })
 
     proyectos = db.query(models.Proyecto).all()
-    proyectos_activos = [p for p in proyectos if (p.fecha_inicio or "")[:7] <= mes and (not p.fecha_fin or (p.fecha_fin or "")[:7] >= mes)]
+    proy_dict = {p.id: p for p in proyectos}
+    # Solo proyectos activos / pendientes en este mes (se excluyen los que están en estado Completado)
+    proyectos_activos = [
+        p for p in proyectos
+        if (p.fecha_inicio or "")[:7] <= mes
+        and (not p.fecha_fin or (p.fecha_fin or "")[:7] >= mes)
+        and (p.estado or "").strip().lower() != "completado"
+    ]
     total_proyectos = sum(float(p.monto_invertido or 0) for p in proyectos_activos)
 
     # Colchon total (histórico)
@@ -894,14 +906,17 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
         }
     }
 
-    # Proyectos: Ingresos vs Gastos / Inversión por mes
+    # Proyectos: Ingresos vs Gastos / Inversión por mes (solo pendientes / activos, no completados)
     proy_ganancia_ef = proy_ganancia_pich = proy_ganancia_jep = 0.0
 
-    # 1. Pagos/cuotas de proyectos registrados en este mes específico
+    # 1. Pagos/cuotas de proyectos registrados en este mes específico (se excluyen de proyectos completados)
     pagos_proy_mes = db.query(models.ProyectoPago).filter(
         models.ProyectoPago.fecha.like(f"{mes}%")
     ).all()
     for pago in pagos_proy_mes:
+        p_rel = proy_dict.get(pago.proyecto_id)
+        if p_rel and (p_rel.estado or "").strip().lower() == "completado":
+            continue
         p_val = float(pago.valor or 0)
         tp = (pago.tipo_pago or 'PICHINCHA').upper().strip()
         if "JEP" in tp or "GUAYAQUIL" in tp:
@@ -911,8 +926,12 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
         else:
             proy_ganancia_pich += p_val
 
-    # 2. Proyectos cuya fecha de inicio corresponde estrictamente a este mes
-    proyectos_mes_inicio = [p for p in proyectos if (p.fecha_inicio or "")[:7] == mes]
+    # 2. Proyectos cuya fecha de inicio corresponde estrictamente a este mes (excluye proyectos completados)
+    proyectos_mes_inicio = [
+        p for p in proyectos
+        if (p.fecha_inicio or "")[:7] == mes
+        and (p.estado or "").strip().lower() != "completado"
+    ]
     for p in proyectos_mes_inicio:
         g_val = float(getattr(p, 'ganancia', 0) or 0)
         if g_val > 0:
@@ -926,7 +945,7 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
 
     total_ganancia_proyectos = round(proy_ganancia_ef + proy_ganancia_pich + proy_ganancia_jep, 2)
 
-    # 3. Gastos de proyectos para este mes específico
+    # 3. Gastos de proyectos para este mes específico (se excluyen de proyectos completados)
     gastos_pr_ef = round(egresos_pr_ef, 2)
     gastos_pr_pich = round(egresos_pr_pich, 2)
     gastos_pr_jep = round(egresos_pr_jep, 2)
@@ -936,6 +955,9 @@ def reporte_mensual(mes: str, db: Session = Depends(get_db)):
         models.GastoProyecto.pendiente == False
     ).all()
     for gp in gastos_proy_mes:
+        p_rel = proy_dict.get(gp.proyecto_id)
+        if p_rel and (p_rel.estado or "").strip().lower() == "completado":
+            continue
         gp_val = float(gp.valor or 0)
         tp = (gp.tipo_pago or 'PICHINCHA').upper().strip()
         if "JEP" in tp or "GUAYAQUIL" in tp:
@@ -2450,7 +2472,12 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
     proyectos = db.query(models.Proyecto).all()
     proyectos_data = []
     
-    proyectos_activos = [p for p in proyectos if p.fecha_inicio[:7] <= mes and (not p.fecha_fin or p.fecha_fin[:7] >= mes)]
+    proyectos_activos = [
+        p for p in proyectos
+        if (p.fecha_inicio or "")[:7] <= mes
+        and (not p.fecha_fin or (p.fecha_fin or "")[:7] >= mes)
+        and (p.estado or "").strip().lower() != "completado"
+    ]
     total_proyectos = sum(float(p.monto_invertido or 0) for p in proyectos_activos)
 
     for p in proyectos:
