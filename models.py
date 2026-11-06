@@ -847,3 +847,4 @@ class Pelicula(Base):
     actores = Column(Text, nullable=True)
     audio = Column(String(100), nullable=True)
     portada_url = Column(Text, nullable=True)
+    anio = Column(String(50), nullable=True)
