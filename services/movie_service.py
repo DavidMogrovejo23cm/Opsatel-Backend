@@ -262,21 +262,37 @@ def asegurar_tabla_peliculas(db: Session):
         logger.warning(f"[Movie Service] Aviso verificando tabla 'peliculas': {e}")
 
 
+def acortar_descripcion(texto: str, max_longitud: int = 90) -> str:
+    """
+    Acorta la sinopsis o descripción a una versión breve y limpia (máximo ~90 caracteres)
+    cortando en el límite de la última palabra completa para no dejar palabras cortadas a la mitad.
+    """
+    if not texto:
+        return ""
+    t = str(texto).strip()
+    if len(t) <= max_longitud:
+        return t
+    # Cortar en el límite de la última palabra
+    cortado = t[:max_longitud].rsplit(' ', 1)[0].rstrip(' ,;.:-')
+    return f"{cortado}..."
+
+
 def buscar_peliculas_en_bd(
     db: Session,
     termino: str,
     genero: Optional[str] = None,
     audio: Optional[str] = None,
-    limit: int = 3
+    limit: int = 25
 ) -> List[Dict[str, Any]]:
     """
     Busca de manera prioritaria en la tabla 'peliculas' de la base de datos.
     Se guía en los campos: nombre, descripcion, generos, actores y audio.
+    Retorna TODOS los registros que contengan las palabras solicitadas.
     Inspecciona dinámicamente las columnas reales de la tabla para evitar errores de columnas faltantes.
     Ejecuta:
-    1. Búsqueda SQL directa con LIKE sobre todos los campos.
+    1. Búsqueda SQL directa con LIKE sobre todos los campos (frase completa y palabras individuales).
     2. Si no hay resultados exactos (ej. faltas ortográficas como 'harry poter' o 'gladiador'),
-       evalúa similitud difusa (fuzzy) sobre el catálogo para encontrar la coincidencia correcta.
+       evalúa similitud difusa (fuzzy) sobre el catálogo para encontrar todas las coincidencias.
     """
     asegurar_tabla_peliculas(db)
     coincidencias = []
@@ -298,7 +314,7 @@ def buscar_peliculas_en_bd(
         print(f"[WhatsApp Películas BD] Parámetros recibidos -> termino: '{termino}', genero: '{genero}', audio: '{audio}'")
 
         # -------------------------------------------------------------
-        # ETAPA 1: BÚSQUEDA DIRECTA SQL (Substring y palabras)
+        # ETAPA 1: BÚSQUEDA DIRECTA SQL (Frase completa y palabras solicitadas)
         # -------------------------------------------------------------
         condiciones_sql = []
         params_sql = {}
@@ -306,6 +322,8 @@ def buscar_peliculas_en_bd(
         if termino and len(termino) >= 2:
             term_wild = f"%{termino.lower()}%"
             params_sql["term"] = term_wild
+            
+            # Condición de coincidencia por frase completa
             or_parts = [
                 f"LOWER(`{col_nombre}`) LIKE :term",
                 f"LOWER(`{col_desc}`) LIKE :term",
@@ -313,7 +331,23 @@ def buscar_peliculas_en_bd(
                 f"LOWER(`{col_actores}`) LIKE :term",
                 f"LOWER(`{col_audio}`) LIKE :term"
             ]
-            condiciones_sql.append(f"({' OR '.join(or_parts)})")
+
+            # Si el término tiene varias palabras (ej: 'harry potter', 'rapidos furiosos')
+            # buscar también registros donde aparezcan las palabras solicitadas
+            palabras_clave = [w for w in normalizar_texto(termino).split() if w not in STOPWORDS and len(w) >= 3]
+            if len(palabras_clave) > 1:
+                and_parts = []
+                for i, w in enumerate(palabras_clave):
+                    p_w = f"w_{i}"
+                    params_sql[p_w] = f"%{w}%"
+                    and_parts.append(
+                        f"(LOWER(`{col_nombre}`) LIKE :{p_w} OR LOWER(`{col_desc}`) LIKE :{p_w} "
+                        f"OR LOWER(`{col_gen}`) LIKE :{p_w} OR LOWER(`{col_actores}`) LIKE :{p_w} "
+                        f"OR LOWER(`{col_audio}`) LIKE :{p_w})"
+                    )
+                condiciones_sql.append(f"(({' OR '.join(or_parts)}) OR ({' AND '.join(and_parts)}))")
+            else:
+                condiciones_sql.append(f"({' OR '.join(or_parts)})")
 
         if genero:
             variantes = GENEROS_KEYWORDS.get(genero, [genero])
@@ -343,7 +377,7 @@ def buscar_peliculas_en_bd(
             with bind.connect() as conn:
                 res_direct = conn.execute(query_sql, params_sql).fetchall()
                 if res_direct:
-                    print(f"[WhatsApp Películas BD] 🎯 Coincidencia directa SQL encontrada ({len(res_direct)} registros)")
+                    print(f"[WhatsApp Películas BD] 🎯 Coincidencias SQL encontradas ({len(res_direct)} registros)")
                     for row in res_direct:
                         r_dict = dict(zip(cols_existentes, row))
                         coincidencias.append({
@@ -399,7 +433,7 @@ def buscar_peliculas_en_bd(
                 if any(normalizar_texto(v) in normalizar_texto(aud) for v in variantes_a):
                     score = max(score, 0.90)
 
-            if score >= 0.70:
+            if score >= 0.65:
                 candidatos.append((score, {
                     "nombre": nombre,
                     "descripcion": descripcion or "Disponible en catálogo de OPSATV.",
@@ -519,8 +553,9 @@ def formatear_respuesta_whatsapp(
                 msg += f"🔊 *Audio:* {p['audio']}\n"
             if p.get("actores") and p["actores"] != "Varios":
                 msg += f"👥 *Actores:* {p['actores']}\n"
-            if p.get("descripcion"):
-                msg += f"📖 *Descripción:* {p['descripcion']}\n"
+            desc_corta = acortar_descripcion(p.get("descripcion"), max_longitud=90)
+            if desc_corta:
+                msg += f"📖 *Descripción:* {desc_corta}\n"
             msg += "\n"
 
         msg += "✨ _¡Disfrútalas ahora mismo desde tu TV o aplicación OPSATV!_ 📺🍿"
@@ -540,8 +575,9 @@ def formatear_respuesta_whatsapp(
             anio_str = f" ({m['anio']})" if m.get("anio") else ""
             calif_str = f" — ⭐ {m['calificacion']}/10" if m.get("calificacion") and m['calificacion'] != "N/A" else ""
             msg += f"🎬 *{m['titulo']}*{anio_str}{calif_str}\n"
-            if m.get("sinopsis"):
-                msg += f"📖 {m['sinopsis']}\n"
+            desc_tmdb = acortar_descripcion(m.get("sinopsis"), max_longitud=90)
+            if desc_tmdb:
+                msg += f"📖 {desc_tmdb}\n"
             msg += "\n"
 
         primera = peliculas_tmdb[0]["titulo"]
@@ -563,6 +599,7 @@ def gestionar_consulta_peliculas(mensaje: str, db: Session) -> Optional[str]:
     2. Si es una solicitud explícita ('SOLICITAR X'): confirma la solicitud.
     3. Extrae el término en lenguaje natural.
     4. Busca PRIMERO en la base de datos en la tabla 'peliculas' con los campos solicitados.
+       Retorna TODOS los registros que contengan las palabras solicitadas con descripción corta.
     5. Si NO existe en la base de datos, busca en The Movie Database (TMDb).
     6. Si no es película: retorna None para que la IA atienda normalmente.
     """
@@ -595,7 +632,7 @@ def gestionar_consulta_peliculas(mensaje: str, db: Session) -> Optional[str]:
         termino=termino,
         genero=genero,
         audio=audio,
-        limit=3
+        limit=25
     )
 
     # SI SE ENCONTRÓ EN LA BASE DE DATOS LOCAL, RETORNAR DIRECTAMENTE
