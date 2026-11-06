@@ -1671,6 +1671,25 @@ def webhook_mensaje_whatsapp(
             whatsapp_service.send_whatsapp_message(jid_destino, response_text)
             return {"success": True, "response": response_text}
 
+        # 6.5 CONSULTA Y RECOMENDACIÓN DE PELÍCULAS (Base de Datos OPSATV + The Movie Database)
+        # Se ejecuta ANTES de que interactúe la IA Groq general.
+        # Consulta en la tabla 'peliculas' (nombre, descripcion, generos, actores, audio)
+        # y si no existe busca en TMDb como sugerencia para solicitar.
+        try:
+            from services.movie_service import gestionar_consulta_peliculas
+            resp_pelicula = gestionar_consulta_peliculas(mensaje=mensaje, db=db)
+            if resp_pelicula:
+                registrar_mensaje_chat(db, jid_destino, "asistente", resp_pelicula, cliente_id=c_por_msg.id if c_por_msg else None)
+                sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", resp_pelicula)
+                whatsapp_service.send_whatsapp_message(jid_destino, resp_pelicula)
+                return {
+                    "success": True,
+                    "response": resp_pelicula,
+                    "modulo": "peliculas"
+                }
+        except Exception as e_pel:
+            print(f"[WhatsApp Webhook] Aviso al consultar módulo de películas: {e_pel}")
+
         # 7. ORQUESTACIÓN PRINCIPAL CON IA (GROQ TOOL CALLING)
         # Bypasea el viejo "Skill Router" para que Groq identifique al cliente en MySQL
         # antes de ejecutar cualquier reinicio o generación de ticket

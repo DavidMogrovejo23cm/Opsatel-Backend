@@ -836,3 +836,14 @@ class MovimientoInterno(Base):
     mes = Column(String(20), nullable=False, index=True)# YYYY-MM
     observacion = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class Pelicula(Base):
+    """Catálogo de películas y series disponibles en Opsatel / OPSATV"""
+    __tablename__ = "peliculas"
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(255), index=True, nullable=False)
+    descripcion = Column(Text, nullable=True)
+    generos = Column(String(255), nullable=True)
+    actores = Column(Text, nullable=True)
+    audio = Column(String(100), nullable=True)
+    portada_url = Column(Text, nullable=True)
