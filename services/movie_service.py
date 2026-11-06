@@ -5,13 +5,13 @@
 @notice Developed with AI assistance.
 
 Servicio Inteligente de Búsqueda, Recomendación y Solicitud de Películas para WhatsApp (OPSATV).
-- Reconoce automáticamente si el usuario pregunta o menciona una película en lenguaje natural,
-  incluso con faltas de ortografía o sin palabras clave ("recomiéndame", "películas", etc.).
-- Busca primero en la base de datos interna (tabla 'peliculas') guiándose en los campos:
-  nombre, descripcion, generos, actores y audio, con tolerancia a errores ortográficos.
-- Si no existe en la base de datos, continúa la búsqueda en The Movie Database (TMDb)
-  y presenta los resultados como sugerencias para solicitar su inclusión en OPSATV.
-- Protege los flujos operativos normales de Opsatel (cobranzas, soporte técnico y saludos).
+- PRIORIDAD 1: Busca PRIMERO en la base de datos interna en la tabla 'peliculas',
+  guiándose en los campos solicitados: nombre, descripcion, generos, actores y audio.
+  Utiliza búsqueda SQL directa y coincidencia difusa (fuzzy) para tolerar faltas de ortografía.
+- PRIORIDAD 2: Solo si NO existe ninguna coincidencia en la base de datos, continúa la búsqueda
+  en The Movie Database (TMDb) y presenta los resultados como sugerencia para solicitar.
+- Reconoce automáticamente si el usuario pregunta en lenguaje natural sin requerir palabras clave fijas.
+- No interfiere con consultas operativas de soporte de internet, cobranzas o saludos.
 """
 
 import os
@@ -20,11 +20,12 @@ import json
 import logging
 import unicodedata
 import difflib
+import traceback
 import urllib.request
 import urllib.parse
 from typing import Dict, Any, List, Optional, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import inspect, text
 import models
 
 logger = logging.getLogger("opsatel.movie_service")
@@ -39,7 +40,7 @@ STOPWORDS = {
     "y", "e", "o", "u", "en", "con", "por", "para", "que", "como", "si", "se"
 }
 
-# Palabras introductorias / frases de descarte en consultas de películas
+# Palabras introductorias / frases conversacionales a remover
 INTRO_PHRASES = [
     r'^(?:hola|buenas|buenos dias|buenas tardes|buenas noches|saludos|amigo|amiga)\b',
     r'^(?:por favor|porfa|favor)\b',
@@ -62,7 +63,7 @@ INTRO_PHRASES = [
     r'\b(?:en opsatv|en la tv|en el catalogo|en el catálogo|por favor|porfa)\b'
 ]
 
-# Palabras o intenciones que PERTENECEN A OPSATEL (Soporte, Cobranzas, Saludos) y NO son películas
+# Intenciones que corresponden a servicios de internet/cobranzas (NO son películas)
 INTENCIONES_OPERATIVAS_ISP = [
     # Cobranzas y pagos
     "saldo", "debo", "deuda", "cuanto debo", "cuánto debo", "cuenta", "banco", "pichincha", "jep",
@@ -119,7 +120,7 @@ def normalizar_texto(texto: str) -> str:
 
 def es_intencion_operativa_isp(mensaje: str) -> bool:
     """
-    Determina si el mensaje del usuario corresponde estrictamente a una gestión de ISP
+    Determina si el mensaje del usuario corresponde estrictamente a gestión de ISP
     (soporte técnico de internet, saldo, facturas, comprobantes, saludos secos, cédulas).
     Si retorna True, NO se debe tratar como búsqueda de películas.
     """
@@ -130,7 +131,7 @@ def es_intencion_operativa_isp(mensaje: str) -> bool:
     if not msg_norm:
         return True
 
-    # 1. Saludos o expresiones de cortesía pura (ej: "hola", "buenas tardes", "hola amigo", "muchas gracias")
+    # 1. Saludos o expresiones de cortesía pura
     saludos_palabras = {
         "hola", "buenas", "bueno", "buenos", "dias", "dia", "tardes", "tarde", "noches", "noche",
         "saludos", "amigo", "amiga", "sam", "opsatel", "opsatv", "menu", "cancelar", "salir",
@@ -150,7 +151,6 @@ def es_intencion_operativa_isp(mensaje: str) -> bool:
     for palabra_isp in INTENCIONES_OPERATIVAS_ISP:
         pal_norm = normalizar_texto(palabra_isp)
         if re.search(r'\b' + re.escape(pal_norm) + r'\b', msg_norm):
-            # Excepción: si además menciona explícitamente "pelicula", "serie", "opsatv", no descartar
             if not any(k in msg_norm for k in ["pelicula", "peli", "serie", "opsatv", "cine"]):
                 return True
 
@@ -159,9 +159,8 @@ def es_intencion_operativa_isp(mensaje: str) -> bool:
 
 def calcular_similitud_fuzzy(query: str, texto_candidato: str) -> float:
     """
-    Calcula el puntaje de similitud (0.0 a 1.0) entre la consulta del usuario y un texto candidato
-    (título, actores, descripción o género de la película).
-    Tolera faltas de ortografía, transposición de letras, omisiones o pequeñas diferencias fonéticas.
+    Calcula el puntaje de similitud (0.0 a 1.0) entre la consulta del usuario y un texto candidato.
+    Tolera faltas de ortografía, omisiones de letras o diferencias de orden de palabras.
     """
     q_norm = normalizar_texto(query)
     c_norm = normalizar_texto(texto_candidato)
@@ -169,7 +168,6 @@ def calcular_similitud_fuzzy(query: str, texto_candidato: str) -> float:
     if not q_norm or not c_norm:
         return 0.0
 
-    # Coincidencia exacta o subcadena directa
     if q_norm == c_norm:
         return 1.0
     if q_norm in c_norm:
@@ -179,7 +177,6 @@ def calcular_similitud_fuzzy(query: str, texto_candidato: str) -> float:
     c_words = [w for w in c_norm.split() if w not in STOPWORDS and len(w) >= 3]
 
     if not q_words or not c_words:
-        # Comparación general de caracteres si son palabras muy cortas
         return difflib.SequenceMatcher(None, q_norm, c_norm).ratio()
 
     q_content = " ".join(q_words)
@@ -187,7 +184,6 @@ def calcular_similitud_fuzzy(query: str, texto_candidato: str) -> float:
     if q_content in c_content:
         return 0.98
 
-    # Para cada palabra del query, buscar la palabra más parecida en el candidato
     puntuaciones_palabras = []
     for qw in q_words:
         mejor_match = 0.0
@@ -210,13 +206,13 @@ def calcular_similitud_fuzzy(query: str, texto_candidato: str) -> float:
 
 def extraer_termino_y_filtros(mensaje: str) -> Tuple[str, Optional[str], Optional[str], bool, str]:
     """
-    Extrae de forma limpia el término de búsqueda, género, audio y si es una solicitud formal.
+    Extrae el término de búsqueda en lenguaje natural, género, audio y solicitudes formales.
     Retorna: (termino_limpio, genero_detectado, audio_detectado, es_solicitud, titulo_solicitud)
     """
     texto = mensaje.strip()
     texto_lower = texto.lower()
 
-    # 1. Verificar si es una solicitud formal (ej: "SOLICITAR Gladiator", "quiero solicitar la pelicula Avatar")
+    # 1. Verificar si es una solicitud formal
     m_solic = re.search(r'(?:solicitar|quiero solicitar|por favor agregar|agreguen|añadir)\s+(?:la\s+pelicula\s+|la\s+peli\s+|la\s+película\s+)?([a-zA-Z0-9\s:_-]{2,60})', texto, re.IGNORECASE)
     if m_solic:
         tit = m_solic.group(1).strip(" .!,;¿?\"'")
@@ -245,14 +241,12 @@ def extraer_termino_y_filtros(mensaje: str) -> Tuple[str, Optional[str], Optiona
     # Quitar signos de puntuación iniciales y finales
     limpio = re.sub(r'^[^\w\d]+|[^\w\d]+$', '', limpio).strip()
 
-    # Quitar conectores sueltos iniciales (ej: "de accion", "con audio latino")
-    limpio = re.sub(r'^(?:de|con|en|del|la|el|los|las|un|una)\s+', '', limpio, flags=re.IGNORECASE).strip()
+    # Quitar conectores iniciales (ej: "de accion")
+    limpio = re.sub(r'^(?:de|con|en|del)\s+', '', limpio, flags=re.IGNORECASE).strip()
 
-    # Si quedó exactamente igual al género detectado
     if genero_detectado and (not limpio or limpio == genero_detectado or limpio in GENEROS_KEYWORDS.get(genero_detectado, [])):
         limpio = ""
 
-    # Si quedó exactamente igual al audio detectado
     if audio_detectado and limpio == audio_detectado:
         limpio = ""
 
@@ -276,96 +270,160 @@ def buscar_peliculas_en_bd(
     limit: int = 3
 ) -> List[Dict[str, Any]]:
     """
-    Busca películas en la tabla 'peliculas' guiándose en los campos:
-    nombre, descripcion, generos, actores y audio.
-    Aplica una búsqueda híbrida (SQL + Fuzzy Matching en memoria) para tolerar
-    faltas de ortografía (ej: 'harry poter', 'interstelar', 'espiderman', etc.).
+    Busca de manera prioritaria en la tabla 'peliculas' de la base de datos.
+    Se guía en los campos: nombre, descripcion, generos, actores y audio.
+    Inspecciona dinámicamente las columnas reales de la tabla para evitar errores de columnas faltantes.
+    Ejecuta:
+    1. Búsqueda SQL directa con LIKE sobre todos los campos.
+    2. Si no hay resultados exactos (ej. faltas ortográficas como 'harry poter' o 'gladiador'),
+       evalúa similitud difusa (fuzzy) sobre el catálogo para encontrar la coincidencia correcta.
     """
     asegurar_tabla_peliculas(db)
     coincidencias = []
 
     try:
-        # Cargar películas existentes de la base de datos
-        query_all = db.query(models.Pelicula)
-        todas = query_all.all()
+        bind = db.get_bind()
+        insp = inspect(bind)
+        cols_existentes = [c["name"] for c in insp.get_columns("peliculas")]
+        col_map = {c.lower(): c for c in cols_existentes}
 
-        if not todas:
+        # Mapeo dinámico y seguro de columnas
+        col_nombre = col_map.get("nombre") or col_map.get("titulo") or "nombre"
+        col_desc = col_map.get("descripcion") or col_map.get("sinopsis") or "descripcion"
+        col_gen = col_map.get("generos") or col_map.get("genero") or "generos"
+        col_actores = col_map.get("actores") or col_map.get("reparto") or "actores"
+        col_audio = col_map.get("audio") or col_map.get("idioma") or "audio"
+
+        print(f"[WhatsApp Películas BD] Columnas activas en tabla 'peliculas': {cols_existentes}")
+        print(f"[WhatsApp Películas BD] Parámetros recibidos -> termino: '{termino}', genero: '{genero}', audio: '{audio}'")
+
+        # -------------------------------------------------------------
+        # ETAPA 1: BÚSQUEDA DIRECTA SQL (Substring y palabras)
+        # -------------------------------------------------------------
+        condiciones_sql = []
+        params_sql = {}
+
+        if termino and len(termino) >= 2:
+            term_wild = f"%{termino.lower()}%"
+            params_sql["term"] = term_wild
+            or_parts = [
+                f"LOWER(`{col_nombre}`) LIKE :term",
+                f"LOWER(`{col_desc}`) LIKE :term",
+                f"LOWER(`{col_gen}`) LIKE :term",
+                f"LOWER(`{col_actores}`) LIKE :term",
+                f"LOWER(`{col_audio}`) LIKE :term"
+            ]
+            condiciones_sql.append(f"({' OR '.join(or_parts)})")
+
+        if genero:
+            variantes = GENEROS_KEYWORDS.get(genero, [genero])
+            gen_or = []
+            for i, v in enumerate(variantes):
+                p_key = f"gen_{i}"
+                params_sql[p_key] = f"%{v.lower()}%"
+                gen_or.append(f"LOWER(`{col_gen}`) LIKE :{p_key} OR LOWER(`{col_nombre}`) LIKE :{p_key} OR LOWER(`{col_desc}`) LIKE :{p_key}")
+            if gen_or:
+                condiciones_sql.append(f"({' OR '.join(gen_or)})")
+
+        if audio:
+            variantes_a = AUDIOS_KEYWORDS.get(audio, [audio])
+            aud_or = []
+            for i, v in enumerate(variantes_a):
+                p_key = f"aud_{i}"
+                params_sql[p_key] = f"%{v.lower()}%"
+                aud_or.append(f"LOWER(`{col_audio}`) LIKE :{p_key}")
+            if aud_or:
+                condiciones_sql.append(f"({' OR '.join(aud_or)})")
+
+        # Si tenemos filtros SQL, ejecutar consulta directa
+        if condiciones_sql:
+            where_clause = " AND ".join(condiciones_sql)
+            select_cols = ", ".join([f"`{c}`" for c in cols_existentes])
+            query_sql = text(f"SELECT {select_cols} FROM `peliculas` WHERE {where_clause} LIMIT {limit}")
+            with bind.connect() as conn:
+                res_direct = conn.execute(query_sql, params_sql).fetchall()
+                if res_direct:
+                    print(f"[WhatsApp Películas BD] 🎯 Coincidencia directa SQL encontrada ({len(res_direct)} registros)")
+                    for row in res_direct:
+                        r_dict = dict(zip(cols_existentes, row))
+                        coincidencias.append({
+                            "nombre": r_dict.get(col_nombre) or "Película",
+                            "descripcion": r_dict.get(col_desc) or "Disponible en catálogo de OPSATV.",
+                            "generos": r_dict.get(col_gen) or "General",
+                            "actores": r_dict.get(col_actores) or "Varios",
+                            "audio": r_dict.get(col_audio) or "Español Latino"
+                        })
+                    return coincidencias
+
+        # -------------------------------------------------------------
+        # ETAPA 2: BÚSQUEDA DIFUSA (FUZZY MATCHING / FALTAS ORTOGRÁFICAS)
+        # -------------------------------------------------------------
+        # Si la consulta SQL directa no arrojó resultados (ej: el usuario escribió
+        # 'harry poter', 'interstelar', 'rapido y furioso' o 'gladiador'),
+        # leemos el catálogo y comparamos similitud en los 5 campos.
+        select_cols = ", ".join([f"`{c}`" for c in cols_existentes])
+        query_all_sql = text(f"SELECT {select_cols} FROM `peliculas`")
+        
+        with bind.connect() as conn:
+            todos_filas = conn.execute(query_all_sql).fetchall()
+
+        if not todos_filas:
+            print("[WhatsApp Películas BD] La tabla 'peliculas' está vacía actualmente.")
             return []
 
-        candidatos_con_puntaje = []
+        candidatos = []
+        for row in todos_filas:
+            r_dict = dict(zip(cols_existentes, row))
+            nombre = str(r_dict.get(col_nombre) or "")
+            descripcion = str(r_dict.get(col_desc) or "")
+            generos = str(r_dict.get(col_gen) or "")
+            actores = str(r_dict.get(col_actores) or "")
+            aud = str(r_dict.get(col_audio) or "")
 
-        for p in todas:
-            nombre = p.nombre or ""
-            descripcion = p.descripcion or ""
-            generos = p.generos or ""
-            actores = p.actores or ""
-            aud = p.audio or ""
-            anio = getattr(p, "anio", "") or ""
+            score = 0.0
 
-            score_total = 0.0
-
-            # 1. Si el usuario buscó por un término (título, actor, palabra de descripción)
             if termino and len(termino) >= 2:
-                # Similitud con el nombre (peso mayor)
-                score_nombre = calcular_similitud_fuzzy(termino, nombre)
-                # Similitud con los actores
-                score_actores = calcular_similitud_fuzzy(termino, actores) * 0.85
-                # Similitud con los géneros
-                score_generos = calcular_similitud_fuzzy(termino, generos) * 0.80
-                # Similitud con la descripción
-                score_desc = 0.90 if normalizar_texto(termino) in normalizar_texto(descripcion) else 0.0
+                s_nombre = calcular_similitud_fuzzy(termino, nombre)
+                s_actores = calcular_similitud_fuzzy(termino, actores) * 0.88
+                s_generos = calcular_similitud_fuzzy(termino, generos) * 0.85
+                s_desc = 0.90 if normalizar_texto(termino) in normalizar_texto(descripcion) else 0.0
+                score = max(score, s_nombre, s_actores, s_generos, s_desc)
 
-                score_termino = max(score_nombre, score_actores, score_generos, score_desc)
-                score_total = max(score_total, score_termino)
-
-            # 2. Si se detectó género en el mensaje
             if genero:
                 variantes = GENEROS_KEYWORDS.get(genero, [genero])
-                gen_match = any(
-                    normalizar_texto(v) in normalizar_texto(generos)
-                    or normalizar_texto(v) in normalizar_texto(nombre)
-                    or normalizar_texto(v) in normalizar_texto(descripcion)
-                    for v in variantes
-                )
-                if gen_match:
-                    score_total = max(score_total, 0.88)
+                if any(normalizar_texto(v) in normalizar_texto(generos) or normalizar_texto(v) in normalizar_texto(nombre) for v in variantes):
+                    score = max(score, 0.90)
 
-            # 3. Si se detectó audio en el mensaje
             if audio:
-                variantes_aud = AUDIOS_KEYWORDS.get(audio, [audio])
-                aud_match = any(normalizar_texto(v) in normalizar_texto(aud) for v in variantes_aud)
-                if aud_match:
-                    score_total = max(score_total, 0.88)
+                variantes_a = AUDIOS_KEYWORDS.get(audio, [audio])
+                if any(normalizar_texto(v) in normalizar_texto(aud) for v in variantes_a):
+                    score = max(score, 0.90)
 
-            # Si supera el umbral de confianza (>= 0.70 tolera errores ortográficos típicos)
-            if score_total >= 0.70:
-                candidatos_con_puntaje.append((score_total, {
-                    "id": p.id,
+            if score >= 0.70:
+                candidatos.append((score, {
                     "nombre": nombre,
                     "descripcion": descripcion or "Disponible en catálogo de OPSATV.",
                     "generos": generos or "General",
                     "actores": actores or "Varios",
                     "audio": aud or "Español Latino",
-                    "anio": anio,
-                    "calificacion": getattr(p, "calificacion", "") or "",
-                    "score": score_total
+                    "score": score
                 }))
 
-        # Ordenar por el mejor puntaje de similitud
-        candidatos_con_puntaje.sort(key=lambda x: x[0], reverse=True)
-        coincidencias = [item[1] for item in candidatos_con_puntaje[:limit]]
+        candidatos.sort(key=lambda x: x[0], reverse=True)
+        coincidencias = [item[1] for item in candidatos[:limit]]
+        print(f"[WhatsApp Películas BD] Coincidencias difusas (fuzzy) encontradas: {len(coincidencias)}")
 
     except Exception as e:
-        logger.error(f"[Movie Service] Error al buscar en la tabla 'peliculas': {e}")
+        print(f"[WhatsApp Películas BD ERROR] Error consultando tabla 'peliculas': {e}")
+        traceback.print_exc()
 
     return coincidencias
 
 
 def buscar_en_tmdb(query_str: str, limit: int = 3) -> List[Dict[str, Any]]:
     """
-    Busca películas en The Movie Database (TMDb API v3).
-    TMDb posee corrección ortográfica y alias de títulos incorporados.
-    Si TMDb falla, realiza fallback a OMDb API.
+    Busca películas en The Movie Database (TMDb API v3) como alternativa
+    cuando NO se encontraron coincidencias en la base de datos local.
     """
     if not query_str or len(query_str.strip()) < 2:
         return []
@@ -373,7 +431,6 @@ def buscar_en_tmdb(query_str: str, limit: int = 3) -> List[Dict[str, Any]]:
     query_clean = query_str.strip()
     resultados = []
 
-    # 1. Petición a The Movie Database (TMDb)
     try:
         encoded_q = urllib.parse.quote(query_clean)
         url = (
@@ -396,10 +453,9 @@ def buscar_en_tmdb(query_str: str, limit: int = 3) -> List[Dict[str, Any]]:
                     vote_str = f"{vote:.1f}" if vote else "N/A"
                     popularity = item.get("popularity", 0)
 
-                    # Verificar relevancia del título respecto a la búsqueda del usuario
                     score_match = calcular_similitud_fuzzy(query_clean, titulo)
                     es_relevante = (
-                        score_match >= 0.55
+                        score_match >= 0.50
                         or normalizar_texto(query_clean) in normalizar_texto(titulo)
                         or any(query_clean in normalizar_texto(v) for v in GENEROS_KEYWORDS.get(query_clean, []))
                         or popularity >= 10.0
@@ -419,7 +475,6 @@ def buscar_en_tmdb(query_str: str, limit: int = 3) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"[Movie Service] Error consultando TMDb ({e}). Intentando fallback a OMDb...")
 
-    # 2. Fallback a OMDb si TMDb falló o no devolvió resultados
     if not resultados:
         try:
             from services.omdb_service import consultar_pelicula, buscar_peliculas
@@ -432,16 +487,6 @@ def buscar_en_tmdb(query_str: str, limit: int = 3) -> List[Dict[str, Any]]:
                     "calificacion": data_omdb.get("calificacion_imdb") or "N/A",
                     "fuente": "OMDb"
                 })
-            else:
-                busq = buscar_peliculas(query=query_clean)
-                for item in busq.get("peliculas", [])[:limit]:
-                    resultados.append({
-                        "titulo": item.get("titulo"),
-                        "anio": item.get("anio"),
-                        "sinopsis": "Película disponible para solicitud.",
-                        "calificacion": "N/A",
-                        "fuente": "OMDb"
-                    })
         except Exception as e_omdb:
             logger.error(f"[Movie Service] Error en fallback OMDb: {e_omdb}")
 
@@ -455,30 +500,35 @@ def formatear_respuesta_whatsapp(
     genero: Optional[str] = None
 ) -> str:
     """
-    Construye la respuesta para WhatsApp según las películas encontradas en BD o en TMDb.
+    Construye la respuesta para WhatsApp:
+    - Si se encontró en la BD local: Muestra los datos de la tabla (nombre, descripción, géneros, actores, audio).
+    - Si NO está en la BD: Muestra TMDb como sugerencia para solicitar su ingreso al catálogo.
     """
+    # -------------------------------------------------------------
     # CASO 1: ENCONTRADAS EN LA BASE DE DATOS LOCAL ('peliculas')
+    # -------------------------------------------------------------
     if peliculas_bd:
         header = f"🍿 *Películas de {genero.upper()} en tu catálogo OPSATV* 🎬\n\n" if genero else "🍿 *Películas disponibles en tu catálogo OPSATV* 🎬\n\n"
         msg = header
 
         for p in peliculas_bd:
-            anio_str = f" ({p['anio']})" if p.get("anio") else ""
-            msg += f"🎬 *{p['nombre'].upper()}*{anio_str}\n"
+            msg += f"🎬 *{p['nombre'].upper()}*\n"
             if p.get("generos"):
-                msg += f"🎭 *Género:* {p['generos']}\n"
+                msg += f"🎭 *Géneros:* {p['generos']}\n"
             if p.get("audio"):
                 msg += f"🔊 *Audio:* {p['audio']}\n"
             if p.get("actores") and p["actores"] != "Varios":
-                msg += f"👥 *Reparto:* {p['actores']}\n"
+                msg += f"👥 *Actores:* {p['actores']}\n"
             if p.get("descripcion"):
-                msg += f"📖 *Sinopsis:* {p['descripcion']}\n"
+                msg += f"📖 *Descripción:* {p['descripcion']}\n"
             msg += "\n"
 
         msg += "✨ _¡Disfrútalas ahora mismo desde tu TV o aplicación OPSATV!_ 📺🍿"
         return msg.strip()
 
-    # CASO 2: NO EXISTEN EN LA BD -> RESULTADOS DE The Movie Database (TMDb) COMO SUGERENCIA
+    # -------------------------------------------------------------
+    # CASO 2: NO EXISTEN EN LA BD -> RESULTADOS DE TMDb PARA SOLICITAR
+    # -------------------------------------------------------------
     if peliculas_tmdb:
         termino_display = termino.capitalize() if termino else "la producción consultada"
         msg = (
@@ -511,9 +561,9 @@ def gestionar_consulta_peliculas(mensaje: str, db: Session) -> Optional[str]:
     Función principal interceptora ejecutada ANTES de que interactúe la IA general de Groq.
     1. Si es mensaje operativo de soporte/cobranza/saludo: retorna None (no interfiere).
     2. Si es una solicitud explícita ('SOLICITAR X'): confirma la solicitud.
-    3. Extrae el término en lenguaje natural (sin requerir palabras fijas como 'recomiendame').
-    4. Busca en la tabla 'peliculas' con tolerancia a faltas de ortografía (nombre, descripción, géneros, actores, audio).
-    5. Si no está en BD, busca en The Movie Database (TMDb) y si hay resultados, los presenta para solicitar.
+    3. Extrae el término en lenguaje natural.
+    4. Busca PRIMERO en la base de datos en la tabla 'peliculas' con los campos solicitados.
+    5. Si NO existe en la base de datos, busca en The Movie Database (TMDb).
     6. Si no es película: retorna None para que la IA atienda normalmente.
     """
     if not mensaje or not isinstance(mensaje, str):
@@ -533,11 +583,13 @@ def gestionar_consulta_peliculas(mensaje: str, db: Session) -> Optional[str]:
             "¡Muchas gracias por ayudarnos a enriquecer tu experiencia de entretenimiento! 🍿📺"
         )
 
-    # Si no quedó término, ni género, ni audio, no es una consulta válida de películas
+    # Si no quedó término, ni género, ni audio, no es una consulta de películas
     if not termino and not genero and not audio:
         return None
 
-    # 2. Búsqueda en la tabla 'peliculas' de la base de datos
+    # -------------------------------------------------------------
+    # PASO 1: BÚSQUEDA PRIORITARIA EN LA BASE DE DATOS LOCAL
+    # -------------------------------------------------------------
     peliculas_bd = buscar_peliculas_en_bd(
         db=db,
         termino=termino,
@@ -546,8 +598,9 @@ def gestionar_consulta_peliculas(mensaje: str, db: Session) -> Optional[str]:
         limit=3
     )
 
-    # Si se encontró en la BD local de OPSATV, retornar inmediatamente
+    # SI SE ENCONTRÓ EN LA BASE DE DATOS LOCAL, RETORNAR DIRECTAMENTE
     if peliculas_bd:
+        print(f"[WhatsApp Películas] ✅ Respondiendo desde BASE DE DATOS LOCAL ({len(peliculas_bd)} películas encontradas)")
         return formatear_respuesta_whatsapp(
             peliculas_bd=peliculas_bd,
             peliculas_tmdb=[],
@@ -555,12 +608,14 @@ def gestionar_consulta_peliculas(mensaje: str, db: Session) -> Optional[str]:
             genero=genero
         )
 
-    # 3. Si NO existe en la base de datos, buscar en The Movie Database (TMDb)
-    # Solo buscar en TMDb si el término tiene longitud suficiente para ser un título o si es un género
+    # -------------------------------------------------------------
+    # PASO 2: SI NO EXISTE EN LA BASE DE DATOS LOCAL -> BUSCAR EN TMDb
+    # -------------------------------------------------------------
     termino_para_tmdb = termino if (termino and len(termino) >= 2) else genero
     if not termino_para_tmdb:
         return None
 
+    print(f"[WhatsApp Películas] 🌐 No encontrado en BD local. Buscando en TMDb: '{termino_para_tmdb}'")
     peliculas_tmdb = buscar_en_tmdb(termino_para_tmdb, limit=3)
 
     if peliculas_tmdb:
@@ -571,5 +626,4 @@ def gestionar_consulta_peliculas(mensaje: str, db: Session) -> Optional[str]:
             genero=genero
         )
 
-    # Si no se encontró ni en BD ni en TMDb, retornar None para que la IA general atienda al usuario
     return None

@@ -846,5 +846,3 @@ class Pelicula(Base):
     generos = Column(String(255), nullable=True)
     actores = Column(Text, nullable=True)
     audio = Column(String(100), nullable=True)
-    portada_url = Column(Text, nullable=True)
-    anio = Column(String(50), nullable=True)
