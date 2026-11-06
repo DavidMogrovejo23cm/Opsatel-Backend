@@ -26,7 +26,7 @@ def crear_ticket_callcenter(ticket: schemas.CallCenterTicketCreate, db: Session 
         telefono=ticket.telefono,
         registrado_por=current_user.username,
         estado=ticket.estado or "PENDIENTE",
-        a_cargo=ticket.a_cargo,
+        a_cargo=ticket.a_cargo or current_user.username,
         problema=ticket.problema,
         observacion_revision=ticket.observacion_revision,
         fecha_cambio_estado=datetime.now().strftime("%Y-%m-%d %H:%M") if ticket.estado else None

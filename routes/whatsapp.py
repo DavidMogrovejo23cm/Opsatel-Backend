@@ -1860,7 +1860,7 @@ def eliminar_todas_las_conversaciones(db: Session = Depends(get_db)):
         print(f"[Error Eliminar Conversaciones] {e}")
         raise HTTPException(status_code=500, detail=f"Error al eliminar conversaciones: {str(e)}")
 
-@router.get("/conversaciones/{numero:path}", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+@router.get("/conversaciones/{numero:path}", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
     """
     Obtiene el historial de chat con un cliente específico (hasta 100 mensajes cronológicos).
@@ -1984,7 +1984,7 @@ def obtener_chat_conversacion(numero: str, db: Session = Depends(get_db)):
         print(f"[Error Obtener Chat] {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/conversaciones/{numero:path}/enviar", dependencies=[Depends(require_role(["administrador", "secretario"]))])
+@router.post("/conversaciones/{numero:path}/enviar", dependencies=[Depends(require_role(["administrador", "secretario", "tecnico"]))])
 def enviar_mensaje_desde_chat(
     numero: str,
     payload: EnviarMensajeChatPayload,
