@@ -12,6 +12,13 @@ from database import engine
 def force_fix_columns():
     is_postgres = "postgresql" in str(engine.url).lower()
     quote = '"' if is_postgres else '`'
+
+    # 0. Asegurar que todas las tablas base existan antes de verificar columnas
+    try:
+        from models import Base
+        Base.metadata.create_all(bind=engine)
+    except Exception as base_err:
+        print(f"Aviso creando tablas base en force_fix: {base_err}")
     
     # 1. Tabla Clientes
     table_clientes = "hoja_de_c__lculo_sin_t__tulo"
@@ -121,6 +128,17 @@ def force_fix_columns():
     process_table(table_whatsapp_config, columns_whatsapp_config)
     process_table(table_hoja_ruta, columns_hoja_ruta)
     process_table(table_egresos, columns_egresos)
+
+    # Asegurar que registros antiguos de egresos tengan estado='Realizado' y mes asignado
+    with engine.connect() as conn:
+        try:
+            inspector_now = inspect(engine)
+            if inspector_now.has_table("egresos_balance"):
+                conn.execute(text(f"UPDATE {quote}egresos_balance{quote} SET {quote}estado{quote} = 'Realizado' WHERE {quote}estado{quote} IS NULL OR {quote}estado{quote} = ''"))
+                conn.execute(text(f"UPDATE {quote}egresos_balance{quote} SET {quote}mes{quote} = SUBSTR({quote}fecha{quote}, 1, 7) WHERE ({quote}mes{quote} IS NULL OR {quote}mes{quote} = '') AND {quote}fecha{quote} IS NOT NULL AND LENGTH({quote}fecha{quote}) >= 7"))
+                conn.commit()
+        except Exception as upd_err:
+            print(f"Aviso actualizando registros anteriores de egresos: {upd_err}")
     
     # Ampliar columnas existentes que requieren mayor tamaño
     modify_columns = [

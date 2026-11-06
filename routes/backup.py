@@ -559,6 +559,13 @@ async def importar_backup_completo(file: UploadFile = File(...)):
             except Exception:
                 pass
 
+        # Ejecutar auto-migración y reparación de columnas inmediatamente tras importar el respaldo
+        try:
+            from force_fix import force_fix_columns
+            force_fix_columns()
+        except Exception as fix_err:
+            logger.warning(f"Aviso ejecutando force_fix tras restauración: {fix_err}")
+
         tipo_msg = (
             f"Respaldo completo (.zip) restaurado con éxito. Se ejecutaron {executed_count} sentencias SQL ({len(tables_affected)} tablas) y se restauraron {imagenes_restauradas} imágenes/archivos."
             if es_zip else

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 # pyrefly: ignore [missing-import]
 from sqlalchemy.orm import Session
+from sqlalchemy import text, inspect
 from typing import List, Optional
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel
@@ -145,6 +146,69 @@ class GastoFijoUpdate(BaseModel):
 # EGRESOS CRUD Y SINCRONIZACIÓN DE GASTOS FIJOS
 # ====================================================================
 
+def asegurar_columnas_egresos(db: Session):
+    """
+    Verifica y repara dinámicamente la tabla egresos_balance y gastos_fijos_balance en tiempo de ejecución.
+    Si se restauró un backup antiguo (ZIP o SQL) donde no existían 'estado' o 'gasto_fijo_id',
+    o si los registros antiguos tienen estado/mes vacíos, esta función asegura la compatibilidad inmediata
+    sin que ocurran errores 500 y garantizando que los egresos anteriores sumen al balance como 'Realizado'.
+    """
+    try:
+        bind = db.get_bind()
+        insp = inspect(bind)
+
+        # 1. Asegurar tabla gastos_fijos_balance si no existe en el respaldo restaurado
+        if not insp.has_table("gastos_fijos_balance"):
+            try:
+                models.Base.metadata.tables["gastos_fijos_balance"].create(bind, checkfirst=True)
+            except Exception as t_err:
+                print(f"Aviso creando tabla gastos_fijos_balance: {t_err}")
+
+        # 2. Asegurar columnas en egresos_balance
+        if insp.has_table("egresos_balance"):
+            cols = {c["name"] for c in insp.get_columns("egresos_balance")}
+            is_postgres = "postgresql" in str(bind.url).lower()
+            quote = '"' if is_postgres else '`'
+
+            if "estado" not in cols:
+                try:
+                    db.execute(text(f"ALTER TABLE {quote}egresos_balance{quote} ADD COLUMN {quote}estado{quote} VARCHAR(50) DEFAULT 'Realizado'"))
+                    db.commit()
+                except Exception as e_col:
+                    db.rollback()
+                    print(f"Aviso agregando columna estado: {e_col}")
+
+            if "gasto_fijo_id" not in cols:
+                try:
+                    db.execute(text(f"ALTER TABLE {quote}egresos_balance{quote} ADD COLUMN {quote}gasto_fijo_id{quote} INT DEFAULT NULL"))
+                    db.commit()
+                except Exception as e_col:
+                    db.rollback()
+                    print(f"Aviso agregando columna gasto_fijo_id: {e_col}")
+
+            if "mes" not in cols:
+                try:
+                    db.execute(text(f"ALTER TABLE {quote}egresos_balance{quote} ADD COLUMN {quote}mes{quote} VARCHAR(7) DEFAULT NULL"))
+                    db.commit()
+                except Exception as e_col:
+                    db.rollback()
+                    print(f"Aviso agregando columna mes: {e_col}")
+
+            # Asegurar que registros antiguos sin estado queden como 'Realizado' para sumar al balance
+            try:
+                db.execute(text(f"UPDATE {quote}egresos_balance{quote} SET {quote}estado{quote} = 'Realizado' WHERE {quote}estado{quote} IS NULL OR {quote}estado{quote} = ''"))
+                db.execute(text(f"UPDATE {quote}egresos_balance{quote} SET {quote}mes{quote} = SUBSTR({quote}fecha{quote}, 1, 7) WHERE ({quote}mes{quote} IS NULL OR {quote}mes{quote} = '') AND {quote}fecha{quote} IS NOT NULL AND LENGTH({quote}fecha{quote}) >= 7"))
+                db.commit()
+            except Exception as e_upd:
+                db.rollback()
+                print(f"Aviso actualizando estado y mes de egresos: {e_upd}")
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print(f"Aviso general en asegurar_columnas_egresos: {e}")
+
 def sincronizar_gastos_fijos_mes(mes: str, db: Session):
     """
     Garantiza que para el mes indicado, cada gasto fijo activo tenga su registro en egresos_balance.
@@ -152,6 +216,7 @@ def sincronizar_gastos_fijos_mes(mes: str, db: Session):
     De esta manera, aparece en la lista de gastos pero NO se suma al balance neto hasta que
     sea marcado como 'Realizado'.
     """
+    asegurar_columnas_egresos(db)
     if not mes or len(mes) < 7:
         return
     mes_str = str(mes)[:7]
@@ -618,6 +683,7 @@ def eliminar_gasto_fijo(id: int, db: Session = Depends(get_db)):
 
 @router.get("/reporte-mensual")
 def reporte_mensual(mes: str, db: Session = Depends(get_db)):
+    asegurar_columnas_egresos(db)
     try:
         year, month = map(int, mes.split("-"))
         import calendar
@@ -1131,6 +1197,7 @@ def reporte_plataforma(mes: str, db: Session = Depends(get_db)):
 
 @router.get("/reporte-anual")
 def reporte_anual(anio: int, db: Session = Depends(get_db)):
+    asegurar_columnas_egresos(db)
     meses_labels = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
                     "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
     month_name_map = {
