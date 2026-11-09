@@ -173,11 +173,35 @@ client.on('auth_failure', (msg) => {
 });
 
 // Ready Event
-client.on('ready', () => {
+client.on('ready', async () => {
     clientStatus = 'CONNECTED';
     activeQrCode = null;
     reinitAttempts = 0;
     console.log('[WhatsApp] Conexión establecida y lista para enviar y recibir mensajes.');
+    try {
+        if (client.pupPage) {
+            await client.pupPage.evaluate(() => {
+                try {
+                    const dm = window.require('WAWebDownloadManager')?.downloadManager;
+                    if (dm && typeof dm.downloadAndMaybeDecrypt === 'function' && !dm._patchedForMimetype) {
+                        const orig = dm.downloadAndMaybeDecrypt.bind(dm);
+                        dm.downloadAndMaybeDecrypt = async function(p) {
+                            if (p && !p.mimetype) {
+                                if (p.type === 'image') p.mimetype = 'image/jpeg';
+                                else if (p.type === 'video') p.mimetype = 'video/mp4';
+                                else if (p.type === 'audio') p.mimetype = 'audio/ogg; codecs=opus';
+                                else if (p.type === 'document') p.mimetype = 'application/pdf';
+                                else p.mimetype = 'image/jpeg';
+                            }
+                            return orig(p);
+                        };
+                        dm._patchedForMimetype = true;
+                        console.log('[WWebJS Patch] downloadAndMaybeDecrypt mimetype patch aplicado en ready');
+                    }
+                } catch (_) {}
+            });
+        }
+    } catch (_) {}
 });
 
 // Disconnected Event
@@ -840,13 +864,30 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance, realPhone = ''
                 stanzaId: stanzaId,
                 from: remitente || (typeof msg.from === 'string' ? msg.from : (msg.from?._serialized || '')),
                 cleanPhone: cleanPhone,
-                remoteDigits: remoteDigits
+                remoteDigits: remoteDigits,
+                mimetype: msg.mimetype || (msg._data && msg._data.mimetype) || 'image/jpeg'
             };
 
             const resOriginal = await clientInstance.pupPage.evaluate(async (opts) => {
                 const sleepWait = ms => new Promise(r => setTimeout(r, ms));
                 const MsgCollection = window.require('WAWebCollections')?.Msg;
                 const downloadMgr = window.require('WAWebDownloadManager')?.downloadManager;
+
+                // Parchear WAWebDownloadManager para evitar "Unexpected mimetype application/octet-stream for media type image"
+                if (downloadMgr && typeof downloadMgr.downloadAndMaybeDecrypt === 'function' && !downloadMgr._patchedForMimetype) {
+                    const origFunc = downloadMgr.downloadAndMaybeDecrypt.bind(downloadMgr);
+                    downloadMgr.downloadAndMaybeDecrypt = async function (params) {
+                        if (params && !params.mimetype) {
+                            if (params.type === 'image') params.mimetype = 'image/jpeg';
+                            else if (params.type === 'video') params.mimetype = 'video/mp4';
+                            else if (params.type === 'audio') params.mimetype = 'audio/ogg; codecs=opus';
+                            else if (params.type === 'document') params.mimetype = 'application/pdf';
+                            else params.mimetype = 'image/jpeg';
+                        }
+                        return origFunc(params);
+                    };
+                    downloadMgr._patchedForMimetype = true;
+                }
 
                 let m = null;
                 let foundSource = '';
@@ -971,6 +1012,7 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance, realPhone = ''
                 // G. Vía 2: Desencriptar con downloadManager.downloadAndMaybeDecrypt usando las claves del modelo real
                 if (downloadMgr && m.directPath && m.mediaKey) {
                     try {
+                        const targetMime = m.mimetype || m.mediaData?.mimetype || opts.mimetype || 'image/jpeg';
                         const mockQpl = {
                             addAnnotations: function () { return this; },
                             addPoint: function () { return this; }
@@ -982,21 +1024,37 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance, realPhone = ''
                             mediaKey: m.mediaKey,
                             mediaKeyTimestamp: m.mediaKeyTimestamp,
                             type: m.type || 'image',
+                            mimetype: targetMime,
                             signal: new AbortController().signal,
                             downloadQpl: mockQpl
                         });
 
-                        if (decrypted && decrypted.byteLength > 2000) {
-                            const b64 = await window.WWebJS.arrayBufferToBase64Async(decrypted);
-                            return {
-                                success: true,
-                                data: b64,
-                                mimetype: m.mimetype || 'image/jpeg',
-                                filename: m.filename || '',
-                                size: decrypted.byteLength,
-                                source: `downloadAndMaybeDecrypt (${foundSource})`,
-                                trueSerializedId: trueSerializedId
-                            };
+                        if (decrypted && (decrypted.byteLength > 2000 || (decrypted.buffer && decrypted.buffer.byteLength > 2000))) {
+                            const ab = (decrypted instanceof ArrayBuffer) ? decrypted : (decrypted.buffer || decrypted);
+                            let b64 = '';
+                            if (window.WWebJS && typeof window.WWebJS.arrayBufferToBase64Async === 'function') {
+                                b64 = await window.WWebJS.arrayBufferToBase64Async(ab);
+                            } else {
+                                const bytes = new Uint8Array(ab);
+                                let binary = '';
+                                const chunkSize = 8192;
+                                for (let i = 0; i < bytes.byteLength; i += chunkSize) {
+                                    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+                                }
+                                b64 = btoa(binary);
+                            }
+
+                            if (b64 && b64.length > 2500) {
+                                return {
+                                    success: true,
+                                    data: b64,
+                                    mimetype: targetMime,
+                                    filename: m.filename || '',
+                                    size: ab.byteLength || b64.length,
+                                    source: `downloadAndMaybeDecrypt (${foundSource})`,
+                                    trueSerializedId: trueSerializedId
+                                };
+                            }
                         }
                     } catch (eDec) {
                         return {
@@ -1151,7 +1209,7 @@ client.on('message', async (msg) => {
             // Descargar la foto ORIGINAL en alta resolución pasando el teléfono real y JID
             const media = await descargarFotoOriginalWhatsApp(msg, client, realPhone, remitente);
 
-            if (media && media.data && media.data.length > 5000) {
+            if (media && media.data && media.data.length > 2500) {
                 // 1. Guardar automáticamente en la carpeta uploadscr en el servidor donde se guarda la página
                 const fileInfo = guardarImagenUploadscr(media.data, media.mimetype, realPhone || remitente, media.filename);
 
