@@ -67,6 +67,7 @@ def buscar_ruta_archivo(file_path_or_name: str) -> Optional[str]:
 def extraer_texto_tesseract(image_path: str) -> str:
     """Invoca pytesseract sobre la imagen con preprocesamiento básico de contraste."""
     try:
+        # pyrefly: ignore[missing-import]
         import pytesseract
         from PIL import Image, ImageEnhance, ImageOps
     except ImportError:
@@ -235,3 +236,4 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
         "texto_extraido": texto_extraido.strip(),
         "ruta_archivo": ruta_real
     }
+
