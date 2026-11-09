@@ -287,7 +287,8 @@ def extraer_texto_multipasada(image_path: str) -> str:
     y preprocesamiento adaptativo (escalado, binarización limpia para marcas de agua, y realce).
     """
     try:
-        import pytesseract
+        # pyrefly: ignore[missing-import]
+        import pytesseract  # type: ignore
         from PIL import Image, ImageOps, ImageEnhance
 
         with Image.open(image_path) as raw_img:
