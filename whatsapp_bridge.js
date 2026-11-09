@@ -758,6 +758,147 @@ let lastOutboundAt = 0;
 // Incoming Message Event
 const OPT_OUT_REGEX = /^\s*(baja|stop|unsubscribe|desuscribir(me)?|darme de baja|no m[aá]s mensajes|no quiero (recibir )?(m[aá]s )?mensajes)[\s.!¡]*$/i;
 
+/**
+ * Descarga la imagen ORIGINAL enviada por el cliente en máxima resolución.
+ * Espera activamente a que WhatsApp Web complete la descarga desde el CDN
+ * y desencripte los bytes reales de la foto usando la mediaKey de la sesión,
+ * evitando estrictamente guardar la miniatura preview de baja resolución (msg._data.body).
+ */
+async function descargarFotoOriginalWhatsApp(msg, clientInstance) {
+    const serializedId = (msg.id && msg.id._serialized) ? msg.id._serialized : String(msg.id || '');
+    console.log(`[WhatsApp Bridge] ⏳ Iniciando descarga de foto ORIGINAL en alta resolución (${serializedId})...`);
+
+    // 1. Método A: Espera activa y desencriptación nativa en Puppeteer (WAWebDownloadManager)
+    if (clientInstance && clientInstance.pupPage && serializedId) {
+        try {
+            const resOriginal = await clientInstance.pupPage.evaluate(async (msgId) => {
+                const sleepWait = ms => new Promise(r => setTimeout(r, ms));
+                const MsgCollection = window.require('WAWebCollections').Msg;
+                let m = MsgCollection.get(msgId);
+                if (!m) {
+                    const fetched = await MsgCollection.getMessagesById([msgId]);
+                    m = fetched?.messages?.[0];
+                }
+                if (!m) return null;
+
+                // Forzar inicio de descarga si WhatsApp Web aún lo tiene en cola
+                if (m.mediaData && m.mediaData.mediaStage !== 'RESOLVED' && typeof m.downloadMedia === 'function') {
+                    try {
+                        await m.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
+                    } catch (_) {}
+                }
+
+                // Esperar hasta 14 segundos (35 iteraciones de 400ms) a que mediaStage sea RESOLVED
+                // o a que directPath y mediaKey estén disponibles para desencriptar
+                for (let i = 0; i < 35; i++) {
+                    const stage = m.mediaData?.mediaStage;
+                    if (stage === 'RESOLVED' || (m.directPath && m.mediaKey && stage !== 'FETCHING')) {
+                        break;
+                    }
+                    await sleepWait(400);
+                    if (!m) m = MsgCollection.get(msgId);
+                }
+
+                // Desencriptar el binario completo de la imagen con WAWebDownloadManager
+                const downloadMgr = window.require('WAWebDownloadManager')?.downloadManager;
+                if (downloadMgr && (m.directPath || m.mediaData?.mediaStage === 'RESOLVED')) {
+                    try {
+                        const mockQpl = { addAnnotations: () => {}, addPoint: () => {} };
+                        const decrypted = await downloadMgr.downloadAndMaybeDecrypt({
+                            directPath: m.directPath,
+                            encFilehash: m.encFilehash,
+                            filehash: m.filehash,
+                            mediaKey: m.mediaKey,
+                            mediaKeyTimestamp: m.mediaKeyTimestamp,
+                            type: m.type,
+                            signal: new AbortController().signal,
+                            downloadQpl: mockQpl
+                        });
+
+                        if (decrypted && decrypted.byteLength > 0) {
+                            const b64 = await window.WWebJS.arrayBufferToBase64Async(decrypted);
+                            return {
+                                success: true,
+                                data: b64,
+                                mimetype: m.mimetype || 'image/jpeg',
+                                filename: m.filename || '',
+                                size: decrypted.byteLength
+                            };
+                        }
+                    } catch (eDec) {
+                        console.warn('downloadAndMaybeDecrypt fallo:', eDec.message);
+                    }
+                }
+
+                // Fallback en Puppeteer: Si WhatsApp Web ya cargó el blob original en memoria (renderableUrl)
+                if (m.mediaData && m.mediaData.renderableUrl) {
+                    try {
+                        const resp = await fetch(m.mediaData.renderableUrl);
+                        const blob = await resp.blob();
+                        if (blob && blob.size > 15000) { // Mayor a 15 KB garantiza que es la foto original
+                            const reader = new FileReader();
+                            const b64 = await new Promise(r => {
+                                reader.onloadend = () => r(reader.result.split(',')[1]);
+                                reader.readAsDataURL(blob);
+                            });
+                            return {
+                                success: true,
+                                data: b64,
+                                mimetype: blob.type || 'image/jpeg',
+                                filename: m.filename || '',
+                                size: blob.size
+                            };
+                        }
+                    } catch (_) {}
+                }
+
+                return null;
+            }, serializedId);
+
+            if (resOriginal && resOriginal.success && resOriginal.data && resOriginal.data.length > 500) {
+                console.log(`[WhatsApp Bridge] 🎯 ¡FOTO ORIGINAL COMPLETA DESCARGADA! Tamaño: ${resOriginal.size} bytes (${resOriginal.data.length} caracteres base64)`);
+                return {
+                    data: resOriginal.data,
+                    mimetype: resOriginal.mimetype || 'image/jpeg',
+                    filename: resOriginal.filename || ''
+                };
+            }
+        } catch (ePup) {
+            console.warn('[WhatsApp Bridge] Aviso en evaluación directa de Puppeteer:', ePup.message);
+        }
+    }
+
+    // 2. Método B: msg.downloadMedia() nativo con reintentos espaciados
+    msg.hasMedia = true;
+    for (let intento = 1; intento <= 5; intento++) {
+        try {
+            const media = await msg.downloadMedia();
+            // Una foto original real suele medir más de 15 KB (aprox. > 20,000 caracteres base64)
+            if (media && media.data && media.data.length > 15000) {
+                console.log(`[WhatsApp Bridge] ✅ Foto original descargada con éxito mediante msg.downloadMedia() (${media.data.length} chars)`);
+                return media;
+            } else if (media && media.data && media.data.length > 50) {
+                console.log(`[WhatsApp Bridge] Reintento ${intento}/5: Media preliminar obtenido (${media.data.length} chars), esperando imagen completa...`);
+            }
+        } catch (eDown) {
+            console.warn(`[WhatsApp Bridge] Intento ${intento}/5 msg.downloadMedia(): ${eDown.message}`);
+        }
+        await sleep(900 * intento);
+    }
+
+    // 3. Método C: Último recurso de emergencia si la CDN tardó demasiado
+    if (msg._data && msg._data.body && typeof msg._data.body === 'string' && msg._data.body.length > 100) {
+        console.warn(`[WhatsApp Bridge] ⚠️ No se pudo descargar la imagen original a tiempo; utilizando vista previa disponible (${msg._data.body.length} chars).`);
+        return {
+            data: msg._data.body,
+            mimetype: msg._data.mimetype || 'image/jpeg',
+            filename: msg._data.filename || ''
+        };
+    }
+
+    return null;
+}
+
 client.on('message', async (msg) => {
     if (msg.isStatus) return;
     if (msg.fromMe) return;
@@ -838,33 +979,8 @@ client.on('message', async (msg) => {
     if (esComprobanteCandidato) {
         console.log(`[WhatsApp Bridge] 🧾 Imagen/Comprobante detectado (${msg.type}) de ${pushname || 'Cliente'} (${realPhone || remitente}). Iniciando descarga automática...`);
         try {
-            let media = null;
-            // Asegurar hasMedia=true para que la librería Message.js no retorne undefined prematuramente
-            msg.hasMedia = true;
-
-            // Reintentar hasta 5 veces con pausas progresivas (el blob en WhatsApp Web a veces está en 'FETCHING' 1-2 segundos)
-            for (let intento = 1; intento <= 5; intento++) {
-                try {
-                    media = await msg.downloadMedia();
-                    if (media && media.data && media.data.length > 50) {
-                        console.log(`[WhatsApp Bridge] ✅ Imagen descargada con éxito en intento ${intento} (${media.data.length} bytes base64)`);
-                        break;
-                    }
-                } catch (eDown) {
-                    console.warn(`[WhatsApp Bridge] Intento ${intento}/5 descargando media: ${eDown.message}`);
-                }
-                await sleep(700 * intento);
-            }
-
-            // Fallback: Si downloadMedia no resolvió pero msg._data.body tiene los datos base64 directamente
-            if ((!media || !media.data) && msg._data && msg._data.body && typeof msg._data.body === 'string' && msg._data.body.length > 100) {
-                media = {
-                    data: msg._data.body,
-                    mimetype: msg._data.mimetype || 'image/jpeg',
-                    filename: msg._data.filename || ''
-                };
-                console.log(`[WhatsApp Bridge] ✅ Imagen recuperada directamente desde msg._data.body (${media.data.length} bytes)`);
-            }
+            // Descargar la foto ORIGINAL en alta resolución
+            const media = await descargarFotoOriginalWhatsApp(msg, client);
 
             if (media && media.data) {
                 // 1. Guardar automáticamente en la carpeta uploadscr en el servidor donde se guarda la página
