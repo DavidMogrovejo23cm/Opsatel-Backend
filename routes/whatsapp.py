@@ -2449,6 +2449,100 @@ def eliminar_administrador_whatsapp(
 
 
 # ============================================================================
+# DESTINOS DE REENVÍO AUTOMÁTICO DE COMPROBANTES OCR
+# ============================================================================
+
+def asegurar_tabla_destinos_ocr(db: Session):
+    try:
+        models.WhatsAppDestinoOCR.__table__.create(bind=db.get_bind(), checkfirst=True)
+        total = db.query(models.WhatsAppDestinoOCR).count()
+        if total == 0:
+            def_admin = models.WhatsAppDestinoOCR(
+                numero="593987149097",
+                nombre="Administración Principal",
+                activo=True
+            )
+            db.add(def_admin)
+            db.commit()
+    except Exception as e_seed:
+        db.rollback()
+        print(f"[Destinos OCR] Verificación de tabla: {e_seed}")
+
+
+@router.get("/destinos-ocr")
+def listar_destinos_ocr(db: Session = Depends(get_db)):
+    """Lista todos los números configurados para recibir comprobantes OCR."""
+    asegurar_tabla_destinos_ocr(db)
+    destinos = db.query(models.WhatsAppDestinoOCR).order_by(models.WhatsAppDestinoOCR.id.asc()).all()
+    return destinos
+
+
+@router.get("/destinos-ocr-public")
+def listar_destinos_ocr_publico(db: Session = Depends(get_db)):
+    """Endpoint público rápido para el puente de WhatsApp (whatsapp_bridge.js)."""
+    asegurar_tabla_destinos_ocr(db)
+    destinos = db.query(models.WhatsAppDestinoOCR).filter(models.WhatsAppDestinoOCR.activo == True).all()
+    return [
+        {"id": d.id, "numero": d.numero, "nombre": d.nombre, "activo": d.activo}
+        for d in destinos
+    ]
+
+
+@router.post("/destinos-ocr")
+def crear_destino_ocr(payload: schemas.WhatsAppDestinoOCRCreate, db: Session = Depends(get_db)):
+    """Registra un nuevo número para reenvío automático de comprobantes OCR."""
+    asegurar_tabla_destinos_ocr(db)
+    num_clean = re.sub(r"\D", "", payload.numero)
+    if not num_clean:
+        raise HTTPException(status_code=400, detail="Número de teléfono inválido")
+
+    if num_clean.startswith("0") and len(num_clean) == 10:
+        num_clean = "593" + num_clean[1:]
+    elif len(num_clean) == 9 and num_clean.startswith("9"):
+        num_clean = "593" + num_clean
+
+    existente = db.query(models.WhatsAppDestinoOCR).filter(models.WhatsAppDestinoOCR.numero == num_clean).first()
+    if existente:
+        existente.nombre = payload.nombre.strip()
+        existente.activo = payload.activo if payload.activo is not None else True
+        db.commit()
+        db.refresh(existente)
+        return existente
+
+    nuevo = models.WhatsAppDestinoOCR(
+        numero=num_clean,
+        nombre=payload.nombre.strip(),
+        activo=payload.activo if payload.activo is not None else True
+    )
+    db.add(nuevo)
+    db.commit()
+    db.refresh(nuevo)
+    return nuevo
+
+
+@router.patch("/destinos-ocr/{destino_id}/toggle-activo")
+def toggle_activo_destino_ocr(destino_id: int, db: Session = Depends(get_db)):
+    """Activa o pausa un número destinatario de OCR."""
+    destino = db.query(models.WhatsAppDestinoOCR).filter(models.WhatsAppDestinoOCR.id == destino_id).first()
+    if not destino:
+        raise HTTPException(status_code=404, detail="Destinatario no encontrado")
+    destino.activo = not destino.activo
+    db.commit()
+    return {"success": True, "activo": destino.activo, "id": destino.id}
+
+
+@router.delete("/destinos-ocr/{destino_id}")
+def eliminar_destino_ocr(destino_id: int, db: Session = Depends(get_db)):
+    """Elimina un número de la lista de reenvío OCR."""
+    destino = db.query(models.WhatsAppDestinoOCR).filter(models.WhatsAppDestinoOCR.id == destino_id).first()
+    if not destino:
+        raise HTTPException(status_code=404, detail="Destinatario no encontrado")
+    db.delete(destino)
+    db.commit()
+    return {"success": True, "message": "Destinatario eliminado correctamente"}
+
+
+# ============================================================================
 # COMPROBANTES DE PAGO Y DESCARGA AUTOMÁTICA DE IMÁGENES (uploadscr)
 # ============================================================================
 
@@ -2642,11 +2736,21 @@ def registrar_comprobante_endpoint(
             "url_archivo": nuevo_comp.url_archivo,
             "cliente_id": cliente.id if cliente else None,
             "cliente_nombre": cliente.nombre if cliente else None,
+            "cliente_telefono": getattr(cliente, "celular", None) or nuevo_comp.numero_telefono,
+            "cliente_plan": getattr(cliente, "plan", None) if cliente else None,
             "monto": nuevo_comp.monto,
             "banco_origen": nuevo_comp.banco_origen,
+            "banco_destino": ocr_data.get("banco_destino"),
+            "beneficiario": ocr_data.get("beneficiario"),
+            "ordenante": ocr_data.get("ordenante"),
+            "cuenta_destino": ocr_data.get("cuenta_destino"),
+            "cuenta_origen": ocr_data.get("cuenta_origen"),
             "numero_referencia": nuevo_comp.numero_referencia,
-            "ocr_detectado": bool(ocr_data.get("success") and (nuevo_comp.monto or nuevo_comp.banco_origen or nuevo_comp.numero_referencia)),
-            "resumen_ocr": ocr_data.get("resumen_ocr")
+            "fecha": ocr_data.get("fecha"),
+            "estado_transaccion": ocr_data.get("estado_transaccion"),
+            "ocr_detectado": bool(ocr_data.get("success")),
+            "resumen_ocr": ocr_data.get("resumen_ocr"),
+            "ocr_completo": ocr_data
         }
 
     except Exception as e:

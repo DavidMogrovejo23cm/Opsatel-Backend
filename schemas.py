@@ -815,6 +815,27 @@ class WhatsAppAdministradorResponse(BaseModel):
         from_attributes = True
 
 
+class WhatsAppDestinoOCRCreate(BaseModel):
+    numero: str
+    nombre: str
+    activo: Optional[bool] = True
+
+class WhatsAppDestinoOCRUpdate(BaseModel):
+    numero: Optional[str] = None
+    nombre: Optional[str] = None
+    activo: Optional[bool] = None
+
+class WhatsAppDestinoOCRResponse(BaseModel):
+    id: int
+    numero: str
+    nombre: str
+    activo: bool
+    fecha_creacion: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class CajaNapBase(BaseModel):
     nombre: str
     nodo_id: Optional[int] = None

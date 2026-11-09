@@ -1126,6 +1126,49 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance, realPhone = ''
     return null;
 }
 
+/**
+ * Consulta la lista de números destinatarios de comprobantes OCR a FastAPI.
+ * Retorna un arreglo de objetos { id, numero, nombre, activo }.
+ * Si falla o no hay ninguno configurado, retorna por defecto [{ numero: defaultNumber, nombre: 'Administración Principal', activo: true }]
+ */
+function obtenerDestinosOCRActivos(defaultNumber = '593987149097') {
+    return new Promise((resolve) => {
+        try {
+            const http = require('http');
+            const options = {
+                hostname: '127.0.0.1',
+                port: fastapiPort,
+                path: '/whatsapp/destinos-ocr-public',
+                method: 'GET',
+                timeout: 5000
+            };
+            const req = http.request(options, (res) => {
+                let body = '';
+                res.on('data', chunk => body += chunk);
+                res.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(body);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                            return resolve(parsed);
+                        }
+                    } catch (_) {}
+                    resolve([{ numero: defaultNumber, nombre: 'Administración Principal', activo: true }]);
+                });
+            });
+            req.on('error', () => {
+                resolve([{ numero: defaultNumber, nombre: 'Administración Principal', activo: true }]);
+            });
+            req.setTimeout(5000, () => {
+                req.destroy();
+                resolve([{ numero: defaultNumber, nombre: 'Administración Principal', activo: true }]);
+            });
+            req.end();
+        } catch (_) {
+            resolve([{ numero: defaultNumber, nombre: 'Administración Principal', activo: true }]);
+        }
+    });
+}
+
 client.on('message', async (msg) => {
     if (msg.isStatus) return;
     if (msg.fromMe) return;
@@ -1248,44 +1291,69 @@ client.on('message', async (msg) => {
                     ocr: ocrData
                 });
 
-                // 4. Si es mensaje de un cliente (no del número administrativo de pagos):
+                // 4. Si es mensaje de un cliente (no de un número administrativo de pagos):
                 if (!esMensajeDeAdmin) {
                     const nowStr = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', hour12: false });
                     const remitenteDisplay = realPhone ? `+${realPhone}` : `+${remitente.split('@')[0]}`;
-                    const nombreDisplay = pushname ? pushname : 'Cliente WhatsApp';
+                    const nombreDisplay = pushname ? pushname : (ocrData?.cliente_nombre || 'Cliente WhatsApp');
+                    const idClienteStr = ocrData && ocrData.cliente_id ? ` (ID #${ocrData.cliente_id})` : '';
+                    const planClienteStr = ocrData && ocrData.cliente_plan ? `📦 *Plan:* ${ocrData.cliente_plan}\n` : '';
                     const notaTexto = msg.body && msg.body.trim() ? `💬 *Mensaje adjunto:* "${msg.body.trim()}"\n` : '';
 
                     let ocrBloque = '';
-                    if (ocrData && (ocrData.monto || ocrData.banco_origen || ocrData.numero_referencia)) {
-                        ocrBloque = `🔍 *Datos Extraídos con OCR (Tesseract):*\n`;
-                        if (ocrData.banco_origen) ocrBloque += `🏦 *Banco:* ${ocrData.banco_origen}\n`;
+                    if (ocrData) {
+                        ocrBloque = `🔍 *Datos Extraídos con OCR:*\n`;
+                        if (ocrData.banco_origen) ocrBloque += `🏦 *Banco Origen:* ${ocrData.banco_origen}\n`;
+                        if (ocrData.banco_destino) ocrBloque += `🏦 *Banco Destino:* ${ocrData.banco_destino}\n`;
                         if (ocrData.monto) ocrBloque += `💰 *Monto:* $${Number(ocrData.monto).toFixed(2)}\n`;
-                        if (ocrData.numero_referencia) ocrBloque += `🔢 *Referencia:* ${ocrData.numero_referencia}\n`;
+                        if (ocrData.beneficiario) ocrBloque += `👤 *Beneficiario (A):* ${ocrData.beneficiario}\n`;
+                        if (ocrData.ordenante) ocrBloque += `👤 *Ordenante (De):* ${ocrData.ordenante}\n`;
+                        if (ocrData.cuenta_destino) ocrBloque += `💳 *Cuenta Destino:* ${ocrData.cuenta_destino}\n`;
+                        if (ocrData.cuenta_origen) ocrBloque += `💳 *Cuenta Origen:* ${ocrData.cuenta_origen}\n`;
+                        if (ocrData.numero_referencia) ocrBloque += `🔢 *N° Comprobante / Ref:* ${ocrData.numero_referencia}\n`;
+                        if (ocrData.fecha) ocrBloque += `📅 *Fecha:* ${ocrData.fecha}\n`;
+                        if (ocrData.estado_transaccion) ocrBloque += `📋 *Estado:* ${ocrData.estado_transaccion}\n`;
                         ocrBloque += `\n`;
                     }
 
                     const captionAdmin = 
                         `🧾 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
-                        `👤 *Cliente:* ${nombreDisplay}\n` +
+                        `👤 *Cliente:* ${nombreDisplay}${idClienteStr}\n` +
                         `📱 *WhatsApp:* ${remitenteDisplay}\n` +
+                        `${planClienteStr}` +
                         `${notaTexto}` +
                         `${ocrBloque}` +
                         `📁 *Guardado en:* ${fileInfo.relativePath || 'uploadscr'}\n` +
                         `📅 *Fecha y Hora:* ${nowStr}\n\n` +
                         `_Descargado automáticamente en servidor, leído con OCR y registrado en la base de datos._`;
 
-                    // Reenviar al número administrativo con su ficha y objeto MessageMedia válido
+                    // Obtener los números destinatarios de OCR configurados en el dropdown de la interfaz
+                    const destinosOCR = await obtenerDestinosOCRActivos(adminReceiptsPhone);
+
                     await runExclusive(async () => {
                         try {
-                            await sleep(rand(1000, 2000));
                             const msgMediaToSend = (media instanceof MessageMedia)
                                 ? media
                                 : new MessageMedia(media.mimetype || 'image/jpeg', media.data, media.filename || fileInfo.fileName || 'comprobante.jpg');
-                            await client.sendMessage(adminChatId, msgMediaToSend, { caption: captionAdmin });
-                            console.log(`[WhatsApp Bridge] 📤 Comprobante reenviado con éxito a Administración (${adminChatId}) desde ${nombreDisplay} (${remitenteDisplay})`);
-                            lastOutboundAt = Date.now();
-                        } catch (eSendAdmin) {
-                            console.error('[WhatsApp Bridge] Error al reenviar comprobante a administración:', eSendAdmin.message);
+
+                            for (const d of destinosOCR) {
+                                if (!d.activo) continue;
+                                const dNum = String(d.numero || '').replace(/\D/g, '');
+                                if (!dNum) continue;
+                                if (dNum === realPhoneDigits || dNum === remitenteDigits) continue; // No reenviar al mismo cliente
+
+                                const targetChatId = `${dNum}@c.us`;
+                                try {
+                                    await sleep(rand(1000, 2000));
+                                    await client.sendMessage(targetChatId, msgMediaToSend, { caption: captionAdmin });
+                                    console.log(`[WhatsApp Bridge] 📤 Comprobante reenviado con éxito a ${d.nombre || 'Destino OCR'} (${targetChatId}) para cliente ${nombreDisplay}${idClienteStr}`);
+                                    lastOutboundAt = Date.now();
+                                } catch (eSendDest) {
+                                    console.error(`[WhatsApp Bridge] Error enviando comprobante a ${targetChatId}:`, eSendDest.message);
+                                }
+                            }
+                        } catch (eEnvio) {
+                            console.error('[WhatsApp Bridge] Error general en reenvío a destinos OCR:', eEnvio.message);
                         }
                     });
 

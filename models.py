@@ -747,6 +747,15 @@ class WhatsAppAdministrador(Base):
     activo = Column(Boolean, default=True)
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
 
+class WhatsAppDestinoOCR(Base):
+    """Números de teléfono a los que se reenvían automáticamente los comprobantes leídos con OCR"""
+    __tablename__ = "whatsapp_destinos_ocr"
+    id = Column(Integer, primary_key=True, index=True)
+    numero = Column(String(50), unique=True, index=True, nullable=False)  # Número de teléfono limpio (ej. 593987149097)
+    nombre = Column(String(100), nullable=False)
+    activo = Column(Boolean, default=True)
+    fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
+
 class WhatsAppMensajeChat(Base):
     """Mensajes de chat bidireccionales entre Cliente y SAM / Operador (Regla: Máximo 30 mensajes por cliente)"""
     __tablename__ = "whatsapp_mensajes_chat"
