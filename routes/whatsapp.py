@@ -7,7 +7,7 @@
 """
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import models, schemas
 from database import get_db, SessionLocal
@@ -1463,6 +1463,11 @@ class WhatsAppWebhookPayload(BaseModel):
     mensaje: str
     nombre: Optional[str] = None
     jid_original: Optional[str] = None
+    url_archivo: Optional[str] = None
+    nombre_archivo: Optional[str] = None
+    ruta_archivo: Optional[str] = None
+    mimetype: Optional[str] = None
+    tamano_bytes: Optional[int] = None
 
 @router.post("/webhook-mensaje")
 def webhook_mensaje_whatsapp(
@@ -1604,13 +1609,174 @@ def webhook_mensaje_whatsapp(
         else:
             historial_previo = list(sam_bot_service.historial_conversaciones.get(jid_destino, []))
 
-        # Registrar mensaje entrante del cliente en el historial persistente de chat
+        # =========================================================================
+        # 4.1 DETECCIÓN Y PROCESAMIENTO GARANTIZADO DE COMPROBANTES / IMÁGENES
+        # Almacena en la tabla MySQL 'comprobantes', vincula al cliente y muestra en chat
+        # =========================================================================
+        es_comprobante = bool(
+            payload.url_archivo or
+            "uploadscr" in mensaje or
+            mensaje.startswith("🧾 [Comprobante") or
+            mensaje.startswith("[NON_TEXT_MSG] image") or
+            mensaje.strip() == "[NON_TEXT_MSG] image" or
+            (payload.mimetype and str(payload.mimetype).startswith("image/"))
+        )
+
+        if es_comprobante:
+            asegurar_tabla_comprobantes(db)
+
+            # A. Extraer o resolver URL y nombre del comprobante
+            url_final = payload.url_archivo
+            if not url_final:
+                m_url = re.search(r'(?:https?://[^\s]+)?(/uploadscr/[a-zA-Z0-9_\-\.\/]+)', mensaje)
+                if m_url:
+                    url_final = m_url.group(1)
+
+            nombre_archivo = payload.nombre_archivo or (os.path.basename(url_final) if url_final else None)
+
+            # Si vino como [NON_TEXT_MSG] image sin URL, buscar en carpetas uploadscr el archivo guardado más reciente
+            backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            candidatos_dir = [
+                os.path.join(backend_dir, "uploadscr"),
+                os.path.join(backend_dir, "uploads", "uploadscr"),
+                os.path.join(backend_dir, "..", "Opsatel-Frontend", "uploadscr"),
+                os.path.join(backend_dir, "..", "Opsatel-Frontend", "public", "uploadscr"),
+                os.path.join(backend_dir, "..", "Opsatel-Frontend", "dist", "uploadscr"),
+            ]
+            if not url_final or not nombre_archivo:
+                arch_reciente = None
+                for c_dir in candidatos_dir:
+                    if os.path.exists(c_dir):
+                        try:
+                            archivos = [os.path.join(c_dir, f) for f in os.listdir(c_dir) if os.path.isfile(os.path.join(c_dir, f))]
+                            if archivos:
+                                mas_nuevo = max(archivos, key=os.path.getmtime)
+                                if (datetime.now().timestamp() - os.path.getmtime(mas_nuevo)) < 300:
+                                    arch_reciente = os.path.basename(mas_nuevo)
+                                    break
+                        except Exception:
+                            pass
+
+                if arch_reciente:
+                    nombre_archivo = arch_reciente
+                    url_final = f"/uploadscr/{arch_reciente}"
+                else:
+                    ts_now = int(datetime.utcnow().timestamp())
+                    t_dig = (tel_real or jid_destino).replace("@c.us", "").replace("@lid", "")
+                    nombre_archivo = f"comp_{ts_now}_{t_dig}.jpg"
+                    url_final = f"/uploadscr/{nombre_archivo}"
+
+            ruta_archivo = payload.ruta_archivo or f"uploadscr/{nombre_archivo}"
+            mimetype = payload.mimetype or "image/jpeg"
+            tamano_bytes = payload.tamano_bytes or 0
+
+            # Extraer nota o mensaje adicional que el cliente haya escrito junto al comprobante
+            texto_adjunto = ""
+            if " - " in mensaje and not mensaje.startswith("[NON_TEXT_MSG]"):
+                texto_adjunto = mensaje.split(" - ", 1)[1].strip()
+            elif not mensaje.startswith("🧾") and not mensaje.startswith("[NON_TEXT_MSG]"):
+                texto_adjunto = mensaje.strip()
+
+            num_db = tel_real or jid_destino.replace("@c.us", "").replace("@lid", "")
+            nombre_db = payload.nombre or (c_por_msg.nombre if c_por_msg else "Cliente WhatsApp")
+            ahora_ec = datetime.now(ECUADOR_TZ).replace(tzinfo=None)
+
+            # B. Insertar en la tabla 'comprobantes' de MySQL (evitando duplicar si ya se registró por endpoint)
+            comp_existente = db.query(models.Comprobante).filter(
+                (models.Comprobante.nombre_archivo == nombre_archivo) |
+                (
+                    (models.Comprobante.numero_telefono == num_db) &
+                    (models.Comprobante.created_at >= datetime.utcnow() - timedelta(minutes=2))
+                )
+            ).first()
+
+            if not comp_existente:
+                nuevo_comp = models.Comprobante(
+                    cliente_id=c_por_msg.id if c_por_msg else None,
+                    numero_telefono=num_db,
+                    nombre_remitente=nombre_db,
+                    nombre_archivo=nombre_archivo,
+                    ruta_archivo=ruta_archivo,
+                    url_archivo=url_final,
+                    mimetype=mimetype,
+                    tamano_bytes=tamano_bytes,
+                    mensaje_texto=texto_adjunto or "Comprobante de pago recibido por WhatsApp",
+                    estado="PENDIENTE",
+                    fecha_hora=ahora_ec,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow()
+                )
+                db.add(nuevo_comp)
+                db.commit()
+                db.refresh(nuevo_comp)
+
+                # Replicar en SQLite opsatel.db si existe
+                try:
+                    for db_sqlite in [os.path.join(backend_dir, "opsatel.db"), os.path.join(backend_dir, "..", "opsatel.db")]:
+                        if os.path.exists(db_sqlite) and "sqlite" not in str(db.get_bind().url).lower():
+                            import sqlite3
+                            sc = sqlite3.connect(db_sqlite)
+                            sc.execute("""
+                                INSERT INTO comprobantes (
+                                    cliente_id, numero_telefono, nombre_remitente, nombre_archivo,
+                                    ruta_archivo, url_archivo, mimetype, tamano_bytes, mensaje_texto,
+                                    estado, fecha_hora, created_at, updated_at
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?)
+                            """, (
+                                c_por_msg.id if c_por_msg else None,
+                                num_db,
+                                nombre_db,
+                                nombre_archivo,
+                                ruta_archivo,
+                                url_final,
+                                mimetype,
+                                tamano_bytes,
+                                texto_adjunto or "Comprobante de pago recibido por WhatsApp",
+                                ahora_ec.strftime("%Y-%m-%d %H:%M:%S"),
+                                datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                                datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                            ))
+                            sc.commit()
+                            sc.close()
+                except Exception as e_sq_sync:
+                    print(f"[Comprobante] Aviso replicando a sqlite: {e_sq_sync}")
+
+            # C. Registrar mensaje entrante en el chat persistente con URL de imagen y tipo multimedia
+            msg_formateado_chat = f"🧾 [Comprobante guardado en uploadscr] {url_final}"
+            if texto_adjunto:
+                msg_formateado_chat += f" - {texto_adjunto}"
+
+            registrar_mensaje_chat(
+                db, jid_destino, "cliente", msg_formateado_chat,
+                cliente_id=c_por_msg.id if c_por_msg else None,
+                tipo="multimedia",
+                nombre_remitente=payload.nombre or ""
+            )
+            sam_bot_service.guardar_mensaje_historial(jid_destino, "user", msg_formateado_chat)
+
+            # D. Respuesta cordial de confirmación del comprobante (SIN saludo genérico de bienvenida)
+            resp_comprobante = (
+                "¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago.\n"
+                "Ha sido guardado en el sistema y remitido al área administrativa (+593 98 714 9097) para su verificación. ¡Que tengas un excelente día! 😊"
+            )
+            registrar_mensaje_chat(
+                db, jid_destino, "asistente", resp_comprobante,
+                cliente_id=c_por_msg.id if c_por_msg else None
+            )
+            sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", resp_comprobante)
+            try:
+                whatsapp_service.send_whatsapp_message(jid_destino, resp_comprobante)
+            except Exception as e_send_w:
+                print(f"[WhatsApp] Aviso al enviar confirmación de comprobante: {e_send_w}")
+
+            return {"success": True, "response": resp_comprobante, "comprobante": True}
+
+        # Registrar mensaje normal entrante del cliente en el historial persistente de chat
         cid_vinculado = c_por_msg.id if c_por_msg else None
-        tipo_msg = "multimedia" if mensaje.startswith("🧾 [Comprobante") else "texto"
         nuevo_msg_guardado = registrar_mensaje_chat(
             db, jid_destino, "cliente", mensaje,
             cliente_id=cid_vinculado,
-            tipo=tipo_msg,
+            tipo="texto",
             nombre_remitente=payload.nombre or ""
         )
         if nuevo_msg_guardado and nuevo_msg_guardado.cliente_id and not c_por_msg:
@@ -1622,18 +1788,17 @@ def webhook_mensaje_whatsapp(
 
         sam_bot_service.guardar_mensaje_historial(jid_destino, "user", mensaje)
 
-        # 4.1 Manejo de comprobante ya reenviado automáticamente a administración (+593 98 714 9097)
-        if mensaje.startswith("🧾 [Comprobante enviado al área administrativa]"):
-            resp_comprobante = (
-                "¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago.\n"
-                "Ha sido reenviado al área administrativa (+593 98 714 9097) para su verificación y registro en el sistema. ¡Que tengas un excelente día! 😊"
-            )
-            registrar_mensaje_chat(
-                db, jid_destino, "asistente", resp_comprobante,
-                cliente_id=c_por_msg.id if c_por_msg else None
-            )
-            sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", resp_comprobante)
-            return {"success": True, "response": resp_comprobante, "comprobante": True}
+        # Si es otro tipo de archivo no soportado directamente (video, audio, etc.)
+        if mensaje.startswith("[NON_TEXT_MSG]"):
+            tipo_media = mensaje.replace("[NON_TEXT_MSG]", "").strip().lower()
+            resp_media = f"Hemos recibido tu archivo adjunto ({tipo_media}). Un asesor humano lo revisará en breve. ¡Muchas gracias!"
+            registrar_mensaje_chat(db, jid_destino, "asistente", resp_media, cliente_id=c_por_msg.id if c_por_msg else None)
+            sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", resp_media)
+            try:
+                whatsapp_service.send_whatsapp_message(jid_destino, resp_media)
+            except Exception:
+                pass
+            return {"success": True, "response": resp_media}
 
         # 5. Comando explícito de reinicio / cancelación
         if mensaje.lower() in ["cancelar", "salir", "menu", "menú", "inicio", "empezar de nuevo", "reset", "reiniciar"]:
@@ -2295,6 +2460,11 @@ def asegurar_tabla_comprobantes(db: Session = None):
     if db is not None:
         try:
             models.Comprobante.__table__.create(bind=db.get_bind(), checkfirst=True)
+            # Sanitizar mensajes antiguos que hayan quedado como texto plano '[NON_TEXT_MSG] image'
+            db.query(models.WhatsAppMensajeChat).filter(
+                models.WhatsAppMensajeChat.mensaje == "[NON_TEXT_MSG] image"
+            ).update({"mensaje": "📷 [Comprobante / Foto enviada]", "tipo": "multimedia"}, synchronize_session=False)
+            db.commit()
         except Exception as e_bind:
             print(f"[Comprobantes] Verificación de tabla en motor activo: {e_bind}")
     

@@ -6,6 +6,7 @@
 @notice Developed with AI assistance.‍​‌​​​‌​​​‌‌​​​​‌​‌‌‌​‌‌​​‌‌​‌​​‌​‌‌​​‌​​​​‌​​​​​​‌​​‌‌​‌​‌‌​‌‌‌‌​‌‌​​‌‌‌​‌‌‌​​‌​​‌‌​‌‌‌‌​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​‌​‌​​‌‌​‌‌‌‌​​‌​​​​​​​‌​‌​​​​‌‌​​​‌‌​​‌​‌​​‌​​‌​​​​​​​‌‌​​‌​​​‌‌​​​​​​‌‌​​‌​​​‌‌​‌‌​​​‌​‌‌‌​​​‌​​​​​​‌​​​​​‌​‌‌​‌‌​​​‌‌​‌‌​​​​‌​​​​​​‌​‌​​‌​​‌‌​‌​​‌​‌‌​​‌‌‌​‌‌​‌​​​​‌‌‌​‌​​​‌‌‌​​‌‌​​‌​​​​​​‌​‌​​‌​​‌‌​​‌​‌​‌‌‌​​‌‌​‌‌​​‌​‌​‌‌‌​​‌​​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​​‌​​​​‌​‌‌‌​​​‌​​​​​​‌​​​‌​​​‌‌​​‌​‌​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​‌‌​​​‌‌​‌‌‌‌​‌‌‌​​​​​‌‌​​‌​‌​‌‌​​‌​​​​‌​​​​​​‌‌‌​‌‌‌​‌‌​‌​​‌​‌‌‌​‌​​​‌‌​‌​​​​​‌​​​​​​‌​​​​​‌​‌​​‌​​‌​​‌​​​​​​‌‌​​​​‌​‌‌‌​​‌‌​‌‌‌​​‌‌​‌‌​‌​​‌​‌‌‌​​‌‌​‌‌‌​‌​​​‌‌​​​​‌​‌‌​‌‌‌​​‌‌​​​‌‌​‌‌​​‌​‌​​‌​‌‌‌​​​‌​​​​​​‌​​​​‌‌​‌‌​‌‌‌‌​‌‌​‌‌‌​​‌‌‌​‌​​​‌‌​​​​‌​‌‌​​​‌‌​‌‌‌​‌​​​​‌‌‌​‌​​​‌​​​​​​‌‌​​‌​​​‌‌​‌‌​‌​‌‌​‌‌‌‌​‌‌​​‌‌‌​‌‌‌​​‌​​‌‌​‌‌‌‌​‌‌‌​‌‌​​‌‌​​‌​‌​‌‌​‌​‌​​‌‌​‌‌‌‌​​‌‌‌​​​​​‌‌​‌‌‌​‌​​​​​​​‌‌​​‌‌‌​‌‌​‌‌​‌​‌‌​​​​‌​‌‌​‌​​‌​‌‌​‌‌​​​​‌​‌‌‌​​‌‌​​​‌‌​‌‌​‌‌‌‌​‌‌​‌‌​‌​​‌​‌‌‌​​​‌​​​​​​‌​​​‌‌​​‌‌​‌‌‌‌​‌‌‌​​‌​​‌‌​​‌​‌​‌‌​‌‌‌​​‌‌‌​​‌‌​‌‌​‌​​‌​‌‌​​​‌‌​​‌​​​​​​‌​‌​​‌‌​‌‌​‌​​‌​‌‌​​‌‌‌​​‌‌‌​‌​​​‌​​​​​​‌‌​​​‌​​‌‌​​‌‌​​​‌‌​​‌​​​‌‌​‌‌​​‌‌​​‌​‌​‌‌​​‌​‌​​‌‌​​​​​​‌‌​​‌‌​​‌‌​​‌‌​​‌‌​‌​​​​‌‌​​​‌​​‌‌‌​​​​‌‌​​‌​​​​‌‌​‌​‌​‌‌​​‌​​​‌‌​​​‌‌‍
 @hash bf26ee033418d5dcd984ad8115334e7ce788cfb5d2bd456cf6e6ee21b877a762
 """
+from fastapi import HTTPException
 from fastapi import FastAPI, Response, Request
 # pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
@@ -247,12 +248,31 @@ app.mount("/rutas_reportes", StaticFiles(directory="rutas_reportes"), name="ruta
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Carpeta uploadscr (donde se guarda la página y se almacenan comprobantes de WhatsApp)
+from fastapi.responses import FileResponse
+
 uploadscr_frontend = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "Opsatel-Frontend", "uploadscr"))
 uploadscr_backend = os.path.abspath(os.path.join(os.path.dirname(__file__), "uploadscr"))
 if os.path.exists(os.path.dirname(uploadscr_frontend)):
     os.makedirs(uploadscr_frontend, exist_ok=True)
     os.makedirs(os.path.join(os.path.dirname(uploadscr_frontend), "public", "uploadscr"), exist_ok=True)
 os.makedirs(uploadscr_backend, exist_ok=True)
+os.makedirs(os.path.join(os.path.dirname(__file__), "uploads", "uploadscr"), exist_ok=True)
+
+@app.get("/uploadscr/{filename:path}")
+def servir_comprobante_uploadscr(filename: str):
+    clean_name = os.path.basename(filename)
+    candidates = [
+        os.path.join(uploadscr_backend, clean_name),
+        os.path.join(os.path.dirname(__file__), "uploads", "uploadscr", clean_name),
+        os.path.join(uploadscr_frontend, clean_name),
+        os.path.join(os.path.dirname(uploadscr_frontend), "public", "uploadscr", clean_name),
+        os.path.join(os.path.dirname(uploadscr_frontend), "dist", "uploadscr", clean_name),
+    ]
+    for c in candidates:
+        if os.path.exists(c) and os.path.isfile(c):
+            return FileResponse(c)
+    raise HTTPException(status_code=404, detail="Comprobante no encontrado en el servidor")
+
 target_uploadscr_static = uploadscr_frontend if os.path.exists(uploadscr_frontend) else uploadscr_backend
 app.mount("/uploadscr", StaticFiles(directory=target_uploadscr_static), name="uploadscr")
 

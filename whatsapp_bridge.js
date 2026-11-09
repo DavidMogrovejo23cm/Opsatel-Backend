@@ -223,13 +223,18 @@ setInterval(async () => {
 const fastapiPort = parseInt(process.env.FASTAPI_PORT || process.env.BACKEND_PORT || '8000', 10);
 
 // Webhook to send incoming messages to FastAPI (SAM Chatbot)
-function sendWebhook(from, body, pushname = '', originalJid = '') {
+function sendWebhook(from, body, pushname = '', originalJid = '', extraData = {}) {
     const http = require('http');
     const payload = JSON.stringify({ 
         numero: from, 
         mensaje: body,
         nombre: pushname,
-        jid_original: originalJid
+        jid_original: originalJid,
+        url_archivo: extraData.url_archivo || null,
+        nombre_archivo: extraData.nombre_archivo || null,
+        ruta_archivo: extraData.ruta_archivo || null,
+        mimetype: extraData.mimetype || null,
+        tamano_bytes: extraData.tamano_bytes || null
     });
     const options = {
         hostname: '127.0.0.1', // Usar 127.0.0.1 explícito para evitar fallos de IPv6 ::1
@@ -304,6 +309,8 @@ function getUploadscrDirectories() {
     
     // 4. Directorio en el Backend local (para que FastAPI lo sirva mediante app.mount)
     dirs.push(path.resolve(__dirname, 'uploadscr'));
+    dirs.push(path.resolve(__dirname, 'uploads', 'uploadscr'));
+
 
     // Asegurar que todas las carpetas candidatas existan en el servidor
     const uniqueDirs = [...new Set(dirs)];
@@ -823,13 +830,42 @@ client.on('message', async (msg) => {
     const esMensajeDeAdmin = (remitenteDigits && (remitenteDigits.endsWith(adminReceiptsPhone) || adminReceiptsPhone.endsWith(remitenteDigits))) ||
                              (realPhoneDigits && (realPhoneDigits.endsWith(adminReceiptsPhone) || adminReceiptsPhone.endsWith(realPhoneDigits)));
 
-    const esImagen = msg.hasMedia && (msg.type === 'image' || (msg._data && msg._data.mimetype && msg._data.mimetype.startsWith('image/')));
-    const esComprobanteCandidato = esImagen || (msg.type === 'document' && msg.hasMedia);
+    // Detección estricta: si el tipo es 'image' o trae mimetype de imagen, es una foto sin importar flags iniciales
+    const esImagen = msg.type === 'image' || (msg._data && msg._data.mimetype && msg._data.mimetype.startsWith('image/'));
+    const esDocumento = msg.type === 'document';
+    const esComprobanteCandidato = esImagen || esDocumento || (msg.hasMedia && msg.type !== 'chat');
 
     if (esComprobanteCandidato) {
-        console.log(`[WhatsApp Bridge] 🧾 Imagen/Comprobante detectado (${msg.type}) de ${pushname || 'Cliente'} (${realPhone || remitente}). Descargando automáticamente en carpeta 'uploadscr'...`);
+        console.log(`[WhatsApp Bridge] 🧾 Imagen/Comprobante detectado (${msg.type}) de ${pushname || 'Cliente'} (${realPhone || remitente}). Iniciando descarga automática...`);
         try {
-            const media = await msg.downloadMedia();
+            let media = null;
+            // Asegurar hasMedia=true para que la librería Message.js no retorne undefined prematuramente
+            msg.hasMedia = true;
+
+            // Reintentar hasta 5 veces con pausas progresivas (el blob en WhatsApp Web a veces está en 'FETCHING' 1-2 segundos)
+            for (let intento = 1; intento <= 5; intento++) {
+                try {
+                    media = await msg.downloadMedia();
+                    if (media && media.data && media.data.length > 50) {
+                        console.log(`[WhatsApp Bridge] ✅ Imagen descargada con éxito en intento ${intento} (${media.data.length} bytes base64)`);
+                        break;
+                    }
+                } catch (eDown) {
+                    console.warn(`[WhatsApp Bridge] Intento ${intento}/5 descargando media: ${eDown.message}`);
+                }
+                await sleep(700 * intento);
+            }
+
+            // Fallback: Si downloadMedia no resolvió pero msg._data.body tiene los datos base64 directamente
+            if ((!media || !media.data) && msg._data && msg._data.body && typeof msg._data.body === 'string' && msg._data.body.length > 100) {
+                media = {
+                    data: msg._data.body,
+                    mimetype: msg._data.mimetype || 'image/jpeg',
+                    filename: msg._data.filename || ''
+                };
+                console.log(`[WhatsApp Bridge] ✅ Imagen recuperada directamente desde msg._data.body (${media.data.length} bytes)`);
+            }
+
             if (media && media.data) {
                 // 1. Guardar automáticamente en la carpeta uploadscr en el servidor donde se guarda la página
                 const fileInfo = guardarImagenUploadscr(media.data, media.mimetype, realPhone || remitente, media.filename);
@@ -848,7 +884,17 @@ client.on('message', async (msg) => {
                     });
                 }
 
-                // 3. Si es mensaje de un cliente (no del número administrativo de pagos):
+                // 3. Notificar a FastAPI para que quede registrado en el chat persistente con su imagen y URL
+                const infoMsg = `🧾 [Comprobante guardado en uploadscr] ${fileInfo.publicUrl || ''} ${msg.body ? ('- ' + msg.body) : ''}`.trim();
+                sendWebhook(numeroParaWebhook, infoMsg, pushname, remitente, {
+                    url_archivo: fileInfo.publicUrl,
+                    nombre_archivo: fileInfo.fileName,
+                    ruta_archivo: fileInfo.relativePath,
+                    mimetype: media.mimetype || 'image/jpeg',
+                    tamano_bytes: fileInfo.fileSize
+                });
+
+                // 4. Si es mensaje de un cliente (no del número administrativo de pagos):
                 if (!esMensajeDeAdmin) {
                     const nowStr = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', hour12: false });
                     const remitenteDisplay = realPhone ? `+${realPhone}` : `+${remitente.split('@')[0]}`;
@@ -887,28 +933,41 @@ client.on('message', async (msg) => {
                             console.warn('[WhatsApp Bridge] Aviso al confirmar al cliente:', eResp.message);
                         }
                     });
-
-                    // Notificar a FastAPI para que quede registrado en el chat persistente de Opsatel con enlace a la imagen
-                    const infoMsg = `🧾 [Comprobante guardado en uploadscr] ${fileInfo.publicUrl || ''} ${msg.body ? ('- ' + msg.body) : ''}`.trim();
-                    sendWebhook(numeroParaWebhook, infoMsg, pushname, remitente);
-                    return;
                 } else {
                     console.log(`[WhatsApp Bridge] 📸 Imagen de administración guardada en uploadscr y registrada (${fileInfo.fileName}).`);
-                    return;
                 }
+                return; // Terminado con éxito, no continuar a procesamiento de texto
+            } else {
+                console.warn(`[WhatsApp Bridge] ⚠️ No se pudo obtener el stream binario de la imagen enviada por ${remitente}. Registrando recepción preliminar...`);
+                const fallbackName = `comp_${Date.now()}_${(realPhone || remitente).replace(/\D/g, '') || 'pendiente'}_wa.jpg`;
+                await registrarComprobanteAPI({
+                    numero_telefono: realPhone || remitente,
+                    nombre_remitente: pushname,
+                    nombre_archivo: fallbackName,
+                    ruta_archivo: `uploadscr/${fallbackName}`,
+                    url_archivo: `/uploadscr/${fallbackName}`,
+                    mimetype: 'image/jpeg',
+                    tamano_bytes: 0,
+                    mensaje_texto: msg.body || '[Imagen recibida de WhatsApp]'
+                });
+                const infoMsg = `🧾 [Comprobante guardado en uploadscr] /uploadscr/${fallbackName} ${msg.body ? ('- ' + msg.body) : ''}`.trim();
+                sendWebhook(numeroParaWebhook, infoMsg, pushname, remitente, {
+                    url_archivo: `/uploadscr/${fallbackName}`,
+                    nombre_archivo: fallbackName
+                });
+                return;
             }
         } catch (eMediaErr) {
             console.error('[WhatsApp Bridge] Error procesando comprobante:', eMediaErr.message);
         }
     }
 
-
-    // Manejar mensajes entrantes: solo procesar texto o multimedia real enviada por personas
-    const userMediaTypes = ['image', 'video', 'audio', 'ptt', 'sticker', 'document'];
+    // Manejar mensajes entrantes: solo procesar texto o multimedia que no sean imágenes ya gestionadas
+    const userMediaTypes = ['video', 'audio', 'ptt', 'sticker'];
     if (msg.type === 'chat' && msg.body) {
         sendWebhook(numeroParaWebhook, msg.body, pushname, remitente);
     } else if (userMediaTypes.includes(msg.type)) {
-        // Notificar a SAM sobre contenido multimedia real enviado por el usuario
+        // Notificar a SAM sobre contenido multimedia real no-imagen
         sendWebhook(numeroParaWebhook, `[NON_TEXT_MSG] ${msg.type}`, pushname, remitente);
     } else {
         // Ignorar eventos o notificaciones del protocolo interno de WhatsApp (e2e_notification, notification_template, protocol, etc.)
