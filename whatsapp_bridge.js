@@ -874,18 +874,48 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance) {
                     }
                 }
 
-                // B. Si encontramos el mensaje, forzar a WhatsApp Web a descargarlo si está pendiente
+                // Si aún no se encontró, buscar en los mensajes del chat del remitente
+                if (!m && opts.from) {
+                    try {
+                        const WidFactory = window.require('WAWebWidFactory');
+                        const ChatCollection = window.require('WAWebCollections')?.Chat;
+                        if (WidFactory && ChatCollection) {
+                            const chatWid = WidFactory.createWid(opts.from);
+                            const chat = ChatCollection.get(chatWid);
+                            if (chat && chat.msgs) {
+                                const chatModels = chat.msgs.models || chat.msgs._models || [];
+                                m = chatModels.find(x => {
+                                    const xId = x.id;
+                                    if (!xId) return false;
+                                    if (typeof xId === 'string') return xId.includes(opts.stanzaId);
+                                    return xId.id === opts.stanzaId || (xId._serialized && xId._serialized.includes(opts.stanzaId));
+                                }) || chatModels[chatModels.length - 1];
+                            }
+                        }
+                    } catch (_) {}
+                }
+
+                // B. Si encontramos el mensaje, forzar a WhatsApp Web a descargarlo desde el CDN
                 if (m) {
                     if (m.mediaData && m.mediaData.mediaStage !== 'RESOLVED' && typeof m.downloadMedia === 'function') {
                         try {
+                            console.log('[Puppeteer Media] Invocando m.downloadMedia() para descargar bytes originales...');
                             await m.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
-                        } catch (_) {}
+                        } catch (eDm) {
+                            console.warn('[Puppeteer Media] m.downloadMedia aviso:', eDm.message);
+                        }
                     }
 
-                    // Esperar hasta 10 segundos (20 iteraciones de 500ms) a que mediaStage sea RESOLVED
-                    for (let i = 0; i < 20; i++) {
+                    // Esperar activamente a que WhatsApp Web complete la descarga (hasta 15 seg)
+                    // IMPORTANTE: Sólo romper cuando mediaStage sea estrictamente 'RESOLVED' o error
+                    for (let i = 0; i < 30; i++) {
                         const stage = m.mediaData?.mediaStage;
-                        if (stage === 'RESOLVED' || (m.directPath && m.mediaKey && stage !== 'FETCHING')) {
+                        if (stage === 'RESOLVED') {
+                            console.log(`[Puppeteer Media] ✅ mediaStage alcanzó RESOLVED en iteración ${i}`);
+                            break;
+                        }
+                        if (stage && stage.includes('ERROR')) {
+                            console.warn('[Puppeteer Media] ⚠️ mediaStage reportó error:', stage);
                             break;
                         }
                         await sleepWait(500);
@@ -901,7 +931,8 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance) {
                         try {
                             const resp = await fetch(blobUrl);
                             const blob = await resp.blob();
-                            if (blob && blob.size > 8000) {
+                            // Una foto original real supera los 5 KB (las miniaturas planas miden < 1 KB)
+                            if (blob && blob.size > 5000) {
                                 const reader = new FileReader();
                                 const b64 = await new Promise(r => {
                                     reader.onloadend = () => r(reader.result.split(',')[1]);
@@ -916,7 +947,9 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance) {
                                     source: 'renderableUrl'
                                 };
                             }
-                        } catch (_) {}
+                        } catch (eBlob) {
+                            console.warn('[Puppeteer Media] Error leyendo renderableUrl:', eBlob.message);
+                        }
                     }
                 }
 
@@ -934,6 +967,7 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance) {
                             addAnnotations: function () { return this; },
                             addPoint: function () { return this; }
                         };
+                        console.log('[Puppeteer Media] Desencriptando binario completo con downloadAndMaybeDecrypt...');
                         const decrypted = await downloadMgr.downloadAndMaybeDecrypt({
                             directPath: directPath,
                             encFilehash: encFilehash,
@@ -981,30 +1015,24 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance) {
     msg.hasMedia = true;
     for (let intento = 1; intento <= 5; intento++) {
         try {
+            console.log(`[WhatsApp Bridge] Intento ${intento}/5 descargando multimedia con msg.downloadMedia()...`);
             const media = await msg.downloadMedia();
             // Una foto original real suele medir más de 8 KB (aprox. > 10,000 caracteres base64)
-            if (media && media.data && media.data.length > 8000) {
+            if (media && media.data && media.data.length > 5000) {
                 console.log(`[WhatsApp Bridge] ✅ Foto original descargada con éxito mediante msg.downloadMedia() (${media.data.length} chars)`);
                 return media;
-            } else if (media && media.data && media.data.length > 50) {
+            } else if (media && media.data) {
                 console.log(`[WhatsApp Bridge] Reintento ${intento}/5: Media preliminar obtenido (${media.data.length} chars), esperando imagen completa...`);
             }
         } catch (eDown) {
             console.warn(`[WhatsApp Bridge] Intento ${intento}/5 msg.downloadMedia(): ${eDown.message}`);
         }
-        await sleep(900 * intento);
+        await sleep(1200 * intento);
     }
 
-    // 3. Método C: Sólo como último recurso si fue imposible descargar del CDN tras todos los intentos
-    if (msg._data && msg._data.body && typeof msg._data.body === 'string' && msg._data.body.length > 100) {
-        console.warn(`[WhatsApp Bridge] ⚠️ No se pudo descargar la imagen original a tiempo; utilizando vista previa disponible (${msg._data.body.length} chars).`);
-        return {
-            data: msg._data.body,
-            mimetype: msg._data.mimetype || 'image/jpeg',
-            filename: msg._data.filename || ''
-        };
-    }
-
+    // NUNCA tomar msg.body ni msg._data.body (miniaturas planas de ~800 bytes).
+    // Si la descarga falló completamente tras todos los intentos, devolver null.
+    console.error(`[WhatsApp Bridge] ❌ No se pudo descargar la foto original de alta resolución para el mensaje ${validSerializedId || stanzaId}. Se descarta la miniatura plana.`);
     return null;
 }
 
@@ -1091,7 +1119,7 @@ client.on('message', async (msg) => {
             // Descargar la foto ORIGINAL en alta resolución
             const media = await descargarFotoOriginalWhatsApp(msg, client);
 
-            if (media && media.data) {
+            if (media && media.data && media.data.length > 5000) {
                 // 1. Guardar automáticamente en la carpeta uploadscr en el servidor donde se guarda la página
                 const fileInfo = guardarImagenUploadscr(media.data, media.mimetype, realPhone || remitente, media.filename);
 
@@ -1157,23 +1185,7 @@ client.on('message', async (msg) => {
                 }
                 return; // Terminado con éxito, no continuar a procesamiento de texto
             } else {
-                console.warn(`[WhatsApp Bridge] ⚠️ No se pudo obtener el stream binario de la imagen enviada por ${remitente}. Registrando recepción preliminar...`);
-                const fallbackName = `comp_${Date.now()}_${(realPhone || remitente).replace(/\D/g, '') || 'pendiente'}_wa.jpg`;
-                await registrarComprobanteAPI({
-                    numero_telefono: realPhone || remitente,
-                    nombre_remitente: pushname,
-                    nombre_archivo: fallbackName,
-                    ruta_archivo: `uploadscr/${fallbackName}`,
-                    url_archivo: `/uploadscr/${fallbackName}`,
-                    mimetype: 'image/jpeg',
-                    tamano_bytes: 0,
-                    mensaje_texto: msg.body || '[Imagen recibida de WhatsApp]'
-                });
-                const infoMsg = `🧾 [Comprobante guardado en uploadscr] /uploadscr/${fallbackName} ${msg.body ? ('- ' + msg.body) : ''}`.trim();
-                sendWebhook(numeroParaWebhook, infoMsg, pushname, remitente, {
-                    url_archivo: `/uploadscr/${fallbackName}`,
-                    nombre_archivo: fallbackName
-                });
+                console.error(`[WhatsApp Bridge] ❌ No se pudo descargar la imagen original completa de ${remitente}. Se descarta la creación de registros vacíos y miniaturas.`);
                 return;
             }
         } catch (eMediaErr) {
