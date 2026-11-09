@@ -812,12 +812,15 @@ function getStanzaId(msg) {
  * y desencripte los bytes reales de la foto usando la mediaKey de la sesión,
  * evitando estrictamente guardar la miniatura preview de baja resolución (msg._data.body).
  */
-async function descargarFotoOriginalWhatsApp(msg, clientInstance) {
+async function descargarFotoOriginalWhatsApp(msg, clientInstance, realPhone = '', remitente = '') {
     const validSerializedId = getValidSerializedId(msg);
     const stanzaId = getStanzaId(msg);
+    const cleanPhone = (realPhone || '').replace(/\D/g, '');
+    const remoteDigits = (remitente || '').replace(/\D/g, '');
 
-    // Asegurar que msg.id y msg._data.id tengan _serialized válido para que los métodos internos
-    // de whatsapp-web.js (como msg.downloadMedia()) no reciban 'undefined' ni '[object Object]'
+    // Si tenemos el teléfono real resuelto, construir también el ID canónico con @c.us
+    const phoneSerializedId = cleanPhone && stanzaId ? `false_${cleanPhone}@c.us_${stanzaId}` : '';
+
     if (validSerializedId) {
         if (!msg.id || typeof msg.id !== 'object') msg.id = {};
         msg.id._serialized = validSerializedId;
@@ -833,17 +836,11 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance) {
         try {
             const mediaOpts = {
                 serializedId: validSerializedId,
+                phoneSerializedId: phoneSerializedId,
                 stanzaId: stanzaId,
-                from: typeof msg.from === 'string' ? msg.from : (msg.from?._serialized || ''),
-                directPath: msg.directPath || msg._data?.directPath || '',
-                encFilehash: msg.encFilehash || msg._data?.encFilehash || '',
-                filehash: msg.filehash || msg._data?.filehash || '',
-                mediaKey: msg.mediaKey || msg._data?.mediaKey || '',
-                mediaKeyTimestamp: msg.mediaKeyTimestamp || msg._data?.mediaKeyTimestamp || '',
-                type: msg.type || msg._data?.type || 'image',
-                mimetype: msg.mimetype || msg._data?.mimetype || 'image/jpeg',
-                filename: msg.filename || msg._data?.filename || '',
-                filesize: msg.size || msg._data?.size || 0
+                from: remitente || (typeof msg.from === 'string' ? msg.from : (msg.from?._serialized || '')),
+                cleanPhone: cleanPhone,
+                remoteDigits: remoteDigits
             };
 
             const resOriginal = await clientInstance.pupPage.evaluate(async (opts) => {
@@ -851,188 +848,223 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance) {
                 const MsgCollection = window.require('WAWebCollections')?.Msg;
                 const downloadMgr = window.require('WAWebDownloadManager')?.downloadManager;
 
-                // A. Localizar el mensaje en MsgCollection por ID o por stanzaId
                 let m = null;
-                if (MsgCollection) {
-                    if (opts.serializedId) {
-                        m = MsgCollection.get(opts.serializedId);
-                    }
-                    if (!m && opts.stanzaId) {
-                        const models = MsgCollection.models || MsgCollection._models || [];
-                        m = models.find(x => {
-                            const xId = x.id;
-                            if (!xId) return false;
-                            if (typeof xId === 'string') return xId.includes(opts.stanzaId);
-                            return xId.id === opts.stanzaId || (xId._serialized && xId._serialized.includes(opts.stanzaId));
-                        });
-                    }
-                    if (!m && opts.serializedId && typeof MsgCollection.getMessagesById === 'function') {
+                let foundSource = '';
+
+                // A. Buscar en MsgCollection usando los posibles IDs serializados
+                const candidateIds = [
+                    opts.phoneSerializedId,
+                    opts.serializedId,
+                    opts.cleanPhone ? `false_${opts.cleanPhone}@c.us_${opts.stanzaId}` : null,
+                    opts.from ? `false_${opts.from}_${opts.stanzaId}` : null
+                ].filter(Boolean);
+
+                if (MsgCollection && typeof MsgCollection.get === 'function') {
+                    for (const cid of candidateIds) {
                         try {
-                            const fetched = await MsgCollection.getMessagesById([opts.serializedId]);
-                            m = fetched?.messages?.[0];
+                            const found = MsgCollection.get(cid);
+                            if (found) {
+                                m = found;
+                                foundSource = `MsgCollection.get(${cid})`;
+                                break;
+                            }
                         } catch (_) {}
                     }
                 }
 
-                // Si aún no se encontró, buscar en los mensajes del chat del remitente
-                if (!m && opts.from) {
-                    try {
-                        const WidFactory = window.require('WAWebWidFactory');
-                        const ChatCollection = window.require('WAWebCollections')?.Chat;
-                        if (WidFactory && ChatCollection) {
-                            const chatWid = WidFactory.createWid(opts.from);
-                            const chat = ChatCollection.get(chatWid);
-                            if (chat && chat.msgs) {
-                                const chatModels = chat.msgs.models || chat.msgs._models || [];
-                                m = chatModels.find(x => {
-                                    const xId = x.id;
-                                    if (!xId) return false;
-                                    if (typeof xId === 'string') return xId.includes(opts.stanzaId);
-                                    return xId.id === opts.stanzaId || (xId._serialized && xId._serialized.includes(opts.stanzaId));
-                                }) || chatModels[chatModels.length - 1];
+                // B. Si no, buscar en la colección de mensajes del Chat (usando getChat y getModelsArray)
+                if (!m && window.WWebJS && typeof window.WWebJS.getChat === 'function') {
+                    const chatCandidates = [
+                        opts.cleanPhone ? `${opts.cleanPhone}@c.us` : null,
+                        opts.from,
+                        opts.remoteDigits ? `${opts.remoteDigits}@c.us` : null
+                    ].filter(Boolean);
+
+                    for (const cid of chatCandidates) {
+                        try {
+                            const chat = await window.WWebJS.getChat(cid, { getAsModel: false });
+                            if (chat && chat.msgs && typeof chat.msgs.getModelsArray === 'function') {
+                                const msgs = chat.msgs.getModelsArray();
+                                m = msgs.find(x => x.id?.id === opts.stanzaId || (x.id?._serialized && x.id._serialized.includes(opts.stanzaId)));
+                                if (m) {
+                                    foundSource = `chat.msgs (${cid}) por stanzaId`;
+                                    break;
+                                }
+                                // Si no coincide por stanzaId exacto, buscar el último mensaje multimedia del chat
+                                const lastMedia = [...msgs].reverse().find(x => x.type === 'image' || (x.mimetype && x.mimetype.startsWith('image/')));
+                                if (lastMedia) {
+                                    m = lastMedia;
+                                    foundSource = `chat.msgs (${cid}) último multimedia`;
+                                    break;
+                                }
                             }
+                        } catch (_) {}
+                    }
+                }
+
+                // C. Si aún no, iterar todos los mensajes de MsgCollection
+                if (!m && MsgCollection && typeof MsgCollection.getModelsArray === 'function') {
+                    try {
+                        const allMsgs = MsgCollection.getModelsArray();
+                        m = allMsgs.find(x => x.id?.id === opts.stanzaId || (x.id?._serialized && x.id._serialized.includes(opts.stanzaId)));
+                        if (m) foundSource = 'MsgCollection.getModelsArray() global';
+                    } catch (_) {}
+                }
+
+                if (!m) {
+                    return {
+                        success: false,
+                        error: 'not_found_in_collections',
+                        searched: candidateIds
+                    };
+                }
+
+                const trueSerializedId = m.id?._serialized || opts.serializedId;
+
+                // D. Iniciar descarga del medio desde CDN si aún no está resuelta
+                if (m.mediaData && m.mediaData.mediaStage !== 'RESOLVED' && typeof m.downloadMedia === 'function') {
+                    try {
+                        await m.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
+                    } catch (eDm) {
+                        // Puede arrojar si ya está en curso, no interrumpe
+                    }
+                }
+
+                // E. Esperar activamente hasta que mediaStage sea estrictamente 'RESOLVED' (hasta 20 segundos)
+                let currentStage = m.mediaData?.mediaStage;
+                for (let i = 0; i < 40; i++) {
+                    currentStage = m.mediaData?.mediaStage;
+                    if (currentStage === 'RESOLVED') {
+                        break;
+                    }
+                    if (currentStage && currentStage.includes('ERROR')) {
+                        break;
+                    }
+                    await sleepWait(500);
+                }
+
+                // F. Vía 1: Obtener el blob original en alta resolución ya cargado en memoria
+                const blobUrl = m.mediaData?.renderableUrl || m.mediaData?.fullResolutionUrl;
+                if (blobUrl) {
+                    try {
+                        const resp = await fetch(blobUrl);
+                        const blob = await resp.blob();
+                        if (blob && blob.size > 2000) {
+                            const reader = new FileReader();
+                            const b64 = await new Promise(r => {
+                                reader.onloadend = () => r(reader.result.split(',')[1]);
+                                reader.readAsDataURL(blob);
+                            });
+                            return {
+                                success: true,
+                                data: b64,
+                                mimetype: blob.type || m.mimetype || 'image/jpeg',
+                                filename: m.filename || '',
+                                size: blob.size,
+                                source: `renderableUrl (${foundSource})`,
+                                trueSerializedId: trueSerializedId
+                            };
                         }
                     } catch (_) {}
                 }
 
-                // B. Si encontramos el mensaje, forzar a WhatsApp Web a descargarlo desde el CDN
-                if (m) {
-                    if (m.mediaData && m.mediaData.mediaStage !== 'RESOLVED' && typeof m.downloadMedia === 'function') {
-                        try {
-                            console.log('[Puppeteer Media] Invocando m.downloadMedia() para descargar bytes originales...');
-                            await m.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
-                        } catch (eDm) {
-                            console.warn('[Puppeteer Media] m.downloadMedia aviso:', eDm.message);
-                        }
-                    }
-
-                    // Esperar activamente a que WhatsApp Web complete la descarga (hasta 15 seg)
-                    // IMPORTANTE: Sólo romper cuando mediaStage sea estrictamente 'RESOLVED' o error
-                    for (let i = 0; i < 30; i++) {
-                        const stage = m.mediaData?.mediaStage;
-                        if (stage === 'RESOLVED') {
-                            console.log(`[Puppeteer Media] ✅ mediaStage alcanzó RESOLVED en iteración ${i}`);
-                            break;
-                        }
-                        if (stage && stage.includes('ERROR')) {
-                            console.warn('[Puppeteer Media] ⚠️ mediaStage reportó error:', stage);
-                            break;
-                        }
-                        await sleepWait(500);
-                        if (opts.serializedId && MsgCollection) {
-                            const refreshed = MsgCollection.get(opts.serializedId);
-                            if (refreshed) m = refreshed;
-                        }
-                    }
-
-                    // Si WhatsApp Web ya generó un blob cargado en memoria (renderableUrl / fullResolutionUrl)
-                    const blobUrl = m.mediaData?.renderableUrl || m.mediaData?.fullResolutionUrl;
-                    if (blobUrl) {
-                        try {
-                            const resp = await fetch(blobUrl);
-                            const blob = await resp.blob();
-                            // Una foto original real supera los 5 KB (las miniaturas planas miden < 1 KB)
-                            if (blob && blob.size > 5000) {
-                                const reader = new FileReader();
-                                const b64 = await new Promise(r => {
-                                    reader.onloadend = () => r(reader.result.split(',')[1]);
-                                    reader.readAsDataURL(blob);
-                                });
-                                return {
-                                    success: true,
-                                    data: b64,
-                                    mimetype: blob.type || m.mimetype || opts.mimetype || 'image/jpeg',
-                                    filename: m.filename || opts.filename || '',
-                                    size: blob.size,
-                                    source: 'renderableUrl'
-                                };
-                            }
-                        } catch (eBlob) {
-                            console.warn('[Puppeteer Media] Error leyendo renderableUrl:', eBlob.message);
-                        }
-                    }
-                }
-
-                // C. Desencriptar directamente usando downloadManager.downloadAndMaybeDecrypt
-                const directPath = (m && m.directPath) || opts.directPath;
-                const encFilehash = (m && m.encFilehash) || opts.encFilehash;
-                const filehash = (m && m.filehash) || opts.filehash;
-                const mediaKey = (m && m.mediaKey) || opts.mediaKey;
-                const mediaKeyTimestamp = (m && m.mediaKeyTimestamp) || opts.mediaKeyTimestamp;
-                const type = (m && m.type) || opts.type || 'image';
-
-                if (downloadMgr && directPath && mediaKey) {
+                // G. Vía 2: Desencriptar con downloadManager.downloadAndMaybeDecrypt usando las claves del modelo real
+                if (downloadMgr && m.directPath && m.mediaKey) {
                     try {
                         const mockQpl = {
                             addAnnotations: function () { return this; },
                             addPoint: function () { return this; }
                         };
-                        console.log('[Puppeteer Media] Desencriptando binario completo con downloadAndMaybeDecrypt...');
                         const decrypted = await downloadMgr.downloadAndMaybeDecrypt({
-                            directPath: directPath,
-                            encFilehash: encFilehash,
-                            filehash: filehash,
-                            mediaKey: mediaKey,
-                            mediaKeyTimestamp: mediaKeyTimestamp,
-                            type: type,
+                            directPath: m.directPath,
+                            encFilehash: m.encFilehash,
+                            filehash: m.filehash,
+                            mediaKey: m.mediaKey,
+                            mediaKeyTimestamp: m.mediaKeyTimestamp,
+                            type: m.type || 'image',
                             signal: new AbortController().signal,
                             downloadQpl: mockQpl
                         });
 
-                        if (decrypted && decrypted.byteLength > 5000) {
+                        if (decrypted && decrypted.byteLength > 2000) {
                             const b64 = await window.WWebJS.arrayBufferToBase64Async(decrypted);
                             return {
                                 success: true,
                                 data: b64,
-                                mimetype: (m && m.mimetype) || opts.mimetype || 'image/jpeg',
-                                filename: (m && m.filename) || opts.filename || '',
+                                mimetype: m.mimetype || 'image/jpeg',
+                                filename: m.filename || '',
                                 size: decrypted.byteLength,
-                                source: 'downloadAndMaybeDecrypt'
+                                source: `downloadAndMaybeDecrypt (${foundSource})`,
+                                trueSerializedId: trueSerializedId
                             };
                         }
                     } catch (eDec) {
-                        console.warn('[Puppeteer Media] downloadAndMaybeDecrypt error:', eDec.message);
+                        return {
+                            success: false,
+                            error: 'decrypt_failed: ' + eDec.message,
+                            foundSource: foundSource,
+                            stage: currentStage,
+                            trueSerializedId: trueSerializedId
+                        };
                     }
                 }
 
-                return null;
+                return {
+                    success: false,
+                    error: 'download_incomplete',
+                    foundSource: foundSource,
+                    stage: currentStage,
+                    hasRenderableUrl: !!blobUrl,
+                    hasDirectPath: !!m.directPath,
+                    trueSerializedId: trueSerializedId
+                };
             }, mediaOpts);
 
-            if (resOriginal && resOriginal.success && resOriginal.data && resOriginal.data.length > 5000) {
-                console.log(`[WhatsApp Bridge] 🎯 ¡FOTO ORIGINAL COMPLETA DESCARGADA! Tamaño: ${resOriginal.size} bytes (${resOriginal.data.length} caracteres base64, vía ${resOriginal.source})`);
+            if (resOriginal && resOriginal.success && resOriginal.data && resOriginal.data.length > 2500) {
+                console.log(`[WhatsApp Bridge] 🎯 ¡FOTO ORIGINAL COMPLETA DESCARGADA! Tamaño: ${resOriginal.size} bytes (${resOriginal.data.length} chars base64, vía ${resOriginal.source})`);
+                if (resOriginal.trueSerializedId) {
+                    msg.id._serialized = resOriginal.trueSerializedId;
+                }
                 return {
                     data: resOriginal.data,
                     mimetype: resOriginal.mimetype || 'image/jpeg',
                     filename: resOriginal.filename || ''
                 };
+            } else if (resOriginal) {
+                console.warn(`[WhatsApp Bridge] ⚠️ Fallo en método de Puppeteer:`, JSON.stringify(resOriginal));
+                if (resOriginal.trueSerializedId) {
+                    msg.id._serialized = resOriginal.trueSerializedId;
+                }
             }
         } catch (ePup) {
-            console.warn('[WhatsApp Bridge] Aviso en evaluación directa de Puppeteer:', ePup.message);
+            console.warn('[WhatsApp Bridge] Excepción en Puppeteer:', ePup.message);
         }
     }
 
-    // 2. Método B: msg.downloadMedia() nativo con reintentos espaciados
+    // 2. Método B: msg.downloadMedia() nativo de whatsapp-web.js
+    // Si tenemos phoneSerializedId, lo aplicamos para evitar el error 't' de LID
+    if (phoneSerializedId) {
+        msg.id._serialized = phoneSerializedId;
+    }
     msg.hasMedia = true;
-    for (let intento = 1; intento <= 5; intento++) {
+    for (let intento = 1; intento <= 3; intento++) {
         try {
-            console.log(`[WhatsApp Bridge] Intento ${intento}/5 descargando multimedia con msg.downloadMedia()...`);
+            console.log(`[WhatsApp Bridge] Intento ${intento}/3 descargando con msg.downloadMedia()...`);
             const media = await msg.downloadMedia();
-            // Una foto original real suele medir más de 8 KB (aprox. > 10,000 caracteres base64)
-            if (media && media.data && media.data.length > 5000) {
+            if (media && media.data && media.data.length > 2500) {
                 console.log(`[WhatsApp Bridge] ✅ Foto original descargada con éxito mediante msg.downloadMedia() (${media.data.length} chars)`);
                 return media;
             } else if (media && media.data) {
-                console.log(`[WhatsApp Bridge] Reintento ${intento}/5: Media preliminar obtenido (${media.data.length} chars), esperando imagen completa...`);
+                console.log(`[WhatsApp Bridge] Reintento ${intento}/3: Obtenido ${media.data.length} chars, esperando imagen completa...`);
             }
         } catch (eDown) {
-            console.warn(`[WhatsApp Bridge] Intento ${intento}/5 msg.downloadMedia(): ${eDown.message}`);
+            console.warn(`[WhatsApp Bridge] Intento ${intento}/3 msg.downloadMedia(): ${eDown.message}`);
         }
-        await sleep(1200 * intento);
+        await sleep(1500 * intento);
     }
 
-    // NUNCA tomar msg.body ni msg._data.body (miniaturas planas de ~800 bytes).
-    // Si la descarga falló completamente tras todos los intentos, devolver null.
-    console.error(`[WhatsApp Bridge] ❌ No se pudo descargar la foto original de alta resolución para el mensaje ${validSerializedId || stanzaId}. Se descarta la miniatura plana.`);
+    // NUNCA tomar msg.body ni msg._data.body (miniaturas de 849 bytes)
+    console.error(`[WhatsApp Bridge] ❌ No se pudo descargar la foto original de alta resolución para ${validSerializedId || stanzaId}. Se descarta la miniatura plana.`);
     return null;
 }
 
@@ -1116,8 +1148,8 @@ client.on('message', async (msg) => {
     if (esComprobanteCandidato) {
         console.log(`[WhatsApp Bridge] 🧾 Imagen/Comprobante detectado (${msg.type}) de ${pushname || 'Cliente'} (${realPhone || remitente}). Iniciando descarga automática...`);
         try {
-            // Descargar la foto ORIGINAL en alta resolución
-            const media = await descargarFotoOriginalWhatsApp(msg, client);
+            // Descargar la foto ORIGINAL en alta resolución pasando el teléfono real y JID
+            const media = await descargarFotoOriginalWhatsApp(msg, client, realPhone, remitente);
 
             if (media && media.data && media.data.length > 5000) {
                 // 1. Guardar automáticamente en la carpeta uploadscr en el servidor donde se guarda la página
