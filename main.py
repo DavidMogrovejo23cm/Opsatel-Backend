@@ -246,6 +246,17 @@ os.makedirs("uploads/cedulas", exist_ok=True)
 app.mount("/rutas_reportes", StaticFiles(directory="rutas_reportes"), name="rutas_reportes")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
+# Carpeta uploadscr (donde se guarda la página y se almacenan comprobantes de WhatsApp)
+uploadscr_frontend = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "Opsatel-Frontend", "uploadscr"))
+uploadscr_backend = os.path.abspath(os.path.join(os.path.dirname(__file__), "uploadscr"))
+if os.path.exists(os.path.dirname(uploadscr_frontend)):
+    os.makedirs(uploadscr_frontend, exist_ok=True)
+    os.makedirs(os.path.join(os.path.dirname(uploadscr_frontend), "public", "uploadscr"), exist_ok=True)
+os.makedirs(uploadscr_backend, exist_ok=True)
+target_uploadscr_static = uploadscr_frontend if os.path.exists(uploadscr_frontend) else uploadscr_backend
+app.mount("/uploadscr", StaticFiles(directory=target_uploadscr_static), name="uploadscr")
+
+
 @app.get("/")
 def read_root():
     return {"message": "Bienvenido a la API de Gestión de ISP Opsatel"}

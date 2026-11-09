@@ -898,5 +898,54 @@ class MovimientoInternoOut(BaseModel):
     class Config:
         from_attributes = True
 
+class ComprobanteCreate(BaseModel):
+    numero_telefono: str
+    nombre_remitente: Optional[str] = None
+    nombre_archivo: str
+    ruta_archivo: str
+    url_archivo: str
+    mimetype: Optional[str] = None
+    tamano_bytes: Optional[int] = None
+    mensaje_texto: Optional[str] = None
+    monto: Optional[float] = None
+    banco_origen: Optional[str] = None
+    banco_destino: Optional[str] = None
+    numero_referencia: Optional[str] = None
+    observaciones: Optional[str] = None
+
+class ComprobanteUpdate(BaseModel):
+    estado: Optional[str] = None
+    monto: Optional[float] = None
+    banco_origen: Optional[str] = None
+    banco_destino: Optional[str] = None
+    numero_referencia: Optional[str] = None
+    observaciones: Optional[str] = None
+    cliente_id: Optional[int] = None
+
+class ComprobanteResponse(BaseModel):
+    id: int
+    cliente_id: Optional[int] = None
+    numero_telefono: str
+    nombre_remitente: Optional[str] = None
+    nombre_archivo: str
+    ruta_archivo: str
+    url_archivo: str
+    mimetype: Optional[str] = None
+    tamano_bytes: Optional[int] = None
+    mensaje_texto: Optional[str] = None
+    estado: Optional[str] = "PENDIENTE"
+    monto: Optional[float] = None
+    banco_origen: Optional[str] = None
+    banco_destino: Optional[str] = None
+    numero_referencia: Optional[str] = None
+    observaciones: Optional[str] = None
+    fecha_hora: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 
 

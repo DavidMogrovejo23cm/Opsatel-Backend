@@ -846,3 +846,30 @@ class Pelicula(Base):
     generos = Column(String(255), nullable=True)
     actores = Column(Text, nullable=True)
     audio = Column(String(100), nullable=True)
+
+class Comprobante(Base):
+    """Registro de comprobantes de pago e imágenes recibidas automáticamente desde WhatsApp"""
+    __tablename__ = "comprobantes"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    cliente_id = Column(Integer, ForeignKey("hoja_de_c__lculo_sin_t__tulo.NUMERO"), nullable=True, index=True)
+    numero_telefono = Column(String(50), nullable=False, index=True)
+    nombre_remitente = Column(String(255), nullable=True)
+    nombre_archivo = Column(String(255), nullable=False)
+    ruta_archivo = Column(String(500), nullable=False)
+    url_archivo = Column(String(500), nullable=False)
+    mimetype = Column(String(100), nullable=True)
+    tamano_bytes = Column(Integer, nullable=True)
+    mensaje_texto = Column(Text, nullable=True)
+    estado = Column(String(50), default="PENDIENTE", index=True)  # PENDIENTE, REVISADO, APROBADO, RECHAZADO
+    monto = Column(Float, nullable=True)
+    banco_origen = Column(String(100), nullable=True)
+    banco_destino = Column(String(100), nullable=True)
+    numero_referencia = Column(String(100), nullable=True)
+    observaciones = Column(Text, nullable=True)
+    fecha_hora = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    cliente = relationship("Cliente", foreign_keys=[cliente_id], lazy="joined")
+

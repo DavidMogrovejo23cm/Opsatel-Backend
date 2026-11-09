@@ -118,6 +118,29 @@ def force_fix_columns():
         ("gasto_fijo_id", "INT DEFAULT NULL")
     ]
 
+    # 11. Tabla comprobantes
+    table_comprobantes = "comprobantes"
+    columns_comprobantes = [
+        ("cliente_id", "INT"),
+        ("numero_telefono", "VARCHAR(50)"),
+        ("nombre_remitente", "VARCHAR(255)"),
+        ("nombre_archivo", "VARCHAR(255)"),
+        ("ruta_archivo", "VARCHAR(500)"),
+        ("url_archivo", "VARCHAR(500)"),
+        ("mimetype", "VARCHAR(100)"),
+        ("tamano_bytes", "INT"),
+        ("mensaje_texto", "TEXT"),
+        ("estado", "VARCHAR(50) DEFAULT 'PENDIENTE'"),
+        ("monto", "FLOAT"),
+        ("banco_origen", "VARCHAR(100)"),
+        ("banco_destino", "VARCHAR(100)"),
+        ("numero_referencia", "VARCHAR(100)"),
+        ("observaciones", "TEXT"),
+        ("fecha_hora", "DATETIME"),
+        ("created_at", "DATETIME"),
+        ("updated_at", "DATETIME")
+    ]
+
     process_table(table_clientes, columns_clientes)
     process_table(table_pagos, columns_pagos)
     process_table(table_asistencias, columns_asistencias)
@@ -128,6 +151,7 @@ def force_fix_columns():
     process_table(table_whatsapp_config, columns_whatsapp_config)
     process_table(table_hoja_ruta, columns_hoja_ruta)
     process_table(table_egresos, columns_egresos)
+    process_table(table_comprobantes, columns_comprobantes)
 
     # Asegurar que registros antiguos de egresos tengan estado='Realizado' y mes asignado
     with engine.connect() as conn:

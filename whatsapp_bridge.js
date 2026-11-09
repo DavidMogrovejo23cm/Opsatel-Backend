@@ -264,6 +264,183 @@ function sendWebhook(from, body, pushname = '', originalJid = '') {
     req.end();
 }
 
+// =========================================================================
+// GESTIÓN DE COMPROBANTES: DESCARGA AUTOMÁTICA EN 'uploadscr' Y BASE DE DATOS
+// =========================================================================
+
+/**
+ * Obtiene todas las carpetas donde debe existir 'uploadscr'
+ * (en el frontend donde se guarda la página, en su carpeta public y en el backend).
+ */
+function getUploadscrDirectories() {
+    const dirs = [];
+    
+    // 1. Variable de entorno personalizada si existe
+    if (process.env.UPLOADSCR_DIR) {
+        dirs.push(path.resolve(process.env.UPLOADSCR_DIR));
+    }
+    
+    // 2. Rutas comunes en servidor de producción Linux (Nginx /var/www)
+    const linuxFrontends = ['/var/www/opsatel-frontend', '/var/www/html'];
+    for (const lf of linuxFrontends) {
+        if (fs.existsSync(lf)) {
+            dirs.push(path.join(lf, 'uploadscr'));
+        }
+    }
+    
+    // 3. Carpeta del Frontend local (donde se guarda la página)
+    const frontendDir = path.resolve(__dirname, '..', 'Opsatel-Frontend');
+    if (fs.existsSync(frontendDir)) {
+        dirs.push(path.join(frontendDir, 'uploadscr'));
+        const publicDir = path.join(frontendDir, 'public');
+        if (fs.existsSync(publicDir)) {
+            dirs.push(path.join(publicDir, 'uploadscr'));
+        }
+        const distDir = path.join(frontendDir, 'dist');
+        if (fs.existsSync(distDir)) {
+            dirs.push(path.join(distDir, 'uploadscr'));
+        }
+    }
+    
+    // 4. Directorio en el Backend local (para que FastAPI lo sirva mediante app.mount)
+    dirs.push(path.resolve(__dirname, 'uploadscr'));
+
+    // Asegurar que todas las carpetas candidatas existan en el servidor
+    const uniqueDirs = [...new Set(dirs)];
+    for (const d of uniqueDirs) {
+        try {
+            if (!fs.existsSync(d)) {
+                fs.mkdirSync(d, { recursive: true });
+                console.log(`[WhatsApp Bridge] 📁 Carpeta 'uploadscr' creada automáticamente en: ${d}`);
+            }
+        } catch (eDir) {
+            console.warn(`[WhatsApp Bridge] Aviso creando carpeta ${d}:`, eDir.message);
+        }
+    }
+
+    return uniqueDirs;
+}
+
+/**
+ * Mapea el tipo MIME de la imagen a su extensión de archivo correspondiente.
+ */
+function getExtensionFromMime(mime, originalFilename = '') {
+    if (originalFilename && path.extname(originalFilename)) {
+        return path.extname(originalFilename).toLowerCase();
+    }
+    const map = {
+        'image/jpeg': '.jpg',
+        'image/jpg': '.jpg',
+        'image/png': '.png',
+        'image/webp': '.webp',
+        'image/gif': '.gif',
+        'image/heic': '.heic',
+        'application/pdf': '.pdf'
+    };
+    return map[mime] || '.jpg';
+}
+
+/**
+ * Guarda los datos binarios de la imagen en 'uploadscr' dentro de la carpeta
+ * donde se guarda la página y carpetas asociadas.
+ */
+function guardarImagenUploadscr(base64Data, mimeType, senderPhone, originalFilename = '') {
+    try {
+        const dirs = getUploadscrDirectories();
+        const ext = getExtensionFromMime(mimeType, originalFilename);
+        const cleanPhone = (senderPhone || '').replace(/\D/g, '') || 'anonimo';
+        const timestamp = Date.now();
+        const randSuffix = Math.floor(1000 + Math.random() * 9000);
+        const fileName = `comp_${timestamp}_${cleanPhone}_${randSuffix}${ext}`;
+        const buffer = Buffer.from(base64Data, 'base64');
+
+        let savedCount = 0;
+        let primaryPath = '';
+
+        for (const dir of dirs) {
+            try {
+                if (!fs.existsSync(dir)) {
+                    fs.mkdirSync(dir, { recursive: true });
+                }
+                const targetFilePath = path.join(dir, fileName);
+                fs.writeFileSync(targetFilePath, buffer);
+                if (!primaryPath) primaryPath = targetFilePath;
+                savedCount++;
+            } catch (eSave) {
+                console.error(`[WhatsApp Bridge] Error guardando archivo en ${dir}:`, eSave.message);
+            }
+        }
+
+        console.log(`[WhatsApp Bridge] 💾 Imagen guardada con éxito en ${savedCount} ubicación(es) de 'uploadscr' (${fileName}, ${buffer.length} bytes)`);
+
+        return {
+            success: savedCount > 0,
+            fileName: fileName,
+            relativePath: path.join('uploadscr', fileName).replace(/\\/g, '/'),
+            publicUrl: `/uploadscr/${fileName}`,
+            fileSize: buffer.length,
+            primaryPath: primaryPath
+        };
+    } catch (err) {
+        console.error('[WhatsApp Bridge] ❌ Error general guardando imagen en uploadscr:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Notifica a la API de FastAPI para registrar el comprobante en la tabla 'comprobantes'
+ * (la cual se crea automáticamente con todos sus campos si no existe).
+ */
+function registrarComprobanteAPI(data) {
+    return new Promise((resolve) => {
+        try {
+            const http = require('http');
+            const payload = JSON.stringify(data);
+            const options = {
+                hostname: '127.0.0.1',
+                port: fastapiPort,
+                path: '/whatsapp/registrar-comprobante',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(payload)
+                }
+            };
+            const req = http.request(options, (res) => {
+                let resBody = '';
+                res.on('data', chunk => resBody += chunk);
+                res.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(resBody);
+                        console.log(`[WhatsApp Bridge] 📋 Respuesta registro comprobante (status ${res.statusCode}):`, parsed.message || parsed);
+                        resolve(parsed);
+                    } catch (_) {
+                        resolve({ success: res.statusCode >= 200 && res.statusCode < 300, raw: resBody });
+                    }
+                });
+            });
+
+            req.setTimeout(15000, () => {
+                console.warn('[WhatsApp Bridge] Timeout registrando comprobante en FastAPI');
+                req.destroy();
+                resolve({ success: false, error: 'timeout' });
+            });
+
+            req.on('error', (err) => {
+                console.error('[WhatsApp Bridge] Error conectando con /whatsapp/registrar-comprobante:', err.message);
+                resolve({ success: false, error: err.message });
+            });
+
+            req.write(payload);
+            req.end();
+        } catch (e) {
+            console.error('[WhatsApp Bridge] Excepción al registrar comprobante:', e.message);
+            resolve({ success: false, error: e.message });
+        }
+    });
+}
+
+
 // --- Sistema de Resolución y Caché LID -> Teléfono Real ---
 const LID_CACHE_FILE = path.join(__dirname, 'lid_cache.json');
 let lidPhoneMap = {};
@@ -636,7 +813,7 @@ client.on('message', async (msg) => {
     }
 
     // =========================================================================
-    // REENVÍO AUTOMÁTICO DE COMPROBANTES (Imágenes o Documentos/PDFs de Clientes)
+    // REENVÍO Y DESCARGA AUTOMÁTICA DE COMPROBANTES / IMÁGENES (uploadscr)
     // Destino administrativo: +593 98 714 9097 (593987149097)
     // =========================================================================
     const adminReceiptsPhone = (process.env.WHATSAPP_ADMIN_RECEIPTS_NUMBER || '593987149097').replace(/\D/g, '');
@@ -646,59 +823,85 @@ client.on('message', async (msg) => {
     const esMensajeDeAdmin = (remitenteDigits && (remitenteDigits.endsWith(adminReceiptsPhone) || adminReceiptsPhone.endsWith(remitenteDigits))) ||
                              (realPhoneDigits && (realPhoneDigits.endsWith(adminReceiptsPhone) || adminReceiptsPhone.endsWith(realPhoneDigits)));
 
-    const esComprobanteCandidato = (msg.type === 'image' || msg.type === 'document') && msg.hasMedia;
+    const esImagen = msg.hasMedia && (msg.type === 'image' || (msg._data && msg._data.mimetype && msg._data.mimetype.startsWith('image/')));
+    const esComprobanteCandidato = esImagen || (msg.type === 'document' && msg.hasMedia);
 
-    if (esComprobanteCandidato && !esMensajeDeAdmin) {
-        console.log(`[WhatsApp Bridge] 🧾 Comprobante detectado (${msg.type}) de ${pushname || 'Cliente'} (${realPhone || remitente}). Descargando para reenviar a administración (+${adminReceiptsPhone})...`);
+    if (esComprobanteCandidato) {
+        console.log(`[WhatsApp Bridge] 🧾 Imagen/Comprobante detectado (${msg.type}) de ${pushname || 'Cliente'} (${realPhone || remitente}). Descargando automáticamente en carpeta 'uploadscr'...`);
         try {
             const media = await msg.downloadMedia();
             if (media && media.data) {
-                const nowStr = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', hour12: false });
-                const remitenteDisplay = realPhone ? `+${realPhone}` : `+${remitente.split('@')[0]}`;
-                const nombreDisplay = pushname ? pushname : 'Cliente WhatsApp';
-                const notaTexto = msg.body && msg.body.trim() ? `\n💬 *Mensaje adjunto:* "${msg.body.trim()}"` : '';
+                // 1. Guardar automáticamente en la carpeta uploadscr en el servidor donde se guarda la página
+                const fileInfo = guardarImagenUploadscr(media.data, media.mimetype, realPhone || remitente, media.filename);
 
-                const captionAdmin = 
-                    `🧾 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
-                    `👤 *Cliente:* ${nombreDisplay}\n` +
-                    `📱 *WhatsApp:* ${remitenteDisplay}\n` +
-                    `${notaTexto}\n` +
-                    `📅 *Fecha y Hora:* ${nowStr}\n\n` +
-                    `_Reenviado automáticamente al área administrativa._`;
+                // 2. Registrar en la tabla comprobantes de la base de datos (se crea si no existe)
+                if (fileInfo && fileInfo.success) {
+                    await registrarComprobanteAPI({
+                        numero_telefono: realPhone || remitente,
+                        nombre_remitente: pushname,
+                        nombre_archivo: fileInfo.fileName,
+                        ruta_archivo: fileInfo.relativePath,
+                        url_archivo: fileInfo.publicUrl,
+                        mimetype: media.mimetype || 'image/jpeg',
+                        tamano_bytes: fileInfo.fileSize,
+                        mensaje_texto: msg.body || ''
+                    });
+                }
 
-                // 1. Reenviar imagen/comprobante al número administrativo con su ficha
-                await runExclusive(async () => {
-                    try {
-                        await sleep(rand(1000, 2000));
-                        await client.sendMessage(adminChatId, media, { caption: captionAdmin });
-                        console.log(`[WhatsApp Bridge] 📤 Comprobante reenviado con éxito a Administración (${adminChatId}) desde ${nombreDisplay} (${remitenteDisplay})`);
-                        lastOutboundAt = Date.now();
-                    } catch (eSendAdmin) {
-                        console.error('[WhatsApp Bridge] Error al reenviar comprobante a administración:', eSendAdmin.message);
-                    }
-                });
+                // 3. Si es mensaje de un cliente (no del número administrativo de pagos):
+                if (!esMensajeDeAdmin) {
+                    const nowStr = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', hour12: false });
+                    const remitenteDisplay = realPhone ? `+${realPhone}` : `+${remitente.split('@')[0]}`;
+                    const nombreDisplay = pushname ? pushname : 'Cliente WhatsApp';
+                    const notaTexto = msg.body && msg.body.trim() ? `\n💬 *Mensaje adjunto:* "${msg.body.trim()}"` : '';
 
-                // 2. Responder al cliente de forma cortés confirmando recepción
-                const respCliente = `¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago.\nHa sido reenviado al área administrativa para su verificación y registro en el sistema. ¡Que tengas un excelente día! 😊`;
-                await runExclusive(async () => {
-                    try {
-                        await sleep(rand(1200, 2500));
-                        await client.sendMessage(msg.from, respCliente);
-                        lastOutboundAt = Date.now();
-                    } catch (eResp) {
-                        console.warn('[WhatsApp Bridge] Aviso al confirmar al cliente:', eResp.message);
-                    }
-                });
+                    const captionAdmin = 
+                        `🧾 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
+                        `👤 *Cliente:* ${nombreDisplay}\n` +
+                        `📱 *WhatsApp:* ${remitenteDisplay}\n` +
+                        `${notaTexto}\n` +
+                        `📁 *Guardado en:* ${fileInfo.relativePath || 'uploadscr'}\n` +
+                        `📅 *Fecha y Hora:* ${nowStr}\n\n` +
+                        `_Descargado automáticamente en servidor y registrado en la base de datos._`;
 
-                // 3. Notificar a FastAPI para que quede registrado en el chat persistente de Opsatel
-                const infoMsg = `🧾 [Comprobante enviado al área administrativa] ${msg.body || ''}`.trim();
-                sendWebhook(numeroParaWebhook, infoMsg, pushname, remitente);
-                return;
+                    // Reenviar al número administrativo con su ficha
+                    await runExclusive(async () => {
+                        try {
+                            await sleep(rand(1000, 2000));
+                            await client.sendMessage(adminChatId, media, { caption: captionAdmin });
+                            console.log(`[WhatsApp Bridge] 📤 Comprobante reenviado con éxito a Administración (${adminChatId}) desde ${nombreDisplay} (${remitenteDisplay})`);
+                            lastOutboundAt = Date.now();
+                        } catch (eSendAdmin) {
+                            console.error('[WhatsApp Bridge] Error al reenviar comprobante a administración:', eSendAdmin.message);
+                        }
+                    });
+
+                    // Responder al cliente de forma cortés confirmando recepción
+                    const respCliente = `¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago.\nHa sido guardado en el sistema y remitido al área administrativa para su verificación. ¡Que tengas un excelente día! 😊`;
+                    await runExclusive(async () => {
+                        try {
+                            await sleep(rand(1200, 2500));
+                            await client.sendMessage(msg.from, respCliente);
+                            lastOutboundAt = Date.now();
+                        } catch (eResp) {
+                            console.warn('[WhatsApp Bridge] Aviso al confirmar al cliente:', eResp.message);
+                        }
+                    });
+
+                    // Notificar a FastAPI para que quede registrado en el chat persistente de Opsatel con enlace a la imagen
+                    const infoMsg = `🧾 [Comprobante guardado en uploadscr] ${fileInfo.publicUrl || ''} ${msg.body ? ('- ' + msg.body) : ''}`.trim();
+                    sendWebhook(numeroParaWebhook, infoMsg, pushname, remitente);
+                    return;
+                } else {
+                    console.log(`[WhatsApp Bridge] 📸 Imagen de administración guardada en uploadscr y registrada (${fileInfo.fileName}).`);
+                    return;
+                }
             }
         } catch (eMediaErr) {
             console.error('[WhatsApp Bridge] Error procesando comprobante:', eMediaErr.message);
         }
     }
+
 
     // Manejar mensajes entrantes: solo procesar texto o multimedia real enviada por personas
     const userMediaTypes = ['image', 'video', 'audio', 'ptt', 'sticker', 'document'];

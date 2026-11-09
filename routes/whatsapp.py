@@ -16,6 +16,7 @@ import traceback
 import whatsapp_service
 
 import requests
+import os
 import time
 import random
 from typing import Optional, List, Dict, Union
@@ -2280,5 +2281,342 @@ def eliminar_administrador_whatsapp(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al eliminar administrador: {str(e)}")
+
+
+# ============================================================================
+# COMPROBANTES DE PAGO Y DESCARGA AUTOMÁTICA DE IMÁGENES (uploadscr)
+# ============================================================================
+
+def asegurar_tabla_comprobantes(db: Session = None):
+    """
+    Garantiza que la tabla 'comprobantes' exista tanto en el motor activo
+    (MySQL/PostgreSQL) como en la base local SQLite opsatel.db si está presente.
+    """
+    if db is not None:
+        try:
+            models.Comprobante.__table__.create(bind=db.get_bind(), checkfirst=True)
+        except Exception as e_bind:
+            print(f"[Comprobantes] Verificación de tabla en motor activo: {e_bind}")
+    
+    # Asegurar también en SQLite opsatel.db si existe
+    try:
+        backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        for candidate in [os.path.join(backend_dir, "opsatel.db"), os.path.join(backend_dir, "..", "opsatel.db")]:
+            if os.path.exists(candidate):
+                import sqlite3
+                s_conn = sqlite3.connect(candidate)
+                s_cur = s_conn.cursor()
+                s_cur.execute("""
+                    CREATE TABLE IF NOT EXISTS comprobantes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        cliente_id INTEGER,
+                        numero_telefono VARCHAR(50),
+                        nombre_remitente VARCHAR(255),
+                        nombre_archivo VARCHAR(255),
+                        ruta_archivo VARCHAR(500),
+                        url_archivo VARCHAR(500),
+                        mimetype VARCHAR(100),
+                        tamano_bytes INTEGER,
+                        mensaje_texto TEXT,
+                        estado VARCHAR(50) DEFAULT 'PENDIENTE',
+                        monto FLOAT,
+                        banco_origen VARCHAR(100),
+                        banco_destino VARCHAR(100),
+                        numero_referencia VARCHAR(100),
+                        observaciones TEXT,
+                        fecha_hora DATETIME,
+                        created_at DATETIME,
+                        updated_at DATETIME
+                    )
+                """)
+                s_conn.commit()
+                s_conn.close()
+    except Exception as e_sq:
+        print(f"[Comprobantes] Verificación de tabla en SQLite: {e_sq}")
+
+
+@router.post("/registrar-comprobante")
+def registrar_comprobante_endpoint(
+    payload: schemas.ComprobanteCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Endpoint invocado automáticamente por el puente de WhatsApp (whatsapp_bridge.js)
+    cuando se detecta y descarga una imagen de un cliente o usuario en la carpeta 'uploadscr'.
+    Registra el comprobante en la tabla 'comprobantes' y lo vincula con el cliente si existe.
+    """
+    try:
+        asegurar_tabla_comprobantes(db)
+
+        # 1. Identificar cliente por número telefónico o nombre
+        cliente = None
+        num_raw = payload.numero_telefono or ""
+        num_clean = "".join([c for c in num_raw if c.isdigit()])
+
+        if num_clean:
+            try:
+                import sam_bot_service
+                cliente = sam_bot_service.buscar_cliente_por_celular(num_clean, db)
+            except Exception:
+                pass
+            
+            if not cliente and len(num_clean) >= 7:
+                ultimos = num_clean[-8:]
+                cliente = db.query(models.Cliente).filter(
+                    models.Cliente.celular != None,
+                    models.Cliente.celular.like(f"%{ultimos}%")
+                ).first()
+
+        if not cliente and payload.nombre_remitente:
+            try:
+                import sam_bot_service
+                c_match, _ = sam_bot_service.buscar_cliente_por_nombre(payload.nombre_remitente, db)
+                if c_match:
+                    cliente = c_match
+            except Exception:
+                pass
+
+        ahora_ec = datetime.now(ECUADOR_TZ).replace(tzinfo=None)
+
+        # 2. Crear registro en la tabla comprobantes
+        nuevo_comp = models.Comprobante(
+            cliente_id=cliente.id if cliente else None,
+            numero_telefono=num_clean or payload.numero_telefono,
+            nombre_remitente=payload.nombre_remitente or (cliente.nombre if cliente else "Cliente WhatsApp"),
+            nombre_archivo=payload.nombre_archivo,
+            ruta_archivo=payload.ruta_archivo,
+            url_archivo=payload.url_archivo,
+            mimetype=payload.mimetype or "image/jpeg",
+            tamano_bytes=payload.tamano_bytes,
+            mensaje_texto=payload.mensaje_texto or "",
+            estado="PENDIENTE",
+            monto=payload.monto,
+            banco_origen=payload.banco_origen,
+            banco_destino=payload.banco_destino,
+            numero_referencia=payload.numero_referencia,
+            observaciones=payload.observaciones,
+            fecha_hora=ahora_ec,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+
+        db.add(nuevo_comp)
+        db.commit()
+        db.refresh(nuevo_comp)
+
+        # 3. Replicar en opsatel.db si existe
+        try:
+            backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            for candidate in [os.path.join(backend_dir, "opsatel.db"), os.path.join(backend_dir, "..", "opsatel.db")]:
+                if os.path.exists(candidate) and "sqlite" not in str(db.get_bind().url).lower():
+                    import sqlite3
+                    s_conn = sqlite3.connect(candidate)
+                    s_cur = s_conn.cursor()
+                    s_cur.execute("""
+                        INSERT INTO comprobantes (
+                            cliente_id, numero_telefono, nombre_remitente, nombre_archivo,
+                            ruta_archivo, url_archivo, mimetype, tamano_bytes, mensaje_texto,
+                            estado, monto, banco_origen, banco_destino, numero_referencia,
+                            observaciones, fecha_hora, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        cliente.id if cliente else None,
+                        nuevo_comp.numero_telefono,
+                        nuevo_comp.nombre_remitente,
+                        nuevo_comp.nombre_archivo,
+                        nuevo_comp.ruta_archivo,
+                        nuevo_comp.url_archivo,
+                        nuevo_comp.mimetype,
+                        nuevo_comp.tamano_bytes,
+                        nuevo_comp.mensaje_texto,
+                        nuevo_comp.estado,
+                        nuevo_comp.monto,
+                        nuevo_comp.banco_origen,
+                        nuevo_comp.banco_destino,
+                        nuevo_comp.numero_referencia,
+                        nuevo_comp.observaciones,
+                        ahora_ec.strftime("%Y-%m-%d %H:%M:%S"),
+                        datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                        datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+                    ))
+                    s_conn.commit()
+                    s_conn.close()
+        except Exception as e_sql:
+            print(f"[Comprobantes] Aviso al replicar registro en SQLite: {e_sql}")
+
+        print(f"[Comprobantes] ✅ Comprobante guardado ID #{nuevo_comp.id} ({nuevo_comp.nombre_archivo}) - Cliente: {cliente.nombre if cliente else 'No vinculado'}")
+
+        return {
+            "success": True,
+            "message": "Comprobante registrado exitosamente",
+            "comprobante_id": nuevo_comp.id,
+            "url_archivo": nuevo_comp.url_archivo,
+            "cliente_id": cliente.id if cliente else None,
+            "cliente_nombre": cliente.nombre if cliente else None
+        }
+
+    except Exception as e:
+        db.rollback()
+        print(f"[Comprobantes] ❌ Error registrando comprobante: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error al registrar comprobante: {str(e)}")
+
+
+@router.get("/comprobantes")
+def listar_comprobantes(
+    estado: Optional[str] = None,
+    q: Optional[str] = None,
+    cliente_id: Optional[int] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    """
+    Lista todos los comprobantes guardados con detalles del cliente y URLs de las imágenes.
+    Permite filtrar por estado (PENDIENTE, REVISADO, APROBADO, RECHAZADO) o búsqueda por texto.
+    """
+    try:
+        asegurar_tabla_comprobantes(db)
+
+        query = db.query(models.Comprobante)
+
+        if estado and estado.strip() and estado.upper() != "TODOS":
+            query = query.filter(models.Comprobante.estado == estado.strip().upper())
+
+        if cliente_id:
+            query = query.filter(models.Comprobante.cliente_id == cliente_id)
+
+        if q and q.strip():
+            filtro = f"%{q.strip()}%"
+            query = query.filter(
+                or_(
+                    models.Comprobante.numero_telefono.ilike(filtro),
+                    models.Comprobante.nombre_remitente.ilike(filtro),
+                    models.Comprobante.nombre_archivo.ilike(filtro),
+                    models.Comprobante.mensaje_texto.ilike(filtro),
+                    models.Comprobante.numero_referencia.ilike(filtro)
+                )
+            )
+
+        total = query.count()
+        registros = query.order_by(models.Comprobante.id.desc()).offset(offset).limit(limit).all()
+
+        resultado = []
+        for r in registros:
+            c_info = None
+            if r.cliente:
+                c_info = {
+                    "id": r.cliente.id,
+                    "nombre": r.cliente.nombre,
+                    "cedula": getattr(r.cliente, "cedula", "N/A"),
+                    "plan": getattr(r.cliente, "plan", "N/A"),
+                    "saldo": float(getattr(r.cliente, "saldo", 0.0) or 0.0)
+                }
+            resultado.append({
+                "id": r.id,
+                "cliente_id": r.cliente_id,
+                "cliente": c_info,
+                "numero_telefono": r.numero_telefono,
+                "nombre_remitente": r.nombre_remitente,
+                "nombre_archivo": r.nombre_archivo,
+                "ruta_archivo": r.ruta_archivo,
+                "url_archivo": r.url_archivo,
+                "mimetype": r.mimetype,
+                "tamano_bytes": r.tamano_bytes,
+                "mensaje_texto": r.mensaje_texto,
+                "estado": r.estado or "PENDIENTE",
+                "monto": r.monto,
+                "banco_origen": r.banco_origen,
+                "banco_destino": r.banco_destino,
+                "numero_referencia": r.numero_referencia,
+                "observaciones": r.observaciones,
+                "fecha_hora": r.fecha_hora.isoformat() if r.fecha_hora else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None
+            })
+
+        return {
+            "success": True,
+            "total": total,
+            "comprobantes": resultado
+        }
+    except Exception as e:
+        print(f"[Comprobantes] Error listando comprobantes: {e}")
+        return {"success": False, "total": 0, "comprobantes": [], "error": str(e)}
+
+
+@router.patch("/comprobantes/{comprobante_id}")
+def actualizar_comprobante(
+    comprobante_id: int,
+    payload: schemas.ComprobanteUpdate,
+    db: Session = Depends(get_db)
+):
+    """Actualiza el estado, monto o notas de verificación de un comprobante"""
+    try:
+        asegurar_tabla_comprobantes(db)
+        comp = db.query(models.Comprobante).filter(models.Comprobante.id == comprobante_id).first()
+        if not comp:
+            raise HTTPException(status_code=404, detail="Comprobante no encontrado")
+
+        if payload.estado is not None:
+            comp.estado = payload.estado.strip().upper()
+        if payload.monto is not None:
+            comp.monto = payload.monto
+        if payload.banco_origen is not None:
+            comp.banco_origen = payload.banco_origen.strip()
+        if payload.banco_destino is not None:
+            comp.banco_destino = payload.banco_destino.strip()
+        if payload.numero_referencia is not None:
+            comp.numero_referencia = payload.numero_referencia.strip()
+        if payload.observaciones is not None:
+            comp.observaciones = payload.observaciones.strip()
+        if payload.cliente_id is not None:
+            comp.cliente_id = payload.cliente_id
+
+        comp.updated_at = datetime.utcnow()
+        db.commit()
+
+        return {"success": True, "message": "Comprobante actualizado correctamente", "id": comp.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al actualizar comprobante: {str(e)}")
+
+
+@router.delete("/comprobantes/{comprobante_id}")
+def eliminar_comprobante(
+    comprobante_id: int,
+    eliminar_archivo: bool = False,
+    db: Session = Depends(get_db)
+):
+    """Elimina el registro de un comprobante y opcionalmente su archivo del disco"""
+    try:
+        asegurar_tabla_comprobantes(db)
+        comp = db.query(models.Comprobante).filter(models.Comprobante.id == comprobante_id).first()
+        if not comp:
+            raise HTTPException(status_code=404, detail="Comprobante no encontrado")
+
+        if eliminar_archivo and comp.nombre_archivo:
+            # Buscar en las rutas de uploadscr para eliminar archivo físico
+            for base in [
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Opsatel-Frontend", "uploadscr")),
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Opsatel-Frontend", "public", "uploadscr")),
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploadscr"))
+            ]:
+                f_path = os.path.join(base, comp.nombre_archivo)
+                if os.path.exists(f_path):
+                    try:
+                        os.remove(f_path)
+                    except Exception:
+                        pass
+
+        db.delete(comp)
+        db.commit()
+        return {"success": True, "message": "Comprobante eliminado correctamente"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar comprobante: {str(e)}")
+
 
 
