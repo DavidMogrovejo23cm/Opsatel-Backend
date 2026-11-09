@@ -1213,9 +1213,10 @@ client.on('message', async (msg) => {
                 // 1. Guardar automáticamente en la carpeta uploadscr en el servidor donde se guarda la página
                 const fileInfo = guardarImagenUploadscr(media.data, media.mimetype, realPhone || remitente, media.filename);
 
-                // 2. Registrar en la tabla comprobantes de la base de datos (se crea si no existe)
+                // 2. Registrar en la tabla comprobantes de la base de datos con análisis OCR Tesseract automático
+                let ocrData = null;
                 if (fileInfo && fileInfo.success) {
-                    await registrarComprobanteAPI({
+                    const regResult = await registrarComprobanteAPI({
                         numero_telefono: realPhone || remitente,
                         nombre_remitente: pushname,
                         nombre_archivo: fileInfo.fileName,
@@ -1225,16 +1226,26 @@ client.on('message', async (msg) => {
                         tamano_bytes: fileInfo.fileSize,
                         mensaje_texto: msg.body || ''
                     });
+                    if (regResult && (regResult.success || regResult.comprobante_id)) {
+                        ocrData = regResult;
+                    }
                 }
 
-                // 3. Notificar a FastAPI para que quede registrado en el chat persistente con su imagen y URL
-                const infoMsg = `🧾 [Comprobante guardado en uploadscr] ${fileInfo.publicUrl || ''} ${msg.body ? ('- ' + msg.body) : ''}`.trim();
-                sendWebhook(numeroParaWebhook, infoMsg, pushname, remitente, {
+                // 3. Notificar a FastAPI para que quede registrado en el chat persistente con su imagen, URL y OCR
+                let infoMsg = `🧾 [Comprobante guardado en uploadscr] ${fileInfo.publicUrl || ''}`;
+                if (ocrData && ocrData.resumen_ocr) {
+                    infoMsg += ` - ${ocrData.resumen_ocr}`;
+                }
+                if (msg.body) {
+                    infoMsg += ` - ${msg.body}`;
+                }
+                sendWebhook(numeroParaWebhook, infoMsg.trim(), pushname, remitente, {
                     url_archivo: fileInfo.publicUrl,
                     nombre_archivo: fileInfo.fileName,
                     ruta_archivo: fileInfo.relativePath,
                     mimetype: media.mimetype || 'image/jpeg',
-                    tamano_bytes: fileInfo.fileSize
+                    tamano_bytes: fileInfo.fileSize,
+                    ocr: ocrData
                 });
 
                 // 4. Si es mensaje de un cliente (no del número administrativo de pagos):
@@ -1242,16 +1253,26 @@ client.on('message', async (msg) => {
                     const nowStr = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', hour12: false });
                     const remitenteDisplay = realPhone ? `+${realPhone}` : `+${remitente.split('@')[0]}`;
                     const nombreDisplay = pushname ? pushname : 'Cliente WhatsApp';
-                    const notaTexto = msg.body && msg.body.trim() ? `\n💬 *Mensaje adjunto:* "${msg.body.trim()}"` : '';
+                    const notaTexto = msg.body && msg.body.trim() ? `💬 *Mensaje adjunto:* "${msg.body.trim()}"\n` : '';
+
+                    let ocrBloque = '';
+                    if (ocrData && (ocrData.monto || ocrData.banco_origen || ocrData.numero_referencia)) {
+                        ocrBloque = `🔍 *Datos Extraídos con OCR (Tesseract):*\n`;
+                        if (ocrData.banco_origen) ocrBloque += `🏦 *Banco:* ${ocrData.banco_origen}\n`;
+                        if (ocrData.monto) ocrBloque += `💰 *Monto:* $${Number(ocrData.monto).toFixed(2)}\n`;
+                        if (ocrData.numero_referencia) ocrBloque += `🔢 *Referencia:* ${ocrData.numero_referencia}\n`;
+                        ocrBloque += `\n`;
+                    }
 
                     const captionAdmin = 
                         `🧾 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
                         `👤 *Cliente:* ${nombreDisplay}\n` +
                         `📱 *WhatsApp:* ${remitenteDisplay}\n` +
-                        `${notaTexto}\n` +
+                        `${notaTexto}` +
+                        `${ocrBloque}` +
                         `📁 *Guardado en:* ${fileInfo.relativePath || 'uploadscr'}\n` +
                         `📅 *Fecha y Hora:* ${nowStr}\n\n` +
-                        `_Descargado automáticamente en servidor y registrado en la base de datos._`;
+                        `_Descargado automáticamente en servidor, leído con OCR y registrado en la base de datos._`;
 
                     // Reenviar al número administrativo con su ficha y objeto MessageMedia válido
                     await runExclusive(async () => {

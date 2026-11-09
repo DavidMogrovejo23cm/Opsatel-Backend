@@ -2546,9 +2546,28 @@ def registrar_comprobante_endpoint(
             except Exception:
                 pass
 
+        # 2. Análisis OCR automático con Tesseract y Pillow
+        ocr_data = {}
+        try:
+            from services.ocr_comprobantes import analizar_comprobante_ocr
+            ocr_data = analizar_comprobante_ocr(payload.ruta_archivo or payload.nombre_archivo)
+        except Exception as e_ocr:
+            print(f"[Comprobantes OCR] Error en extracción OCR: {e_ocr}")
+
+        monto_final = payload.monto if payload.monto is not None else ocr_data.get("monto")
+        banco_final = payload.banco_origen or ocr_data.get("banco_origen")
+        referencia_final = payload.numero_referencia or ocr_data.get("numero_referencia")
+        
+        observaciones_lista = []
+        if payload.observaciones:
+            observaciones_lista.append(payload.observaciones)
+        if ocr_data.get("resumen_ocr"):
+            observaciones_lista.append(ocr_data.get("resumen_ocr"))
+        observaciones_final = "\n".join(observaciones_lista) if observaciones_lista else None
+
         ahora_ec = datetime.now(ECUADOR_TZ).replace(tzinfo=None)
 
-        # 2. Crear registro en la tabla comprobantes
+        # 3. Crear registro en la tabla comprobantes
         nuevo_comp = models.Comprobante(
             cliente_id=cliente.id if cliente else None,
             numero_telefono=num_clean or payload.numero_telefono,
@@ -2560,11 +2579,11 @@ def registrar_comprobante_endpoint(
             tamano_bytes=payload.tamano_bytes,
             mensaje_texto=payload.mensaje_texto or "",
             estado="PENDIENTE",
-            monto=payload.monto,
-            banco_origen=payload.banco_origen,
+            monto=monto_final,
+            banco_origen=banco_final,
             banco_destino=payload.banco_destino,
-            numero_referencia=payload.numero_referencia,
-            observaciones=payload.observaciones,
+            numero_referencia=referencia_final,
+            observaciones=observaciones_final,
             fecha_hora=ahora_ec,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
@@ -2622,7 +2641,12 @@ def registrar_comprobante_endpoint(
             "comprobante_id": nuevo_comp.id,
             "url_archivo": nuevo_comp.url_archivo,
             "cliente_id": cliente.id if cliente else None,
-            "cliente_nombre": cliente.nombre if cliente else None
+            "cliente_nombre": cliente.nombre if cliente else None,
+            "monto": nuevo_comp.monto,
+            "banco_origen": nuevo_comp.banco_origen,
+            "numero_referencia": nuevo_comp.numero_referencia,
+            "ocr_detectado": bool(ocr_data.get("success") and (nuevo_comp.monto or nuevo_comp.banco_origen or nuevo_comp.numero_referencia)),
+            "resumen_ocr": ocr_data.get("resumen_ocr")
         }
 
     except Exception as e:

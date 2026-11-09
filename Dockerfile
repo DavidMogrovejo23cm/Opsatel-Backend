@@ -3,7 +3,9 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl gnupg ca-certificates build-essential python3-dev chromium \
+    && apt-get install -y --no-install-recommends \
+        curl gnupg ca-certificates build-essential python3-dev chromium \
+        tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
