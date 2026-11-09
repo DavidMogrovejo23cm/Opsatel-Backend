@@ -2750,6 +2750,7 @@ def registrar_comprobante_endpoint(
             "estado_transaccion": ocr_data.get("estado_transaccion"),
             "ocr_detectado": bool(ocr_data.get("success")),
             "resumen_ocr": ocr_data.get("resumen_ocr"),
+            "texto_extraido": ocr_data.get("texto_extraido", ""),
             "ocr_completo": ocr_data
         }
 

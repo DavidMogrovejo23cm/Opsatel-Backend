@@ -1291,77 +1291,115 @@ client.on('message', async (msg) => {
                     ocr: ocrData
                 });
 
-                // 4. Si es mensaje de un cliente (no de un número administrativo de pagos):
-                if (!esMensajeDeAdmin) {
-                    const nowStr = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', hour12: false });
-                    const remitenteDisplay = realPhone ? `+${realPhone}` : `+${remitente.split('@')[0]}`;
-                    const nombreDisplay = pushname ? pushname : (ocrData?.cliente_nombre || 'Cliente WhatsApp');
-                    const idClienteStr = ocrData && ocrData.cliente_id ? ` (ID #${ocrData.cliente_id})` : '';
-                    const planClienteStr = ocrData && ocrData.cliente_plan ? `📦 *Plan:* ${ocrData.cliente_plan}\n` : '';
-                    const notaTexto = msg.body && msg.body.trim() ? `💬 *Mensaje adjunto:* "${msg.body.trim()}"\n` : '';
+                // 4. Reenviar automáticamente a todos los números configurados en Destinos OCR
+                const nowStr = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', hour12: false });
+                const remitenteDisplay = realPhone ? `+${realPhone}` : `+${remitente.split('@')[0]}`;
+                const nombreDisplay = pushname ? pushname : (ocrData?.cliente_nombre || 'Cliente WhatsApp');
+                const idClienteStr = ocrData && ocrData.cliente_id ? ` (ID #${ocrData.cliente_id})` : '';
+                const planClienteStr = ocrData && ocrData.cliente_plan ? `📦 *Plan:* ${ocrData.cliente_plan}\n` : '';
+                const notaTexto = msg.body && msg.body.trim() ? `💬 *Mensaje adjunto:* "${msg.body.trim()}"\n` : '';
 
-                    let ocrBloque = '';
-                    if (ocrData) {
-                        ocrBloque = `🔍 *Datos Extraídos con OCR:*\n`;
-                        if (ocrData.banco_origen) ocrBloque += `🏦 *Banco Origen:* ${ocrData.banco_origen}\n`;
-                        if (ocrData.banco_destino) ocrBloque += `🏦 *Banco Destino:* ${ocrData.banco_destino}\n`;
-                        if (ocrData.monto) ocrBloque += `💰 *Monto:* $${Number(ocrData.monto).toFixed(2)}\n`;
-                        if (ocrData.beneficiario) ocrBloque += `👤 *Beneficiario (A):* ${ocrData.beneficiario}\n`;
-                        if (ocrData.ordenante) ocrBloque += `👤 *Ordenante (De):* ${ocrData.ordenante}\n`;
-                        if (ocrData.cuenta_destino) ocrBloque += `💳 *Cuenta Destino:* ${ocrData.cuenta_destino}\n`;
-                        if (ocrData.cuenta_origen) ocrBloque += `💳 *Cuenta Origen:* ${ocrData.cuenta_origen}\n`;
-                        if (ocrData.numero_referencia) ocrBloque += `🔢 *N° Comprobante / Ref:* ${ocrData.numero_referencia}\n`;
-                        if (ocrData.fecha) ocrBloque += `📅 *Fecha:* ${ocrData.fecha}\n`;
-                        if (ocrData.estado_transaccion) ocrBloque += `📋 *Estado:* ${ocrData.estado_transaccion}\n`;
-                        ocrBloque += `\n`;
-                    }
+                let ocrBloque = '';
+                if (ocrData) {
+                    ocrBloque = `🔍 *Datos Clave Extraídos (OCR):*\n`;
+                    if (ocrData.banco_origen) ocrBloque += `🏦 *Banco Origen:* ${ocrData.banco_origen}\n`;
+                    if (ocrData.banco_destino) ocrBloque += `🏦 *Banco Destino:* ${ocrData.banco_destino}\n`;
+                    if (ocrData.monto) ocrBloque += `💰 *Monto:* $${Number(ocrData.monto).toFixed(2)}\n`;
+                    if (ocrData.beneficiario) ocrBloque += `👤 *Beneficiario (A):* ${ocrData.beneficiario}\n`;
+                    if (ocrData.ordenante) ocrBloque += `👤 *Ordenante (De):* ${ocrData.ordenante}\n`;
+                    if (ocrData.cuenta_destino) ocrBloque += `💳 *Cuenta Destino:* ${ocrData.cuenta_destino}\n`;
+                    if (ocrData.cuenta_origen) ocrBloque += `💳 *Cuenta Origen:* ${ocrData.cuenta_origen}\n`;
+                    if (ocrData.numero_referencia) ocrBloque += `🔢 *N° Comprobante / Ref:* ${ocrData.numero_referencia}\n`;
+                    if (ocrData.fecha) ocrBloque += `📅 *Fecha:* ${ocrData.fecha}\n`;
+                    if (ocrData.estado_transaccion) ocrBloque += `📋 *Estado:* ${ocrData.estado_transaccion}\n`;
+                    ocrBloque += `\n`;
+                }
 
-                    const captionAdmin = 
-                        `🧾 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
-                        `👤 *Cliente:* ${nombreDisplay}${idClienteStr}\n` +
-                        `📱 *WhatsApp:* ${remitenteDisplay}\n` +
-                        `${planClienteStr}` +
-                        `${notaTexto}` +
-                        `${ocrBloque}` +
-                        `📁 *Guardado en:* ${fileInfo.relativePath || 'uploadscr'}\n` +
-                        `📅 *Fecha y Hora:* ${nowStr}\n\n` +
-                        `_Descargado automáticamente en servidor, leído con OCR y registrado en la base de datos._`;
+                const captionPhoto = 
+                    `🧾 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
+                    `👤 *Cliente:* ${nombreDisplay}${idClienteStr}\n` +
+                    `📱 *WhatsApp:* ${remitenteDisplay}\n` +
+                    `${planClienteStr}` +
+                    `${notaTexto}` +
+                    `${ocrBloque}` +
+                    `📁 *Guardado en:* ${fileInfo.relativePath || 'uploadscr'}\n` +
+                    `📅 *Fecha y Hora:* ${nowStr}\n\n` +
+                    `_Descargado automáticamente en servidor y registrado en la base de datos._`;
 
-                    // Obtener los números destinatarios de OCR configurados en el dropdown de la interfaz
-                    const destinosOCR = await obtenerDestinosOCRActivos(adminReceiptsPhone);
+                const textoCompleto = (ocrData && (ocrData.texto_extraido || ocrData.ocr_completo?.texto_extraido)) ? String(ocrData.texto_extraido || ocrData.ocr_completo?.texto_extraido).trim() : '';
 
-                    await runExclusive(async () => {
-                        try {
-                            const msgMediaToSend = (media instanceof MessageMedia)
-                                ? media
-                                : new MessageMedia(media.mimetype || 'image/jpeg', media.data, media.filename || fileInfo.fileName || 'comprobante.jpg');
+                // Obtener los números destinatarios de OCR configurados en el dropdown de la interfaz
+                const destinosOCR = await obtenerDestinosOCRActivos(adminReceiptsPhone);
 
-                            for (const d of destinosOCR) {
-                                if (!d.activo) continue;
-                                const dNum = String(d.numero || '').replace(/\D/g, '');
-                                if (!dNum) continue;
-                                if (dNum === realPhoneDigits || dNum === remitenteDigits) continue; // No reenviar al mismo cliente
+                console.log(`[WhatsApp Bridge] 📤 Reenviando comprobante OCR a ${destinosOCR.length} destino(s) configurado(s)...`);
 
-                                const targetChatId = `${dNum}@c.us`;
-                                try {
-                                    await sleep(rand(1000, 2000));
-                                    await client.sendMessage(targetChatId, msgMediaToSend, { caption: captionAdmin });
-                                    console.log(`[WhatsApp Bridge] 📤 Comprobante reenviado con éxito a ${d.nombre || 'Destino OCR'} (${targetChatId}) para cliente ${nombreDisplay}${idClienteStr}`);
+                await runExclusive(async () => {
+                    try {
+                        for (const d of destinosOCR) {
+                            if (!d.activo) {
+                                console.log(`[WhatsApp Bridge] ⏭️ Destino ${d.nombre || ''} (${d.numero}) está pausado. Se omite.`);
+                                continue;
+                            }
+                            let dNum = String(d.numero || '').replace(/\D/g, '');
+                            if (!dNum) continue;
+
+                            // Normalizar a formato internacional de Ecuador (593) si viene con 09... o 9...
+                            if (dNum.startsWith('0') && dNum.length === 10) {
+                                dNum = '593' + dNum.substring(1);
+                            } else if (dNum.length === 9 && dNum.startsWith('9')) {
+                                dNum = '593' + dNum;
+                            }
+
+                            let targetChatId = `${dNum}@c.us`;
+                            try {
+                                const contactId = await client.getNumberId(dNum);
+                                if (contactId && contactId._serialized) {
+                                    targetChatId = contactId._serialized;
+                                }
+                            } catch (_) {}
+
+                            console.log(`[WhatsApp Bridge] 🚀 Enviando comprobante con OCR a: ${d.nombre || 'Destino'} -> ${targetChatId}...`);
+                            try {
+                                const msgMediaToSend = new MessageMedia(
+                                    media.mimetype || 'image/jpeg',
+                                    media.data,
+                                    media.filename || fileInfo.fileName || 'comprobante.jpg'
+                                );
+
+                                await sleep(rand(1000, 2000));
+                                await client.sendMessage(targetChatId, msgMediaToSend, { caption: captionPhoto });
+                                console.log(`[WhatsApp Bridge] ✅ Comprobante reenviado con éxito a ${d.nombre || 'Destino OCR'} (${targetChatId}) para cliente ${nombreDisplay}${idClienteStr}`);
+                                lastOutboundAt = Date.now();
+
+                                // Enviar segundo mensaje con absolutamente todo el texto extraído íntegro
+                                if (textoCompleto) {
+                                    await sleep(rand(800, 1500));
+                                    const textoMsg = `📄 *Texto Completo Detectado por OCR (${nombreDisplay}${idClienteStr}):*\n\`\`\`\n${textoCompleto}\n\`\`\``;
+                                    await client.sendMessage(targetChatId, textoMsg);
+                                    console.log(`[WhatsApp Bridge] 📄 Texto íntegro OCR entregado a ${targetChatId}`);
                                     lastOutboundAt = Date.now();
-                                } catch (eSendDest) {
-                                    console.error(`[WhatsApp Bridge] Error enviando comprobante a ${targetChatId}:`, eSendDest.message);
+                                }
+                            } catch (eSendDest) {
+                                console.error(`[WhatsApp Bridge] ❌ Error enviando imagen a ${targetChatId}: ${eSendDest.message}. Reintentando con texto plano...`);
+                                try {
+                                    await client.sendMessage(targetChatId, captionPhoto);
+                                    if (textoCompleto) {
+                                        await sleep(800);
+                                        const textoMsg = `📄 *Texto Completo Detectado por OCR:*\n\`\`\`\n${textoCompleto}\n\`\`\``;
+                                        await client.sendMessage(targetChatId, textoMsg);
+                                    }
+                                    console.log(`[WhatsApp Bridge] ✅ Ficha de texto reenviada con éxito a ${targetChatId}`);
+                                    lastOutboundAt = Date.now();
+                                } catch (eTxt) {
+                                    console.error(`[WhatsApp Bridge] ❌ Falló también envío de texto a ${targetChatId}: ${eTxt.message}`);
                                 }
                             }
-                        } catch (eEnvio) {
-                            console.error('[WhatsApp Bridge] Error general en reenvío a destinos OCR:', eEnvio.message);
                         }
-                    });
+                    } catch (eEnvio) {
+                        console.error('[WhatsApp Bridge] Error general en reenvío a destinos OCR:', eEnvio.message);
+                    }
+                });
 
-                    // Nota: La confirmación cordial al cliente la gestiona el webhook de FastAPI 
-                    // para que quede persistida en el historial del chat visible en la interfaz web.
-                } else {
-                    console.log(`[WhatsApp Bridge] 📸 Imagen de administración guardada en uploadscr y registrada (${fileInfo.fileName}).`);
-                }
                 return; // Terminado con éxito, no continuar a procesamiento de texto
             } else {
                 console.error(`[WhatsApp Bridge] ❌ No se pudo descargar la imagen original completa de ${remitente}. Se descarta la creación de registros vacíos y miniaturas.`);

@@ -42,6 +42,7 @@ services:
       - ./backups:/app/backups
       - ./uploads:/app/uploads
       - ./uploadscr:/app/uploadscr
+      - /var/www/html/entornos:/var/www/html/entornos
     networks:
       - opsatel_net
 
