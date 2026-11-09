@@ -236,6 +236,7 @@ def parsear_texto_comprobante(texto: str) -> Dict[str, Any]:
 def ejecutar_tesseract_directo(image_path: str) -> str:
     """Ejecuta pytesseract directamente en el proceso actual."""
     try:
+        # pyrefly: ignore[missing-import]
         import pytesseract
         from PIL import Image, ImageEnhance, ImageOps
 
