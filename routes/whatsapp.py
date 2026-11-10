@@ -1773,9 +1773,23 @@ def webhook_mensaje_whatsapp(
             ).first()
 
             if not comp_existente:
+                eval_webhook = evaluar_validacion_comprobante(
+                    db=db,
+                    numero_raw=num_db,
+                    nombre_remitente=nombre_db,
+                    ocr_data=ocr_verif,
+                    monto_final=ocr_verif.get("monto"),
+                    referencia_final=ocr_verif.get("numero_referencia"),
+                    nombre_archivo=nombre_archivo or ""
+                )
+                cli_wh = eval_webhook.get("cliente")
+                cat_val = eval_webhook.get("categoria_validacion") or "CONFIRMACION_RECIBO"
+                mot_val = eval_webhook.get("motivo_validacion") or ""
+                ced_val = getattr(cli_wh, "cedula", None) if cli_wh else None
+
                 nuevo_comp = models.Comprobante(
-                    cliente_id=c_por_msg.id if c_por_msg else None,
-                    numero_telefono=num_db,
+                    cliente_id=cli_wh.id if cli_wh else (c_por_msg.id if c_por_msg else None),
+                    numero_telefono=eval_webhook.get("numero_limpio") or num_db,
                     nombre_remitente=nombre_db,
                     nombre_archivo=nombre_archivo,
                     ruta_archivo=ruta_archivo,
@@ -1784,6 +1798,21 @@ def webhook_mensaje_whatsapp(
                     tamano_bytes=tamano_bytes,
                     mensaje_texto=texto_adjunto or "Comprobante de pago recibido por WhatsApp",
                     estado="PENDIENTE",
+                    banco_origen=ocr_verif.get("banco_origen"),
+                    banco_destino=ocr_verif.get("banco_destino"),
+                    monto=eval_webhook.get("monto_evaluado"),
+                    numero_referencia=ocr_verif.get("numero_referencia"),
+                    cuenta_origen=ocr_verif.get("cuenta_origen"),
+                    cuenta_destino=ocr_verif.get("cuenta_destino"),
+                    beneficiario=ocr_verif.get("beneficiario"),
+                    ordenante=ocr_verif.get("ordenante"),
+                    fecha_comprobante=ocr_verif.get("fecha"),
+                    texto_ocr=ocr_verif.get("texto_extraido"),
+                    cedula_cliente=ced_val,
+                    saldo_pendiente_bd=eval_webhook.get("saldo_pendiente_bd"),
+                    categoria_validacion=cat_val,
+                    motivo_validacion=mot_val,
+                    observaciones=ocr_verif.get("resumen_ocr"),
                     fecha_hora=ahora_ec,
                     created_at=datetime.utcnow(),
                     updated_at=datetime.utcnow()
@@ -3026,13 +3055,35 @@ def revalidar_comprobantes_existentes_pendientes(db: Session, force: bool = Fals
     _ULTIMA_REVALIDACION_COMPROBANTES = ahora
 
     try:
-        from services.ocr_comprobantes import buscar_ruta_archivo
+        from services.ocr_comprobantes import buscar_ruta_archivo, es_documento_comprobante_valido
         pendientes = db.query(models.Comprobante).filter(
             models.Comprobante.estado == "PENDIENTE"
         ).order_by(models.Comprobante.id.desc()).limit(50).all()
 
         hubo_cambios = False
         for r in pendientes:
+            msg_t = (r.mensaje_texto or "").lower()
+            if "no es un comprobante válido" in msg_t or "no es un documento valido" in msg_t or "imagen descartada" in msg_t or "documento no válido" in msg_t:
+                r.estado = "DESCARTADO"
+                r.categoria_validacion = "NO_COMPROBANTE"
+                r.motivo_validacion = "Imagen descartada: no es un comprobante de pago válido"
+                hubo_cambios = True
+                continue
+
+            if r.texto_ocr:
+                es_val, mot_val = es_documento_comprobante_valido(r.texto_ocr, {
+                    "banco_origen": r.banco_origen,
+                    "monto": r.monto,
+                    "numero_comprobante": r.numero_referencia,
+                    "cuenta_destino": r.cuenta_destino
+                })
+                if not es_val and not r.monto and not r.banco_origen and not r.numero_referencia:
+                    r.estado = "DESCARTADO"
+                    r.categoria_validacion = "NO_COMPROBANTE"
+                    r.motivo_validacion = "Imagen no admitida: no contiene datos de comprobante bancario"
+                    hubo_cambios = True
+                    continue
+
             ruta_real = buscar_ruta_archivo(r.ruta_archivo or r.nombre_archivo or "")
             archivo_existe = bool(ruta_real and os.path.isfile(ruta_real))
             es_historico_sin_ocr = (not archivo_existe) and (not r.texto_ocr)
@@ -3268,22 +3319,21 @@ def listar_comprobantes(
         ).count()
         count_pendientes_anomalia = db.query(models.Comprobante).filter(
             models.Comprobante.estado == "PENDIENTE",
-            or_(
-                models.Comprobante.categoria_validacion == "PENDIENTES_COMPROBANTE",
-                models.Comprobante.categoria_validacion == None
-            )
+            models.Comprobante.categoria_validacion == "PENDIENTES_COMPROBANTE"
         ).count()
         count_aprobados = db.query(models.Comprobante).filter(
             models.Comprobante.estado == "APROBADO"
         ).count()
         count_rechazados = db.query(models.Comprobante).filter(
-            models.Comprobante.estado == "RECHAZADO"
+            models.Comprobante.estado.in_(["RECHAZADO", "DESCARTADO"])
         ).count()
 
         query = db.query(models.Comprobante)
 
         if estado and estado.strip() and estado.upper() != "TODOS":
             query = query.filter(models.Comprobante.estado == estado.strip().upper())
+        else:
+            query = query.filter(models.Comprobante.estado != "DESCARTADO")
 
         if categoria and categoria.strip() and categoria.upper() != "TODOS":
             cat_up = categoria.strip().upper()
@@ -3294,10 +3344,7 @@ def listar_comprobantes(
                 )
             elif cat_up == "PENDIENTES_COMPROBANTE":
                 query = query.filter(
-                    or_(
-                        models.Comprobante.categoria_validacion == "PENDIENTES_COMPROBANTE",
-                        models.Comprobante.categoria_validacion == None
-                    ),
+                    models.Comprobante.categoria_validacion == "PENDIENTES_COMPROBANTE",
                     models.Comprobante.estado == "PENDIENTE"
                 )
             elif cat_up in ("COBRADOS", "YA_COBRADOS"):
