@@ -1271,6 +1271,31 @@ client.on('message', async (msg) => {
                     });
                     if (regResult && (regResult.success || regResult.comprobante_id)) {
                         ocrData = regResult;
+                    } else if (regResult && regResult.es_documento_valido === false) {
+                        // La imagen recibida NO es un comprobante bancario o documento financiero válido
+                        console.log(`[WhatsApp Bridge] ⚠️ Imagen descartada de ${realPhone || remitente}: no es un comprobante válido.`);
+                        
+                        // Responder al usuario indicándole que la imagen no es un documento válido
+                        try {
+                            const chatOrigen = msg.from;
+                            await sleep(rand(600, 1200));
+                            await client.sendMessage(chatOrigen, "la imagen mandada no es un documento valido");
+                            lastOutboundAt = Date.now();
+                        } catch (eSendInv) {
+                            console.warn('[WhatsApp Bridge] No se pudo enviar aviso de imagen no válida:', eSendInv.message);
+                        }
+
+                        // Notificar al chat administrativo/conversaciones que se recibió una imagen no válida
+                        sendWebhook(numeroParaWebhook, `📷 [Imagen descartada - la imagen mandada no es un documento valido] ${fileInfo.publicUrl || ''}`, pushname, remitente, {
+                            url_archivo: fileInfo.publicUrl,
+                            nombre_archivo: fileInfo.fileName,
+                            ruta_archivo: fileInfo.relativePath,
+                            mimetype: media.mimetype || 'image/jpeg',
+                            tamano_bytes: fileInfo.fileSize
+                        });
+
+                        // No reenviar a Destinos OCR ni almacenar en la bandeja de comprobantes
+                        return;
                     }
                 }
 

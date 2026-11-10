@@ -511,7 +511,51 @@ def parsear_texto_comprobante(texto: str) -> Dict[str, Any]:
     return data
 
 
-def extraer_texto_tesseract_mejorado(image_path: str) -> str:
+def es_documento_comprobante_valido(texto: str, datos_extraidos: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Determina con rigurosidad si una imagen es un comprobante bancario o documento financiero
+    admitido en lugar de fotos personales, memes, paisajes o imágenes no relacionadas.
+    Retorna (es_valido, motivo).
+    """
+    if not texto or len(texto.strip()) < 12:
+        return False, "sin_texto_financiero"
+
+    texto_lower = texto.lower()
+
+    # 1. Palabras clave obligatorias del ámbito bancario y transaccional ecuatoriano
+    patron_terminos_bancarios = re.compile(
+        r"(transferencia|comprobante|dep[oó]sito|transacci[oó]n|pago|cta\.?\s*destino|cuenta\s*destino|"
+        r"cta\.?\s*origen|cuenta\s*origen|instituci[oó]n|beneficiario|ordenante|interbancari[ao]|"
+        r"bco\.?|banco|cooperativa|ahorros|corriente|autorizaci[oó]n|secuencial|referencia|"
+        r"deuna|de\s*una|peigo|payphone|pichincha|guayaquil|produbanco|pac[ií]fico|bolivariano|"
+        r"austro|internacional|solidario|machala|jep|mushuc\s*runa|29\s*de\s*octubre)",
+        re.IGNORECASE
+    )
+    terminos_encontrados = patron_terminos_bancarios.findall(texto_lower)
+    tiene_terminos_bancarios = len(terminos_encontrados) >= 1
+
+    # 2. Indicadores de campos financieros detectados
+    tiene_banco = bool(datos_extraidos.get("banco_origen") or datos_extraidos.get("banco_destino"))
+    tiene_monto = datos_extraidos.get("monto") is not None and float(datos_extraidos.get("monto") or 0) > 0
+    tiene_ref = bool(datos_extraidos.get("numero_comprobante"))
+    tiene_cuenta = bool(datos_extraidos.get("cuenta_destino") or datos_extraidos.get("cuenta_origen"))
+    tiene_participante = bool(datos_extraidos.get("beneficiario") or datos_extraidos.get("ordenante"))
+    tiene_palabra_transferencia = bool(re.search(r"transferencia|comprobante|dep[oó]sito|pago", texto_lower))
+
+    # Criterios estrictos para ser admitido como comprobante:
+    # A: Banco identificado Y (monto O referencia O cuenta)
+    if tiene_banco and (tiene_monto or tiene_ref or tiene_cuenta):
+        return True, "banco_y_datos_transaccion"
+
+    # B: Monto con símbolo de dólar/divisa Y (palabra transferencia/comprobante/pago O número de referencia/cuenta)
+    if tiene_monto and (tiene_palabra_transferencia or tiene_ref or tiene_cuenta):
+        return True, "monto_y_referencia_financiera"
+
+    # C: Al menos dos términos bancarios distintivos y referencia o cuenta
+    if len(terminos_encontrados) >= 2 and (tiene_ref or tiene_cuenta or tiene_participante):
+        return True, "multiples_indicadores_bancarios"
+
+    return False, "la imagen mandada no es un documento valido"
     """
     Ejecuta Tesseract LSTM (--oem 1) sobre la imagen previamente mejorada en alta definición
     (sin binarización destructiva que rompa letras/números).
@@ -710,6 +754,9 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
     # E. Parseo detallado de todos los datos del comprobante
     datos_extraidos = parsear_texto_comprobante(texto_extraido)
 
+    # Validar si es realmente un comprobante bancario o documento financiero admitido
+    es_valido, motivo_doc = es_documento_comprobante_valido(texto_extraido, datos_extraidos)
+
     # F. Construir resumen descriptivo
     partes = []
     if datos_extraidos.get("banco_origen"):
@@ -729,12 +776,14 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
     if datos_extraidos.get("fecha"):
         partes.append(f"Fecha: {datos_extraidos['fecha']}")
 
-    resumen_str = " | ".join(partes) if partes else "Comprobante procesado con éxito"
+    resumen_str = " | ".join(partes) if partes else ("Comprobante procesado con éxito" if es_valido else "Documento no admitido")
 
-    logger.info(f"[OCR] ✅ Comprobante procesado exitosamente ({os.path.basename(ruta_real)}): {resumen_str}")
+    logger.info(f"[OCR] {'✅ Comprobante válido' if es_valido else '⚠️ Documento no válido'} ({os.path.basename(ruta_real)}): {resumen_str}")
 
     return {
         "success": True,
+        "es_documento_valido": es_valido,
+        "motivo_validacion_documento": motivo_doc,
         "banco_origen": datos_extraidos.get("banco_origen"),
         "banco_destino": datos_extraidos.get("banco_destino"),
         "monto": datos_extraidos.get("monto"),

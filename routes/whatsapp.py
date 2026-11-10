@@ -1670,6 +1670,37 @@ def webhook_mensaje_whatsapp(
             mimetype = payload.mimetype or "image/jpeg"
             tamano_bytes = payload.tamano_bytes or 0
 
+            # Validación de documento financiero / comprobante:
+            # Si el webhook ya trae información del OCR o si podemos verificar el archivo físico
+            from services.ocr_comprobantes import analizar_comprobante_ocr
+            ocr_verif = {}
+            try:
+                ocr_verif = analizar_comprobante_ocr(ruta_archivo or nombre_archivo)
+            except Exception:
+                pass
+
+            if ocr_verif and not ocr_verif.get("es_documento_valido", False):
+                # La imagen no contiene elementos de un comprobante válido
+                resp_invalido = "la imagen mandada no es un documento valido"
+                msg_formateado_chat = f"📷 [Imagen recibida - No es un comprobante válido] {url_final}"
+
+                registrar_mensaje_chat(
+                    db, jid_destino, "cliente", msg_formateado_chat,
+                    cliente_id=c_por_msg.id if c_por_msg else None,
+                    tipo="multimedia",
+                    nombre_remitente=payload.nombre or ""
+                )
+                registrar_mensaje_chat(
+                    db, jid_destino, "asistente", resp_invalido,
+                    cliente_id=c_por_msg.id if c_por_msg else None
+                )
+                try:
+                    whatsapp_service.send_whatsapp_message(jid_destino, resp_invalido)
+                except Exception as e_send_inv:
+                    print(f"[WhatsApp] Aviso al enviar rechazo de documento inválido: {e_send_inv}")
+
+                return {"success": False, "response": resp_invalido, "comprobante": False}
+
             # Extraer nota o mensaje adicional que el cliente haya escrito junto al comprobante
             texto_adjunto = ""
             if " - " in mensaje and not mensaje.startswith("[NON_TEXT_MSG]"):
@@ -3024,6 +3055,20 @@ def registrar_comprobante_endpoint(
         except Exception as e_ocr:
             print(f"[Comprobantes OCR] Error en extracción OCR: {e_ocr}")
 
+        # Comprobar si la imagen es realmente un comprobante bancario o documento financiero admitido
+        es_documento_valido = bool(ocr_data.get("es_documento_valido", False))
+        if not es_documento_valido:
+            # Si no tiene banco ni monto ni referencia bancaria válida
+            print(f"[Comprobantes] ⚠️ La imagen recibida '{payload.nombre_archivo}' NO es un comprobante válido ({ocr_data.get('motivo_validacion_documento')})")
+            return {
+                "success": False,
+                "es_documento_valido": False,
+                "error": "la imagen mandada no es un documento valido",
+                "message": "la imagen mandada no es un documento valido",
+                "resumen_ocr": ocr_data.get("resumen_ocr"),
+                "texto_extraido": ocr_data.get("texto_extraido", "")
+            }
+
         monto_final = payload.monto if payload.monto is not None else ocr_data.get("monto")
         banco_final = payload.banco_origen or ocr_data.get("banco_origen")
         banco_destino_final = payload.banco_destino or ocr_data.get("banco_destino")
@@ -3109,6 +3154,7 @@ def registrar_comprobante_endpoint(
 
         return {
             "success": True,
+            "es_documento_valido": True,
             "message": "Comprobante registrado y validado exitosamente",
             "comprobante_id": nuevo_comp.id,
             "url_archivo": nuevo_comp.url_archivo,
