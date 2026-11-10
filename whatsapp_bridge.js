@@ -1294,37 +1294,67 @@ client.on('message', async (msg) => {
                 // 4. Reenviar automáticamente a todos los números configurados en Destinos OCR
                 const nowStr = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', hour12: false });
                 const remitenteDisplay = realPhone ? `+${realPhone}` : `+${remitente.split('@')[0]}`;
-                const nombreDisplay = pushname ? pushname : (ocrData?.cliente_nombre || 'Cliente WhatsApp');
-                const idClienteStr = ocrData && ocrData.cliente_id ? ` (ID #${ocrData.cliente_id})` : '';
-                const planClienteStr = ocrData && ocrData.cliente_plan ? `📦 *Plan:* ${ocrData.cliente_plan}\n` : '';
+                const nombreDisplay = (ocrData && ocrData.cliente_nombre) ? ocrData.cliente_nombre : (pushname ? pushname : 'No registrado en BD');
+                const idClienteStr = (ocrData && ocrData.cliente_id) ? `#${ocrData.cliente_id}` : 'No registrado';
+                const cedulaClienteStr = (ocrData && ocrData.cliente_cedula) ? ocrData.cliente_cedula : 'No registrada';
+                const planClienteStr = (ocrData && ocrData.cliente_plan) ? ocrData.cliente_plan : 'N/A';
+                const saldoPendienteNum = (ocrData && ocrData.saldo_pendiente_bd !== undefined && ocrData.saldo_pendiente_bd !== null)
+                    ? `$${Number(ocrData.saldo_pendiente_bd).toFixed(2)}`
+                    : '$0.00';
+                const montoPagadoStr = (ocrData && ocrData.monto !== undefined && ocrData.monto !== null)
+                    ? `$${Number(ocrData.monto).toFixed(2)}`
+                    : 'No detectado';
                 const notaTexto = msg.body && msg.body.trim() ? `💬 *Mensaje adjunto:* "${msg.body.trim()}"\n` : '';
 
-                let ocrBloque = '';
-                if (ocrData) {
-                    ocrBloque = `🔍 *Datos Clave Extraídos (OCR):*\n`;
-                    if (ocrData.banco_origen) ocrBloque += `🏦 *Banco Origen:* ${ocrData.banco_origen}\n`;
-                    if (ocrData.banco_destino) ocrBloque += `🏦 *Banco Destino:* ${ocrData.banco_destino}\n`;
-                    if (ocrData.monto) ocrBloque += `💰 *Monto:* $${Number(ocrData.monto).toFixed(2)}\n`;
-                    if (ocrData.beneficiario) ocrBloque += `👤 *Beneficiario (A):* ${ocrData.beneficiario}\n`;
-                    if (ocrData.ordenante) ocrBloque += `👤 *Ordenante (De):* ${ocrData.ordenante}\n`;
-                    if (ocrData.cuenta_destino) ocrBloque += `💳 *Cuenta Destino:* ${ocrData.cuenta_destino}\n`;
-                    if (ocrData.cuenta_origen) ocrBloque += `💳 *Cuenta Origen:* ${ocrData.cuenta_origen}\n`;
-                    if (ocrData.numero_referencia) ocrBloque += `🔢 *N° Comprobante / Ref:* ${ocrData.numero_referencia}\n`;
-                    if (ocrData.fecha) ocrBloque += `📅 *Fecha:* ${ocrData.fecha}\n`;
-                    if (ocrData.estado_transaccion) ocrBloque += `📋 *Estado:* ${ocrData.estado_transaccion}\n`;
-                    ocrBloque += `\n`;
+                const bancoStr = (ocrData && (ocrData.banco_origen || ocrData.banco_destino))
+                    ? (ocrData.banco_origen && ocrData.banco_destino && ocrData.banco_origen !== ocrData.banco_destino
+                        ? `${ocrData.banco_origen} ➔ ${ocrData.banco_destino}`
+                        : (ocrData.banco_origen || ocrData.banco_destino))
+                    : 'No especificado';
+
+                const esConfirmacion = ocrData && ocrData.categoria_validacion === 'CONFIRMACION_RECIBO';
+                const headerValidacion = esConfirmacion
+                    ? `✅ *NOTIFICACIÓN: CONFIRMACIÓN DE RECIBO (LISTO PARA APROBAR)*`
+                    : `⚠️ *NOTIFICACIÓN: PENDIENTES COMPROBANTE (REQUIERE REVISIÓN)*`;
+
+                let ocrBloque = `🔍 *Datos del Comprobante y Comparación BD:*\n`;
+                ocrBloque += `🪪 *Cédula:* ${cedulaClienteStr}\n`;
+                ocrBloque += `🆔 *ID Cliente:* ${idClienteStr}\n`;
+                ocrBloque += `👤 *Nombre Cliente (BD):* ${nombreDisplay}\n`;
+                if (pushname && ocrData?.cliente_nombre && pushname !== ocrData.cliente_nombre) {
+                    ocrBloque += `📲 *Perfil WhatsApp:* ${pushname}\n`;
                 }
+                ocrBloque += `📱 *Teléfono Remitente:* ${remitenteDisplay}\n`;
+                ocrBloque += `📦 *Plan:* ${planClienteStr}\n`;
+                ocrBloque += `📊 *Pendiente en BD:* ${saldoPendienteNum}\n`;
+                ocrBloque += `💰 *Monto que Paga:* ${montoPagadoStr}\n`;
+                ocrBloque += `🏦 *Banco:* ${bancoStr}\n`;
+                if (ocrData && ocrData.banco_origen) ocrBloque += `🏛️ *Banco Origen:* ${ocrData.banco_origen}\n`;
+                if (ocrData && ocrData.banco_destino) ocrBloque += `🏦 *Banco Destino:* ${ocrData.banco_destino}\n`;
+                ocrBloque += `🔢 *N° Referencia / Comprobante:* ${(ocrData && ocrData.numero_referencia) ? ocrData.numero_referencia : 'No detectado'}\n`;
+                ocrBloque += `💳 *Cuenta Origen:* ${(ocrData && ocrData.cuenta_origen) ? ocrData.cuenta_origen : 'No detectada'}\n`;
+                ocrBloque += `💳 *Cuenta Destino:* ${(ocrData && ocrData.cuenta_destino) ? ocrData.cuenta_destino : 'No detectada'}\n`;
+                if (ocrData && ocrData.ordenante) ocrBloque += `👤 *Ordenante (Quien envía):* ${ocrData.ordenante}\n`;
+                if (ocrData && ocrData.beneficiario) ocrBloque += `🎯 *Beneficiario (Quien recibe):* ${ocrData.beneficiario}\n`;
+                if (ocrData && ocrData.fecha) ocrBloque += `📅 *Fecha Comprobante:* ${ocrData.fecha}\n`;
+                if (ocrData && ocrData.estado_transaccion) ocrBloque += `📋 *Estado Transacción:* ${ocrData.estado_transaccion}\n`;
+                ocrBloque += `\n`;
+
+                const bloqueValidacion =
+                    `${headerValidacion}\n` +
+                    `📌 *Bandeja en Sistema:* ${esConfirmacion ? 'Confirmación de Recibo' : 'Pendientes Comprobante'}\n` +
+                    `📝 *Detalle Validación:* ${(ocrData && ocrData.motivo_validacion) ? ocrData.motivo_validacion : 'Pendiente de verificación'}\n\n`;
 
                 const captionPhoto = 
-                    `🧾 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
-                    `👤 *Cliente:* ${nombreDisplay}${idClienteStr}\n` +
-                    `📱 *WhatsApp:* ${remitenteDisplay}\n` +
-                    `${planClienteStr}` +
-                    `${notaTexto}` +
+                    `🧾 *NUEVO COMPROBANTE DE PAGO RECIBIDO*\n\n` +
+                    `${bloqueValidacion}` +
                     `${ocrBloque}` +
-                    `📁 *Guardado en:* ${fileInfo.relativePath || 'uploadscr'}\n` +
-                    `📅 *Fecha y Hora:* ${nowStr}\n\n` +
-                    `_Descargado automáticamente en servidor y registrado en la base de datos._`;
+                    `${notaTexto}` +
+                    `📁 *Archivo:* ${fileInfo.relativePath || 'uploadscr'}\n` +
+                    `🕒 *Recibido:* ${nowStr}\n\n` +
+                    (esConfirmacion
+                        ? `_✅ Ingresa a Notificaciones WhatsApp ➔ Confirmación de Recibo para aprobar el pago con 1 clic._`
+                        : `_⚠️ Ingresa a Notificaciones WhatsApp ➔ Pendientes Comprobante para revisar esta novedad._`);
 
                 const textoCompleto = (ocrData && (ocrData.texto_extraido || ocrData.ocr_completo?.texto_extraido)) ? String(ocrData.texto_extraido || ocrData.ocr_completo?.texto_extraido).trim() : '';
 
@@ -1368,13 +1398,13 @@ client.on('message', async (msg) => {
 
                                 await sleep(rand(1000, 2000));
                                 await client.sendMessage(targetChatId, msgMediaToSend, { caption: captionPhoto });
-                                console.log(`[WhatsApp Bridge] ✅ Comprobante reenviado con éxito a ${d.nombre || 'Destino OCR'} (${targetChatId}) para cliente ${nombreDisplay}${idClienteStr}`);
+                                console.log(`[WhatsApp Bridge] ✅ Comprobante reenviado con éxito a ${d.nombre || 'Destino OCR'} (${targetChatId}) para cliente ${nombreDisplay} (ID: ${idClienteStr})`);
                                 lastOutboundAt = Date.now();
 
                                 // Enviar segundo mensaje con absolutamente todo el texto extraído íntegro
                                 if (textoCompleto) {
                                     await sleep(rand(800, 1500));
-                                    const textoMsg = `📄 *Texto Completo Detectado por OCR (${nombreDisplay}${idClienteStr}):*\n\`\`\`\n${textoCompleto}\n\`\`\``;
+                                    const textoMsg = `📄 *Texto Completo Detectado por OCR (${nombreDisplay} | ID: ${idClienteStr}):*\n\`\`\`\n${textoCompleto}\n\`\`\``;
                                     await client.sendMessage(targetChatId, textoMsg);
                                     console.log(`[WhatsApp Bridge] 📄 Texto íntegro OCR entregado a ${targetChatId}`);
                                     lastOutboundAt = Date.now();

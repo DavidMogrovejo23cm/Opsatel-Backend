@@ -942,6 +942,15 @@ class ComprobanteUpdate(BaseModel):
     numero_referencia: Optional[str] = None
     observaciones: Optional[str] = None
     cliente_id: Optional[int] = None
+    categoria_validacion: Optional[str] = None
+    motivo_validacion: Optional[str] = None
+
+class ComprobanteAprobarRequest(BaseModel):
+    cliente_id: Optional[int] = None
+    monto: Optional[float] = None
+    metodo_pago: Optional[str] = None
+    numero_referencia: Optional[str] = None
+    notificar_whatsapp: Optional[bool] = True
 
 class ComprobanteResponse(BaseModel):
     id: int
@@ -959,6 +968,17 @@ class ComprobanteResponse(BaseModel):
     banco_origen: Optional[str] = None
     banco_destino: Optional[str] = None
     numero_referencia: Optional[str] = None
+    cedula_cliente: Optional[str] = None
+    cuenta_origen: Optional[str] = None
+    cuenta_destino: Optional[str] = None
+    beneficiario: Optional[str] = None
+    ordenante: Optional[str] = None
+    fecha_comprobante: Optional[str] = None
+    texto_ocr: Optional[str] = None
+    saldo_pendiente_bd: Optional[float] = None
+    categoria_validacion: Optional[str] = "PENDIENTES_COMPROBANTE"
+    motivo_validacion: Optional[str] = None
+    pago_id: Optional[int] = None
     observaciones: Optional[str] = None
     fecha_hora: Optional[datetime] = None
     created_at: Optional[datetime] = None
