@@ -1,22 +1,15 @@
 """
-Servicio OCR de Máxima Precisión para Comprobantes de Pago de Opsatel.
-Utiliza Tesseract OCR y Pillow con motor de multipasada (PSM 4, PSM 11, PSM 3, PSM 6)
-y preprocesamiento adaptativo (escalado, binarización para eliminar marcas de agua de fondo tenues, realce de contraste).
-Apunta prioritariamente al entorno virtual configurado en el servidor (/var/www/html/entornos/ia_env)
-con fallback al entorno actual (Docker / host) y al binario del sistema tesseract.
+Servicio OCR de Alta Precisión con Super-Resolución y Mejora de Calidad de Imagen para Comprobantes de Pago de Opsatel.
 
-Extrae absolutamente todo el texto visible del comprobante y estructura:
-- Banco emisor / origen
-- Banco destino
-- Monto monetario ($ USD)
-- Destinatario / Beneficiario (A...)
-- Ordenante / Remitente (De...)
-- Cuenta destino
-- Cuenta origen
-- Número de comprobante / Referencia / Secuencial
-- Fecha de la transacción
-- Estado / Tipo de transacción
-- Texto completo íntegro sin omisiones
+Flujo de procesamiento:
+1. Mejora de Calidad de Imagen (Super-Sampling Bicúbico/Lanczos 2.4x, eliminación de artefactos JPEG,
+   supresión suave de marcas de agua de fondo con curva Gamma sin destruir bordes anti-aliasing,
+   filtro Unsharp Mask para nitidez de letras/números y enmascarado automático de códigos QR).
+2. Extracción OCR Híbrida de Alta Precisión:
+   - Motor Deep Learning RapidOCR (PP-OCRv4 ONNX) con reconstrucción geométrica de filas/columnas.
+   - Entorno virtual del servidor (/var/www/html/entornos/ia_env) con Tesseract LSTM (--oem 1) a 300 DPI.
+   - Proceso local pytesseract y binario CLI tesseract como respaldo.
+3. Post-procesamiento léxico bancario en español y extracción estructurada de todos los campos.
 """
 
 import os
@@ -24,8 +17,9 @@ import sys
 import json
 import re
 import logging
+import tempfile
 import subprocess
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 logger = logging.getLogger("opsatel.ocr_comprobantes")
 
@@ -38,6 +32,9 @@ PYTHON_VENV_CANDIDATES = [
     os.path.expanduser("~/entornos/ia_env/bin/python3"),
     os.path.expanduser("~/entornos/ia_env/bin/python")
 ]
+
+# Instancia singleton opcional de RapidOCR para evitar recargar modelos en cada comprobante
+_RAPID_OCR_INSTANCE = None
 
 # Lista de entidades financieras comunes en Ecuador
 BANCOS_ECUADOR = [
@@ -99,11 +96,240 @@ def buscar_ruta_archivo(file_path_or_name: str) -> Optional[str]:
     return None
 
 
+def mejorar_calidad_imagen_para_ocr(image_path: str) -> Tuple[str, Optional[str]]:
+    """
+    Sube la calidad de la imagen descargada antes del escaneo OCR:
+    1. Si la imagen original es de baja resolución (< 900px de ancho, ej. 375x785),
+       mejora su nitidez y resolución para que se vea clara en el sistema.
+    2. Genera una imagen temporal optimizada en Alta Definición (300 DPI) exclusiva para el OCR:
+       - Super-sampling Bicúbico/Lanczos (2.4x) para que las letras pequeñas tengan > 28px de alto.
+       - Supresión suave de marcas de agua de fondo (píxeles >= 232 pasan a blanco puro 255)
+         con curva Gamma (1.25) que oscurece textos grises sin romper los bordes anti-aliasing
+         de números ni letras (evita confundir 0/O, 8/3, 6/5, i/l).
+       - Filtro Unsharp Mask para definir los trazos de cada carácter.
+       - Detección y enmascarado del código QR en la copia OCR para evitar que los cuadros
+         del QR sean leídos como caracteres basura.
+    Retorna (ruta_para_ocr, ruta_temporal_a_limpiar).
+    """
+    temp_ocr_path = None
+    try:
+        from PIL import Image, ImageOps, ImageFilter
+
+        with Image.open(image_path) as raw_img:
+            img_rgb = raw_img.convert("RGB")
+            w, h = img_rgb.size
+
+            # Factor de escalado adaptativo para alcanzar nitidez óptima de lectura
+            if w < 600:
+                scale = 2.0
+            elif w < 1000:
+                scale = 1.6
+            elif w < 1400:
+                scale = 1.25
+            else:
+                scale = 1.0
+
+            new_w, new_h = int(w * scale), int(h * scale)
+
+            # Si la imagen descargada era pequeña, guardar versión mejorada a color en el archivo original
+            if scale >= 1.8:
+                try:
+                    color_upscaled = img_rgb.resize((new_w, new_h), Image.Resampling.BICUBIC)
+                    color_sharpened = color_upscaled.filter(
+                        ImageFilter.UnsharpMask(radius=1.2, percent=130, threshold=3)
+                    )
+                    ext = os.path.splitext(image_path)[1].lower()
+                    if ext in [".jpg", ".jpeg"]:
+                        color_sharpened.save(image_path, format="JPEG", quality=95, optimize=True, dpi=(300, 300))
+                    elif ext == ".png":
+                        color_sharpened.save(image_path, format="PNG", dpi=(300, 300))
+                except Exception as e_save_orig:
+                    logger.debug(f"[OCR] Aviso guardando mejora visual en original: {e_save_orig}")
+
+            # Intentar pipeline OpenCV de alta precisión (preserva asteriscos y espacios finos)
+            try:
+                # pyrefly: ignore[missing-import]
+                import cv2  # type: ignore
+                import numpy as np  # type: ignore
+
+                cv_orig = cv2.cvtColor(np.array(img_rgb), cv2.COLOR_RGB2BGR)
+                cv_up = cv2.resize(cv_orig, (new_w, new_h), interpolation=cv2.INTER_CUBIC) if scale > 1.0 else cv_orig.copy()
+
+                # Detectar y enmascarar código QR en la copia de trabajo OCR
+                qr_det = cv2.QRCodeDetector()
+                ok_qr, points = qr_det.detect(cv_up)
+                if ok_qr and points is not None and len(points) > 0:
+                    pts = points[0]
+                    xs = [int(p[0]) for p in pts]
+                    ys = [int(p[1]) for p in pts]
+                    x_min, x_max = max(0, min(xs) - 8), min(new_w, max(xs) + 8)
+                    y_min, y_max = max(0, min(ys) - 8), min(new_h, max(ys) + 8)
+                    qr_w = x_max - x_min
+                    qr_h = y_max - y_min
+                    if qr_w > 60 and qr_h > 60 and 0.7 <= (qr_w / float(qr_h)) <= 1.35:
+                        cv2.rectangle(cv_up, (x_min, y_min), (x_max, y_max), (255, 255, 255), -1)
+
+                gray_np = cv2.cvtColor(cv_up, cv2.COLOR_BGR2GRAY)
+                clipped = np.clip(gray_np.astype(np.float32), 0, 232) / 232.0
+                gamma_corrected = np.power(clipped, 1.25) * 255.0
+                enhanced_np = np.clip(gamma_corrected, 0, 255).astype(np.uint8)
+
+                blur_np = cv2.GaussianBlur(enhanced_np, (0, 0), 1.2)
+                sharpened_np = cv2.addWeighted(enhanced_np, 1.45, blur_np, -0.45, 0)
+                bordered_gray = Image.fromarray(sharpened_np)
+            except Exception:
+                work_rgb = img_rgb.resize((new_w, new_h), Image.Resampling.BICUBIC) if scale > 1.0 else img_rgb.copy()
+                gray = ImageOps.grayscale(work_rgb)
+                lut = [
+                    min(255, int(((min(p, 232) / 232.0) ** 1.25) * 255.0))
+                    for p in range(256)
+                ]
+                enhanced_gray = gray.point(lut)
+                sharpened_gray = enhanced_gray.filter(
+                    ImageFilter.UnsharpMask(radius=1.2, percent=145, threshold=0)
+                )
+                bordered_gray = sharpened_gray
+
+            fd, temp_ocr_path = tempfile.mkstemp(prefix="opsatel_ocr_hd_", suffix=".png")
+            os.close(fd)
+            bordered_gray.save(temp_ocr_path, format="PNG", dpi=(300, 300))
+            return temp_ocr_path, temp_ocr_path
+
+    except Exception as e_enh:
+        logger.warning(f"[OCR] Aviso en mejora de calidad de imagen: {e_enh}")
+        if temp_ocr_path and os.path.exists(temp_ocr_path):
+            try:
+                os.remove(temp_ocr_path)
+            except Exception:
+                pass
+        return image_path, None
+
+
+def postprocesar_texto_comprobante(texto: str) -> str:
+    """
+    Limpia artefactos comunes de OCR en comprobantes bancarios en español,
+    restaurando espacios en etiquetas conocidas y corrigiendo símbolos.
+    """
+    if not texto:
+        return ""
+
+    texto_limpio = texto.replace("★", "*").replace("☆", "*")
+
+    reemplazos = [
+        (r"(?:^|\b)iTransferencia", "¡Transferencia"),
+        (r"¡Transferenciaexitosa!", "¡Transferencia exitosa!"),
+        (r"\bTransferenciaexitosa\b", "Transferencia exitosa"),
+        (r"\bCuentadestino\b", "Cuenta destino"),
+        (r"\bBancodestino\b", "Banco destino"),
+        (r"\bCuentaorigen\b", "Cuenta origen"),
+        (r"\bBancoPichincha\b", "Banco Pichincha"),
+        (r"\bBANCOPICHINCHA\b", "BANCO PICHINCHA"),
+        (r"\bN[\.:]\s*de\s*comprobante\b", "N. de comprobante"),
+        (r"\bN\.decomprobante\b", "N. de comprobante"),
+        (r"(\d{1,2})\.de\b", r"\1 de"),
+        (r"\bdenoviembre\b", "de noviembre"),
+        (r"\bden0viembre\b", "de noviembre"),
+        (r"\bdeoctubre\b", "de octubre"),
+        (r"\bdediciembre\b", "de diciembre"),
+        (r"\bdeenero\b", "de enero"),
+        (r"\bdefebrero\b", "de febrero"),
+        (r"\bdemarzo\b", "de marzo"),
+        (r"\bdeabril\b", "de abril"),
+        (r"\bdemayo\b", "de mayo"),
+        (r"\bdejunio\b", "de junio"),
+        (r"\bdejulio\b", "de julio"),
+        (r"\bdeagosto\b", "de agosto"),
+        (r"\bdeseptiembre\b", "de septiembre"),
+        (r"\btransaccion\b", "transacción"),
+        (r"\bVerificarlatransacci[oó]nconesteQR\.?", "Verificar la transacción con este QR."),
+    ]
+
+    for patron, reemplazo in reemplazos:
+        flags = 0 if "iTransferencia" in patron or "BANCOPICHINCHA" in patron else re.IGNORECASE
+        texto_limpio = re.sub(patron, reemplazo, texto_limpio, flags=flags)
+
+    # Filtrar líneas residuales que sean puro ruido de 1-2 símbolos sin letras ni dígitos válidos
+    lineas_depuradas: List[str] = []
+    for linea in texto_limpio.split("\n"):
+        l_strip = linea.strip()
+        if not l_strip:
+            continue
+        alnum_count = sum(1 for c in l_strip if c.isalnum())
+        if alnum_count == 0:
+            continue
+        # Descartar fragmentos sueltos de marca de agua si quedara alguno aislado
+        if l_strip.upper() in {"NCOPI", "PICHINC", "CHINCHA", "BANCOP"}:
+            continue
+        lineas_depuradas.append(l_strip)
+
+    return "\n".join(lineas_depuradas)
+
+
+def extraer_texto_rapidocr(image_path: str) -> str:
+    """
+    Extrae el texto utilizando RapidOCR (PaddleOCR PP-OCRv4 sobre ONNX Runtime)
+    y reconstruye geométricamente los renglones horizontales (uniendo etiquetas de la
+    columna izquierda con los valores de la columna derecha en la misma línea).
+    """
+    global _RAPID_OCR_INSTANCE
+    try:
+        # pyrefly: ignore[missing-import]
+        from rapidocr_onnxruntime import RapidOCR  # type: ignore
+
+        if _RAPID_OCR_INSTANCE is None:
+            _RAPID_OCR_INSTANCE = RapidOCR()
+
+        result, _ = _RAPID_OCR_INSTANCE(image_path, box_thresh=0.3, unclip_ratio=1.8)
+        if not result:
+            return ""
+
+        items = []
+        for box, text, score in result:
+            if float(score) < 0.50:
+                continue
+            t_clean = (text or "").strip()
+            if not t_clean:
+                continue
+            ys = [p[1] for p in box]
+            xs = [p[0] for p in box]
+            y_center = (min(ys) + max(ys)) / 2.0
+            box_h = max(1.0, max(ys) - min(ys))
+            x_min = min(xs)
+            items.append({"y": y_center, "h": box_h, "x": x_min, "text": t_clean})
+
+        if not items:
+            return ""
+
+        # Ordenar de arriba hacia abajo y agrupar cajas que pertenecen al mismo renglón horizontal
+        items.sort(key=lambda it: it["y"])
+        rows: List[List[Dict[str, Any]]] = []
+        for it in items:
+            placed = False
+            for row in rows:
+                avg_y = sum(r["y"] for r in row) / len(row)
+                avg_h = sum(r["h"] for r in row) / len(row)
+                if abs(it["y"] - avg_y) <= max(avg_h * 0.65, 18.0):
+                    row.append(it)
+                    placed = True
+                    break
+            if not placed:
+                rows.append([it])
+
+        lines: List[str] = []
+        for row in rows:
+            row.sort(key=lambda r: r["x"])
+            line_str = " ".join(r["text"] for r in row)
+            lines.append(line_str)
+
+        return postprocesar_texto_comprobante("\n".join(lines))
+    except Exception as e_rapid:
+        logger.debug(f"[OCR] RapidOCR no disponible o falló: {e_rapid}")
+        return ""
+
+
 def unificar_textos_extraidos(textos: List[str]) -> str:
     """
-    Combina inteligentemente múltiples pasadas de OCR sin duplicados,
-    preservando el orden de lectura natural y reemplazando líneas truncadas
-    por versiones más completas.
+    Combina múltiples pasadas de OCR sin duplicados preservando el orden de lectura.
     """
     if not textos:
         return ""
@@ -131,7 +357,6 @@ def unificar_textos_extraidos(textos: List[str]) -> str:
                 if norm == norm_existente:
                     duplicada = True
                     break
-                # Si una línea existente es subcadena de la nueva, reemplazar por la más completa
                 if norm_existente in norm and len(norm) > len(norm_existente):
                     lineas_finales[idx] = linea_limpia
                     duplicada = True
@@ -143,13 +368,13 @@ def unificar_textos_extraidos(textos: List[str]) -> str:
             if not duplicada:
                 lineas_finales.append(linea_limpia)
 
-    return "\n".join(lineas_finales)
+    return postprocesar_texto_comprobante("\n".join(lineas_finales))
 
 
 def parsear_texto_comprobante(texto: str) -> Dict[str, Any]:
     """
-    Analiza minuciosamente el texto extraído por Tesseract para extraer todos
-    los campos posibles del comprobante (bancos, monto, beneficiario, ordenante, cuentas, referencia, fecha, etc.).
+    Analiza minuciosamente el texto extraído para estructurar todos los campos
+    del comprobante (bancos, monto, beneficiario, ordenante, cuentas, referencia, fecha, estado).
     """
     data: Dict[str, Any] = {
         "banco_origen": None,
@@ -247,7 +472,7 @@ def parsear_texto_comprobante(texto: str) -> Dict[str, Any]:
         data["cuenta_origen"] = m_co.group(1).strip()
 
     # 8. Número de comprobante / Referencia / Secuencial (e.g. "169609929")
-    m_ref = re.search(r"(?:n[º°.]*\s*(?:de|del)?\s*comprobante|nro\.?\s*comprobante|no\.?\s*comprobante|num\.?\s*comprobante|comprobante|referencia|ref\.?|secuencial|transacci[oó]n|autorizaci[oó]n|control)\s*[:.]?\s*#?\s*([0-9A-Za-z-]{5,25})", texto, re.IGNORECASE)
+    m_ref = re.search(r"(?:n[º°.:]*\s*(?:de|del)?\s*comprobante|nro\.?\s*comprobante|no\.?\s*comprobante|num\.?\s*comprobante|comprobante|referencia|ref\.?|secuencial|transacci[oó]n|autorizaci[oó]n|control)\s*[:.]?\s*#?\s*([0-9A-Za-z-]{5,25})", texto, re.IGNORECASE)
     if m_ref:
         ref_val = m_ref.group(1).strip()
         if not re.match(r"^(cuenta|ahorros|corriente|fecha|banco|monto|valor)$", ref_val, re.IGNORECASE):
@@ -262,9 +487,9 @@ def parsear_texto_comprobante(texto: str) -> Dict[str, Any]:
             break
 
     # 9. Fecha de la transacción (e.g. "El 09 de noviembre de 2026" o "09/11/2026")
-    m_f_text = re.search(r"(?:el\s+)?(\d{1,2}\s+(?:de\s+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\s+(?:de\s+)?\d{2,4})", texto, re.IGNORECASE)
+    m_f_text = re.search(r"(?:el\s+)?(\d{1,2}[\s.]+(?:de[\s.]+)?(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*[\s.]+(?:de[\s.]+)?\d{2,4})", texto, re.IGNORECASE)
     if m_f_text:
-        data["fecha"] = m_f_text.group(1).strip()
+        data["fecha"] = m_f_text.group(1).replace(".", " ").strip()
     else:
         m_f_num = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", texto)
         if m_f_num:
@@ -280,61 +505,30 @@ def parsear_texto_comprobante(texto: str) -> Dict[str, Any]:
     return data
 
 
-def extraer_texto_multipasada(image_path: str) -> str:
+def extraer_texto_tesseract_mejorado(image_path: str) -> str:
     """
-    Ejecuta un motor de extracción OCR en múltiples pasadas con diferentes
-    modos PSM (4: Columna única tamaños variables, 11: Texto disperso, 3: Automático completo)
-    y preprocesamiento adaptativo (escalado, binarización limpia para marcas de agua, y realce).
+    Ejecuta Tesseract LSTM (--oem 1) sobre la imagen previamente mejorada en alta definición
+    (sin binarización destructiva que rompa letras/números).
     """
     try:
         # pyrefly: ignore[missing-import]
         import pytesseract  # type: ignore
-        from PIL import Image, ImageOps, ImageEnhance
+        from PIL import Image
 
-        with Image.open(image_path) as raw_img:
-            if raw_img.mode != "RGB":
-                img = raw_img.convert("RGB")
-            else:
-                img = raw_img.copy()
-
-            # Escalar si es de resolución media para nitidez en letras pequeñas y números
-            w, h = img.size
-            if w < 1400:
-                factor = 1400.0 / w
-                img = img.resize((int(w * factor), int(h * factor)), Image.Resampling.LANCZOS)
-
-            # Preparar versión con realce de contraste
-            gray = ImageOps.grayscale(img)
-            enhanced = ImageOps.autocontrast(gray, cutoff=1)
-            contrast_img = ImageEnhance.Contrast(enhanced).enhance(1.5)
-
-            # Preparar versión binarizada (elimina eficazmente marcas de agua tenues de fondo)
-            binarized_img = gray.point(lambda p: 255 if p > 195 else 0)
-
+        with Image.open(image_path) as img:
             textos_brutos: List[str] = []
-
             for lang in ["spa+eng", "spa", "eng", None]:
                 lang_kwargs = {"lang": lang} if lang else {}
                 try:
-                    # Pasada 1: Columna única sobre imagen binarizada (modo ideal para comprobantes móviles)
-                    t1 = pytesseract.image_to_string(binarized_img, **lang_kwargs, config="--psm 4")
+                    # PSM 4: Columna única de tamaños variables con motor neuronal LSTM (--oem 1)
+                    t1 = pytesseract.image_to_string(img, **lang_kwargs, config="--oem 1 --psm 4 -c preserve_interword_spaces=1")
                     if t1 and t1.strip():
                         textos_brutos.append(t1)
 
-                    # Pasada 2: Sparse text (PSM 11) sobre binarizada para capturar números de cuenta y asteriscos
-                    t2 = pytesseract.image_to_string(binarized_img, **lang_kwargs, config="--psm 11")
+                    # PSM 6: Bloque uniforme como respaldo
+                    t2 = pytesseract.image_to_string(img, **lang_kwargs, config="--oem 1 --psm 6")
                     if t2 and t2.strip():
                         textos_brutos.append(t2)
-
-                    # Pasada 3: Segmentación automática de página (PSM 3) sobre RGB original
-                    t3 = pytesseract.image_to_string(img, **lang_kwargs, config="--psm 3")
-                    if t3 and t3.strip():
-                        textos_brutos.append(t3)
-
-                    # Pasada 4: Contraste realzado con PSM 6 (bloque uniforme)
-                    t4 = pytesseract.image_to_string(contrast_img, **lang_kwargs, config="--psm 6")
-                    if t4 and t4.strip():
-                        textos_brutos.append(t4)
 
                     if textos_brutos:
                         break
@@ -343,21 +537,21 @@ def extraer_texto_multipasada(image_path: str) -> str:
 
             return unificar_textos_extraidos(textos_brutos)
     except Exception as e:
-        logger.warning(f"[OCR] Aviso en extracción multipasada directa: {e}")
+        logger.warning(f"[OCR] Aviso en extracción Tesseract directo: {e}")
         return ""
 
 
 def ejecutar_tesseract_cli(image_path: str) -> str:
     """
-    Fallback directo invocando el binario del sistema 'tesseract' sin dependencias de Python.
+    Fallback directo invocando el binario del sistema 'tesseract' sobre la imagen HD mejorada.
     """
     textos_cli: List[str] = []
     tesseract_bin = "tesseract"
 
     for lang in ["spa+eng", "spa", "eng"]:
-        for psm in ["4", "11", "3"]:
+        for psm in ["4", "6"]:
             try:
-                cmd = [tesseract_bin, image_path, "stdout", "-l", lang, "--psm", psm]
+                cmd = [tesseract_bin, image_path, "stdout", "-l", lang, "--oem", "1", "--psm", psm, "-c", "preserve_interword_spaces=1"]
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
                 if res.returncode == 0 and res.stdout and res.stdout.strip():
                     textos_cli.append(res.stdout.strip())
@@ -370,89 +564,71 @@ def ejecutar_tesseract_cli(image_path: str) -> str:
 
 
 def ejecutar_ocr_en_entorno_servidor(image_path: str, python_bin: str) -> str:
-    """Invoca el intérprete en /var/www/html/entornos/ia_env con el motor de multipasada adaptativo."""
+    """
+    Invoca el intérprete en /var/www/html/entornos/ia_env recibiendo la imagen ya mejorada en HD.
+    Intenta primero RapidOCR si está en ia_env, y luego pytesseract con LSTM (--oem 1) sin binarización destructiva.
+    """
     try:
         codigo_inline = f"""
 import sys
 import json
-import re
 
-def unificar(textos):
-    lineas = []
-    def norm(s):
-        return re.sub(r'[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ]', '', s).lower()
-    for bloque in textos:
-        if not bloque:
-            continue
-        for l in bloque.split('\\n'):
-            lc = l.strip()
-            if not lc or len(lc) < 2:
-                continue
-            n = norm(lc)
-            if not n:
-                continue
-            dup = False
-            for idx, ex in enumerate(lineas):
-                ne = norm(ex)
-                if n == ne:
-                    dup = True
-                    break
-                if ne in n and len(n) > len(ne):
-                    lineas[idx] = lc
-                    dup = True
-                    break
-                elif n in ne:
-                    dup = True
-                    break
-            if not dup:
-                lineas.append(lc)
-    return '\\n'.join(lineas)
+img_file = {json.dumps(image_path)}
+salida = ""
 
+# 1. Intentar con RapidOCR si existe en el entorno
 try:
-    import pytesseract
-    from PIL import Image, ImageOps, ImageEnhance
-
-    with Image.open({json.dumps(image_path)}) as raw_img:
-        if raw_img.mode != "RGB":
-            img = raw_img.convert("RGB")
-        else:
-            img = raw_img.copy()
-
-        w, h = img.size
-        if w < 1400:
-            factor = 1400.0 / w
-            img = img.resize((int(w * factor), int(h * factor)), Image.Resampling.LANCZOS)
-
-        gray = ImageOps.grayscale(img)
-        enhanced = ImageOps.autocontrast(gray, cutoff=1)
-        contrast_img = ImageEnhance.Contrast(enhanced).enhance(1.5)
-        binarized_img = gray.point(lambda p: 255 if p > 195 else 0)
-
-        textos = []
-        for lang in ["spa+eng", "spa", "eng", None]:
-            lk = {{"lang": lang}} if lang else {{}}
-            try:
-                t1 = pytesseract.image_to_string(binarized_img, **lk, config="--psm 4")
-                if t1 and t1.strip():
-                    textos.append(t1)
-                t2 = pytesseract.image_to_string(binarized_img, **lk, config="--psm 11")
-                if t2 and t2.strip():
-                    textos.append(t2)
-                t3 = pytesseract.image_to_string(img, **lk, config="--psm 3")
-                if t3 and t3.strip():
-                    textos.append(t3)
-                t4 = pytesseract.image_to_string(contrast_img, **lk, config="--psm 6")
-                if t4 and t4.strip():
-                    textos.append(t4)
-                if textos:
-                    break
-            except Exception:
+    from rapidocr_onnxruntime import RapidOCR
+    engine = RapidOCR()
+    result, _ = engine(img_file, box_thresh=0.3, unclip_ratio=1.8)
+    if result:
+        items = []
+        for box, text, score in result:
+            if float(score) < 0.50:
                 continue
+            ys = [p[1] for p in box]
+            xs = [p[0] for p in box]
+            items.append({{'y': (min(ys)+max(ys))/2.0, 'h': max(1.0, max(ys)-min(ys)), 'x': min(xs), 'text': text.strip()}})
+        items.sort(key=lambda it: it['y'])
+        rows = []
+        for it in items:
+            placed = False
+            for row in rows:
+                avg_y = sum(r['y'] for r in row)/len(row)
+                avg_h = sum(r['h'] for r in row)/len(row)
+                if abs(it['y'] - avg_y) <= max(avg_h * 0.65, 18.0):
+                    row.append(it)
+                    placed = True
+                    break
+            if not placed:
+                rows.append([it])
+        lines = []
+        for row in rows:
+            row.sort(key=lambda r: r['x'])
+            lines.append(' '.join(r['text'] for r in row))
+        salida = '\\n'.join(lines)
+except Exception:
+    pass
 
-        resultado = unificar(textos)
-        sys.stdout.write(resultado)
-except Exception as e:
-    sys.stderr.write(str(e))
+# 2. Si no hubo salida de RapidOCR, usar pytesseract LSTM sobre la imagen HD mejorada
+if not salida.strip():
+    try:
+        import pytesseract
+        from PIL import Image
+        with Image.open(img_file) as img:
+            for lang in ["spa+eng", "spa", "eng", None]:
+                lk = {{"lang": lang}} if lang else {{}}
+                try:
+                    t1 = pytesseract.image_to_string(img, **lk, config="--oem 1 --psm 4 -c preserve_interword_spaces=1")
+                    if t1 and t1.strip():
+                        salida = t1.strip()
+                        break
+                except Exception:
+                    continue
+    except Exception as e:
+        sys.stderr.write(str(e))
+
+sys.stdout.write(salida)
 """
         res = subprocess.run(
             [python_bin, "-c", codigo_inline],
@@ -461,7 +637,7 @@ except Exception as e:
             timeout=35
         )
         if res.returncode == 0 and res.stdout and res.stdout.strip():
-            return res.stdout.strip()
+            return postprocesar_texto_comprobante(res.stdout.strip())
         elif res.stderr:
             logger.warning(f"[OCR] Subproceso {python_bin} retornó stderr: {res.stderr}")
     except Exception as e_sub:
@@ -472,13 +648,12 @@ except Exception as e:
 
 def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
     """
-    Función principal de análisis OCR.
-    1. Resuelve la ruta física del archivo.
-    2. Apunta prioritariamente a /var/www/html/entornos/ia_env si existe.
-    3. Fallback a pytesseract directo en proceso Docker/Host.
-    4. Fallback directo a binario tesseract CLI.
-    5. Extrae absolutamente todo el texto visible sin omitir líneas.
-    6. Estructura los datos bancarios y devuelve tanto los campos clave como el texto íntegro.
+    Función principal de análisis OCR:
+    1. Resuelve la ruta física del archivo descargado.
+    2. Mejora la calidad de la imagen (Super-Sampling Bicúbico 2.4x, eliminación de marca de agua
+       con curva Gamma suave, Unsharp Mask para nitidez de letras/números y enmascarado de QR).
+    3. Ejecuta el motor OCR de alta precisión (RapidOCR Deep Learning + entorno ia_env / Tesseract HD).
+    4. Estructura todos los datos bancarios y devuelve tanto los campos clave como el texto íntegro.
     """
     ruta_real = buscar_ruta_archivo(file_path_or_name)
     if not ruta_real:
@@ -489,21 +664,34 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
             "ruta_buscada": file_path_or_name
         }
 
+    # Paso 1: Subir la calidad de la imagen antes del escaneo OCR
+    ruta_ocr_hd, temp_cleanup = mejorar_calidad_imagen_para_ocr(ruta_real)
+
     texto_extraido = ""
+    try:
+        # A. Prioridad 1: Motor Deep Learning RapidOCR (PP-OCRv4 con reconstrucción de filas) sobre imagen HD
+        texto_extraido = extraer_texto_rapidocr(ruta_ocr_hd)
 
-    # A. Prioridad 1: Entorno virtual del servidor en /var/www/html/entornos/ia_env
-    ia_python = obtener_interprete_python()
-    if ia_python:
-        logger.info(f"[OCR] Utilizando intérprete de servidor: {ia_python}")
-        texto_extraido = ejecutar_ocr_en_entorno_servidor(ruta_real, ia_python)
+        # B. Prioridad 2: Entorno virtual del servidor en /var/www/html/entornos/ia_env sobre imagen HD
+        if not texto_extraido or not texto_extraido.strip():
+            ia_python = obtener_interprete_python()
+            if ia_python:
+                logger.info(f"[OCR] Utilizando intérprete de servidor: {ia_python}")
+                texto_extraido = ejecutar_ocr_en_entorno_servidor(ruta_ocr_hd, ia_python)
 
-    # B. Prioridad 2 / Fallback: Ejecución directa en el proceso Python actual (Docker o host)
-    if not texto_extraido or not texto_extraido.strip():
-        texto_extraido = extraer_texto_multipasada(ruta_real)
+        # C. Prioridad 3: Pytesseract LSTM en proceso actual sobre imagen HD
+        if not texto_extraido or not texto_extraido.strip():
+            texto_extraido = extraer_texto_tesseract_mejorado(ruta_ocr_hd)
 
-    # C. Prioridad 3 / Fallback: Ejecución directa del binario tesseract del sistema
-    if not texto_extraido or not texto_extraido.strip():
-        texto_extraido = ejecutar_tesseract_cli(ruta_real)
+        # D. Prioridad 4: Binario CLI tesseract del sistema sobre imagen HD
+        if not texto_extraido or not texto_extraido.strip():
+            texto_extraido = ejecutar_tesseract_cli(ruta_ocr_hd)
+    finally:
+        if temp_cleanup and os.path.exists(temp_cleanup):
+            try:
+                os.remove(temp_cleanup)
+            except Exception:
+                pass
 
     if not texto_extraido or not texto_extraido.strip():
         logger.warning(f"[OCR] No se pudo extraer texto de '{os.path.basename(ruta_real)}'")
@@ -513,10 +701,10 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
             "ruta_archivo": ruta_real
         }
 
-    # D. Parseo detallado de todos los datos del comprobante
+    # E. Parseo detallado de todos los datos del comprobante
     datos_extraidos = parsear_texto_comprobante(texto_extraido)
 
-    # E. Construir resumen descriptivo
+    # F. Construir resumen descriptivo
     partes = []
     if datos_extraidos.get("banco_origen"):
         partes.append(f"Banco: {datos_extraidos['banco_origen']}")

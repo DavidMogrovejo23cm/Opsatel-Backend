@@ -5,6 +5,7 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl gnupg ca-certificates build-essential python3-dev chromium \
+        libgl1 libglib2.0-0 libgomp1 \
         tesseract-ocr tesseract-ocr-spa tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
