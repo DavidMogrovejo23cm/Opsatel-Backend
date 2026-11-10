@@ -556,6 +556,9 @@ def es_documento_comprobante_valido(texto: str, datos_extraidos: Dict[str, Any])
         return True, "multiples_indicadores_bancarios"
 
     return False, "la imagen mandada no es un documento valido"
+
+
+def extraer_texto_tesseract_mejorado(image_path: str) -> str:
     """
     Ejecuta Tesseract LSTM (--oem 1) sobre la imagen previamente mejorada en alta definición
     (sin binarización destructiva que rompa letras/números).
@@ -710,6 +713,8 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
         logger.warning(f"[OCR] No se encontró el archivo físico para '{file_path_or_name}'")
         return {
             "success": False,
+            "es_documento_valido": False,
+            "motivo_validacion_documento": "archivo_no_encontrado",
             "error": "archivo_no_encontrado",
             "ruta_buscada": file_path_or_name
         }
@@ -731,7 +736,6 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
 
         # C. Prioridad 3: Pytesseract LSTM en proceso actual sobre imagen HD
         if not texto_extraido or not texto_extraido.strip():
-            extraer_texto_tesseract_mejorado = None
             texto_extraido = extraer_texto_tesseract_mejorado(ruta_ocr_hd)
 
         # D. Prioridad 4: Binario CLI tesseract del sistema sobre imagen HD

@@ -1468,6 +1468,9 @@ class WhatsAppWebhookPayload(BaseModel):
     ruta_archivo: Optional[str] = None
     mimetype: Optional[str] = None
     tamano_bytes: Optional[int] = None
+    es_documento_valido: Optional[bool] = None
+    es_invalido: Optional[bool] = None
+    ya_notificado_cliente: Optional[bool] = None
 
 @router.post("/webhook-mensaje")
 def webhook_mensaje_whatsapp(
@@ -1610,6 +1613,49 @@ def webhook_mensaje_whatsapp(
             historial_previo = list(sam_bot_service.historial_conversaciones.get(jid_destino, []))
 
         # =========================================================================
+        # 4.0 DESCARTE INMEDIATO DE IMÁGENES NO VÁLIDAS (NO COMPROBANTES)
+        # Si la imagen no es un documento/comprobante válido, NUNCA enviar agradecimiento
+        # =========================================================================
+        es_imagen_invalida = bool(
+            payload.es_documento_valido is False or
+            payload.es_invalido is True or
+            "[Imagen descartada" in mensaje or
+            "[Imagen no válida]" in mensaje or
+            "[Imagen recibida - Documento no válido]" in mensaje or
+            "no es un comprobante válido" in mensaje.lower() or
+            "la imagen mandada no es un documento valido" in mensaje.lower()
+        )
+        if es_imagen_invalida:
+            resp_invalido = "La imagen enviada no es un documento válido. Por favor, envía un comprobante de pago o transferencia bancaria válido."
+            url_img = payload.url_archivo or ""
+            if not url_img:
+                m_url = re.search(r'(?:https?://[^\s]+)?(/uploadscr/[a-zA-Z0-9_\-\.\/]+)', mensaje)
+                if m_url:
+                    url_img = m_url.group(1)
+
+            msg_chat_user = f"📷 [Imagen recibida - No es un comprobante válido] {url_img}".strip()
+            registrar_mensaje_chat(
+                db, jid_destino, "cliente", msg_chat_user,
+                cliente_id=c_por_msg.id if c_por_msg else None,
+                tipo="multimedia",
+                nombre_remitente=payload.nombre or ""
+            )
+            registrar_mensaje_chat(
+                db, jid_destino, "asistente", resp_invalido,
+                cliente_id=c_por_msg.id if c_por_msg else None
+            )
+            sam_bot_service.guardar_mensaje_historial(jid_destino, "user", msg_chat_user)
+            sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", resp_invalido)
+
+            if not payload.ya_notificado_cliente:
+                try:
+                    whatsapp_service.send_whatsapp_message(jid_destino, resp_invalido)
+                except Exception as e_send_inv:
+                    print(f"[WhatsApp] Aviso al enviar rechazo de documento inválido: {e_send_inv}")
+
+            return {"success": False, "response": resp_invalido, "comprobante": False}
+
+        # =========================================================================
         # 4.1 DETECCIÓN Y PROCESAMIENTO GARANTIZADO DE COMPROBANTES / IMÁGENES
         # Almacena en la tabla MySQL 'comprobantes', vincula al cliente y muestra en chat
         # =========================================================================
@@ -1676,12 +1722,13 @@ def webhook_mensaje_whatsapp(
             ocr_verif = {}
             try:
                 ocr_verif = analizar_comprobante_ocr(ruta_archivo or nombre_archivo)
-            except Exception:
-                pass
+            except Exception as e_ocr_err:
+                print(f"[WhatsApp] Error analizando comprobante OCR en webhook: {e_ocr_err}")
 
-            if ocr_verif and not ocr_verif.get("es_documento_valido", False):
-                # La imagen no contiene elementos de un comprobante válido
-                resp_invalido = "la imagen mandada no es un documento valido"
+            es_doc_valido = bool(ocr_verif and ocr_verif.get("es_documento_valido", False))
+            if not es_doc_valido:
+                # La imagen no contiene elementos de un comprobante válido: NUNCA enviar 'Muchas gracias'
+                resp_invalido = "La imagen enviada no es un documento válido. Por favor, envía un comprobante de pago o transferencia bancaria válido."
                 msg_formateado_chat = f"📷 [Imagen recibida - No es un comprobante válido] {url_final}"
 
                 registrar_mensaje_chat(
@@ -1694,10 +1741,14 @@ def webhook_mensaje_whatsapp(
                     db, jid_destino, "asistente", resp_invalido,
                     cliente_id=c_por_msg.id if c_por_msg else None
                 )
-                try:
-                    whatsapp_service.send_whatsapp_message(jid_destino, resp_invalido)
-                except Exception as e_send_inv:
-                    print(f"[WhatsApp] Aviso al enviar rechazo de documento inválido: {e_send_inv}")
+                sam_bot_service.guardar_mensaje_historial(jid_destino, "user", msg_formateado_chat)
+                sam_bot_service.guardar_mensaje_historial(jid_destino, "assistant", resp_invalido)
+
+                if not payload.ya_notificado_cliente:
+                    try:
+                        whatsapp_service.send_whatsapp_message(jid_destino, resp_invalido)
+                    except Exception as e_send_inv:
+                        print(f"[WhatsApp] Aviso al enviar rechazo de documento inválido: {e_send_inv}")
 
                 return {"success": False, "response": resp_invalido, "comprobante": False}
 
@@ -3064,7 +3115,7 @@ def registrar_comprobante_endpoint(
                 "success": False,
                 "es_documento_valido": False,
                 "error": "la imagen mandada no es un documento valido",
-                "message": "la imagen mandada no es un documento valido",
+                "message": "La imagen enviada no es un documento válido. Por favor, envía un comprobante de pago o transferencia bancaria válido.",
                 "resumen_ocr": ocr_data.get("resumen_ocr"),
                 "texto_extraido": ocr_data.get("texto_extraido", "")
             }

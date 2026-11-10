@@ -1276,22 +1276,26 @@ client.on('message', async (msg) => {
                         console.log(`[WhatsApp Bridge] ⚠️ Imagen descartada de ${realPhone || remitente}: no es un comprobante válido.`);
                         
                         // Responder al usuario indicándole que la imagen no es un documento válido
+                        const msgRechazoDoc = "La imagen enviada no es un documento válido. Por favor, envía un comprobante de pago o transferencia bancaria válido.";
                         try {
                             const chatOrigen = msg.from;
                             await sleep(rand(600, 1200));
-                            await client.sendMessage(chatOrigen, "la imagen mandada no es un documento valido");
+                            await client.sendMessage(chatOrigen, msgRechazoDoc);
                             lastOutboundAt = Date.now();
                         } catch (eSendInv) {
                             console.warn('[WhatsApp Bridge] No se pudo enviar aviso de imagen no válida:', eSendInv.message);
                         }
 
                         // Notificar al chat administrativo/conversaciones que se recibió una imagen no válida
-                        sendWebhook(numeroParaWebhook, `📷 [Imagen descartada - la imagen mandada no es un documento valido] ${fileInfo.publicUrl || ''}`, pushname, remitente, {
+                        sendWebhook(numeroParaWebhook, `📷 [Imagen recibida - Documento no válido] ${fileInfo.publicUrl || ''}`, pushname, remitente, {
                             url_archivo: fileInfo.publicUrl,
                             nombre_archivo: fileInfo.fileName,
                             ruta_archivo: fileInfo.relativePath,
                             mimetype: media.mimetype || 'image/jpeg',
-                            tamano_bytes: fileInfo.fileSize
+                            tamano_bytes: fileInfo.fileSize,
+                            es_documento_valido: false,
+                            es_invalido: true,
+                            ya_notificado_cliente: true
                         });
 
                         // No reenviar a Destinos OCR ni almacenar en la bandeja de comprobantes
