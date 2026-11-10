@@ -948,9 +948,12 @@ class ComprobanteUpdate(BaseModel):
 class ComprobanteAprobarRequest(BaseModel):
     cliente_id: Optional[int] = None
     monto: Optional[float] = None
+    monto_aplicar: Optional[float] = None
     metodo_pago: Optional[str] = None
     numero_referencia: Optional[str] = None
+    observaciones: Optional[str] = None
     notificar_whatsapp: Optional[bool] = True
+    notificar_cliente: Optional[bool] = True
 
 class ComprobanteResponse(BaseModel):
     id: int

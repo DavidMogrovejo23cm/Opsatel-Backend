@@ -257,6 +257,20 @@ if os.path.exists(os.path.dirname(uploadscr_frontend)):
     os.makedirs(os.path.join(os.path.dirname(uploadscr_frontend), "public", "uploadscr"), exist_ok=True)
 os.makedirs(uploadscr_backend, exist_ok=True)
 os.makedirs(os.path.join(os.path.dirname(__file__), "uploads", "uploadscr"), exist_ok=True)
+if os.path.exists("/var/www/html/entornos"):
+    try:
+        os.makedirs("/var/www/html/entornos/uploadscr", exist_ok=True)
+    except Exception:
+        pass
+
+PLACEHOLDER_COMPROBANTE_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="240" height="300" viewBox="0 0 240 300">
+  <rect width="240" height="300" rx="14" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+  <rect x="24" y="28" width="192" height="244" rx="10" fill="#1e293b" stroke="#475569" stroke-dasharray="4 4"/>
+  <text x="120" y="115" text-anchor="middle" font-size="42" fill="#38bdf8" font-family="sans-serif">🧾</text>
+  <text x="120" y="160" text-anchor="middle" font-size="14" font-weight="bold" fill="#e2e8f0" font-family="sans-serif">Comprobante Registrado</text>
+  <text x="120" y="184" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="sans-serif">Archivo previo a recreación</text>
+  <text x="120" y="202" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="sans-serif">de contenedor Docker</text>
+</svg>"""
 
 @app.get("/uploadscr/{filename:path}")
 def servir_comprobante_uploadscr(filename: str):
@@ -264,6 +278,9 @@ def servir_comprobante_uploadscr(filename: str):
     candidates = [
         os.path.join(uploadscr_backend, clean_name),
         os.path.join(os.path.dirname(__file__), "uploads", "uploadscr", clean_name),
+        os.path.join("/var/www/html/entornos/uploadscr", clean_name),
+        os.path.join("/var/www/html/uploadscr", clean_name),
+        os.path.join("/var/www/opsatel-frontend/uploadscr", clean_name),
         os.path.join(uploadscr_frontend, clean_name),
         os.path.join(os.path.dirname(uploadscr_frontend), "public", "uploadscr", clean_name),
         os.path.join(os.path.dirname(uploadscr_frontend), "dist", "uploadscr", clean_name),
@@ -271,10 +288,7 @@ def servir_comprobante_uploadscr(filename: str):
     for c in candidates:
         if os.path.exists(c) and os.path.isfile(c):
             return FileResponse(c)
-    raise HTTPException(status_code=404, detail="Comprobante no encontrado en el servidor")
-
-target_uploadscr_static = uploadscr_frontend if os.path.exists(uploadscr_frontend) else uploadscr_backend
-app.mount("/uploadscr", StaticFiles(directory=target_uploadscr_static), name="uploadscr")
+    return Response(content=PLACEHOLDER_COMPROBANTE_SVG, media_type="image/svg+xml", status_code=200)
 
 
 @app.get("/")

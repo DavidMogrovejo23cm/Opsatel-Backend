@@ -19,7 +19,7 @@ import requests
 import os
 import time
 import random
-from typing import Optional, List, Dict, Union, Any
+from typing import Optional, List, Dict, Union, Any, Tuple
 import urllib.parse
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
@@ -1455,7 +1455,7 @@ def enviar_whatsapp_global(
     }
 
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Union, Any
+from typing import Optional, List, Dict, Union, Any, Tuple
 import urllib.parse
 
 class WhatsAppWebhookPayload(BaseModel):
@@ -2563,8 +2563,45 @@ def _try_float_val(val) -> float:
     return 0.0
 
 
-def calcular_deuda_pendiente_cliente(cliente: models.Cliente) -> float:
-    """Calcula el saldo total pendiente del cliente en la BD (Internet + Plus + Adicional)."""
+def obtener_tarifa_plan_cliente(cliente: models.Cliente, db: Session = None) -> float:
+    """Obtiene la tarifa mensual del plan del cliente como referencia cuando su saldo en BD está en 0."""
+    if not cliente:
+        return 0.0
+    if getattr(cliente, "cortesia_total", False):
+        return 0.0
+    if getattr(cliente, "mantenimiento", False):
+        return 10.0
+    esp = _try_float_val(getattr(cliente, "precio_plan_especial", 0.0))
+    if esp > 0:
+        return round(esp, 2)
+    plan_str = str(getattr(cliente, "plan", "") or "").strip()
+    if plan_str and db is not None:
+        try:
+            plan_obj = db.query(models.PlanInternet).filter(models.PlanInternet.nombre.ilike(plan_str)).first()
+            if plan_obj and plan_obj.precio is not None and float(plan_obj.precio) > 0:
+                return round(float(plan_obj.precio), 2)
+        except Exception:
+            pass
+    precios_base = {
+        "100mb": 17.25,
+        "100m/100m": 17.25,
+        "600mb": 17.87,
+        "600m/600m": 17.87,
+        "650m/650m": 20.00,
+        "700mb": 21.73,
+        "800mb": 32.20,
+        "800m/800m": 32.20,
+    }
+    if plan_str.lower() in precios_base:
+        return precios_base[plan_str.lower()]
+    inet_pay = _try_float_val(getattr(cliente, "internet_payment", 0.0))
+    if inet_pay > 0:
+        return round(inet_pay, 2)
+    return 0.0
+
+
+def calcular_deuda_pendiente_cliente(cliente: models.Cliente, db: Session = None) -> float:
+    """Calcula el saldo total pendiente del cliente en la BD (Internet + Plus + Adicional, o cuota de plan)."""
     if not cliente:
         return 0.0
     if getattr(cliente, "cortesia_total", False):
@@ -2577,7 +2614,66 @@ def calcular_deuda_pendiente_cliente(cliente: models.Cliente) -> float:
         total_p = _try_float_val(getattr(cliente, "total_pago", 0.0))
         if total_p > 0:
             deuda = round(total_p, 2)
+    if deuda <= 0.0:
+        tarifa = obtener_tarifa_plan_cliente(cliente, db)
+        if tarifa > 0:
+            deuda = round(tarifa + saldo_plus + saldo_adic, 2)
     return deuda
+
+
+def buscar_cliente_por_telefono_comprobante(db: Session, numero_raw: str, nombre_archivo: str = "") -> Tuple[Optional[models.Cliente], str]:
+    """
+    Busca exhaustivamente si el número de teléfono del remitente (o el incrustado en el nombre de archivo
+    comp_<ts>_<telefono>_wa.jpg) pertenece a un cliente registrado en la base de datos.
+    Retorna (cliente, telefono_limpio).
+    """
+    num_str = str(numero_raw or "").strip()
+    es_lid = num_str.lower().endswith("@lid")
+    num_clean = "" if es_lid else "".join([c for c in num_str if c.isdigit()])
+
+    # Si numero_raw venía vacío o como @lid, extraer el teléfono real desde el nombre del archivo si existe
+    if (not num_clean or len(num_clean) < 8 or len(num_clean) > 13) and nombre_archivo:
+        m_arch = re.search(r"comp_\d+_(\d{9,13})_wa", str(nombre_archivo))
+        if m_arch:
+            cand_arch = m_arch.group(1)
+            if cand_arch.startswith("5939") or cand_arch.startswith("09") or (len(cand_arch) == 9 and cand_arch.startswith("9")):
+                num_clean = cand_arch
+
+    if not num_clean or len(num_clean) < 8:
+        return None, num_clean
+
+    # 1. Intentar con el buscador estándar de SAM Bot
+    try:
+        import sam_bot_service
+        cli = sam_bot_service.buscar_cliente_por_celular(num_clean, db)
+        if cli:
+            return cli, num_clean
+    except Exception:
+        pass
+
+    # 2. Búsqueda exhaustiva limpiando espacios, guiones y prefijos (+593 / 0) en la tabla de clientes
+    ultimos_9 = num_clean[-9:] if len(num_clean) >= 9 else num_clean
+    ultimos_8 = num_clean[-8:]
+    try:
+        candidatos_sql = db.query(models.Cliente).filter(
+            models.Cliente.celular != None,
+            models.Cliente.celular.like(f"%{ultimos_8}%")
+        ).all()
+        if candidatos_sql:
+            return candidatos_sql[0], num_clean
+
+        # Escaneo normalizando dígitos por si el celular en BD tiene espacios o guiones (ej. '099 188 0500')
+        todos_clientes = db.query(models.Cliente).filter(models.Cliente.celular != None).all()
+        for c in todos_clientes:
+            cel_digits = re.sub(r"\D", "", str(c.celular or ""))
+            if not cel_digits or len(cel_digits) < 8:
+                continue
+            if (len(ultimos_9) == 9 and ultimos_9 in cel_digits) or cel_digits.endswith(ultimos_8):
+                return c, num_clean
+    except Exception:
+        pass
+
+    return None, num_clean
 
 
 def _nombres_compatibles(nombre_bd: str, nombre_comparar: str) -> bool:
@@ -2708,138 +2804,216 @@ def evaluar_validacion_comprobante(
     nombre_remitente: Optional[str],
     ocr_data: Dict[str, Any],
     monto_final: Optional[float],
-    referencia_final: Optional[str]
+    referencia_final: Optional[str],
+    nombre_archivo: str = "",
+    comprobante_id_actual: Optional[int] = None,
+    es_registro_historico_sin_ocr: bool = False
 ) -> Dict[str, Any]:
     """
     Compara el comprobante recibido con la Base de Datos y lo clasifica en:
-    - 'CONFIRMACION_RECIBO': Número registrado en BD, campos de cliente coinciden, tiene saldo pendiente > 0,
-                             y el monto que paga es igual o menor al saldo pendiente. Listo para aprobar pago.
-    - 'PENDIENTES_COMPROBANTE': Paga de más, envía desde otro número no registrado, no coincide con ningún
-                                cliente en la BD, comprobante duplicado o sin monto legible.
+    - 'CONFIRMACION_RECIBO': Enviado desde un número registrado en la BD (vinculado automáticamente al cliente),
+                             todavía por confirmar para que se cobre en la base de datos (el monto que paga
+                             coincide o es menor al saldo/cuota pendiente).
+    - 'PENDIENTES_COMPROBANTE': Enviado desde un número NO registrado, enviado desde otro número distinto al del
+                                cliente, sin coincidencia en la BD, paga de más sobre el valor pendiente,
+                                referencia duplicada o no se reconoció algún dato crítico.
     """
-    num_str = str(numero_raw or "").strip()
-    es_lid_no_resuelto = num_str.endswith("@lid")
-    num_clean = "".join([c for c in num_str if c.isdigit()])
-
-    cliente_por_telefono = None
-    if num_clean and not es_lid_no_resuelto:
-        try:
-            import sam_bot_service
-            cliente_por_telefono = sam_bot_service.buscar_cliente_por_celular(num_clean, db)
-        except Exception:
-            pass
-
-        if not cliente_por_telefono and len(num_clean) >= 8:
-            ultimos = num_clean[-8:]
-            cliente_por_telefono = db.query(models.Cliente).filter(
-                models.Cliente.celular != None,
-                models.Cliente.celular.like(f"%{ultimos}%")
-            ).first()
-
+    cliente_por_telefono, num_clean = buscar_cliente_por_telefono_comprobante(db, numero_raw, nombre_archivo)
     telefono_registrado = cliente_por_telefono is not None
 
-    # Buscar también por nombre del ordenante (OCR) o nombre del remitente (WhatsApp)
+    # Buscar también por nombre del ordenante (OCR) o nombre del remitente (WhatsApp) si el teléfono no está registrado
     ordenante_ocr = (ocr_data.get("ordenante") or "").strip()
     cliente_por_ordenante = None
     if ordenante_ocr:
         try:
             import sam_bot_service
-            c_ord, score_ord = sam_bot_service.buscar_cliente_por_nombre(ordenante_ocr, db)
-            if c_ord and score_ord >= 65:
+            c_ord, _ = sam_bot_service.buscar_cliente_por_nombre(ordenante_ocr, db)
+            if c_ord:
                 cliente_por_ordenante = c_ord
         except Exception:
             pass
 
     cliente_por_pushname = None
-    if nombre_remitente and nombre_remitente.strip():
+    if not cliente_por_telefono and nombre_remitente and len(nombre_remitente.strip().split()) >= 2:
         try:
             import sam_bot_service
-            c_push, score_push = sam_bot_service.buscar_cliente_por_nombre(nombre_remitente.strip(), db)
-            if c_push and score_push >= 70:
+            c_push, _ = sam_bot_service.buscar_cliente_por_nombre(nombre_remitente.strip(), db)
+            if c_push:
                 cliente_por_pushname = c_push
         except Exception:
             pass
 
+    # Si el teléfono sí está registrado en la BD, siempre vinculamos al dueño de esa línea registrada
     cliente = cliente_por_telefono or cliente_por_ordenante or cliente_por_pushname
-    deuda_bd = calcular_deuda_pendiente_cliente(cliente) if cliente else 0.0
+    deuda_bd = calcular_deuda_pendiente_cliente(cliente, db) if cliente else 0.0
 
-    # Verificar si el número de referencia ya fue aprobado previamente
+    # Si es un registro previo al OCR que viene de un número registrado y aún no tenía monto leído,
+    # sugerimos su valor pendiente en BD para que pueda confirmarse en Confirmación de Recibo
+    monto_evaluado = monto_final
+    if (monto_evaluado is None or monto_evaluado <= 0) and telefono_registrado and es_registro_historico_sin_ocr and deuda_bd > 0:
+        monto_evaluado = deuda_bd
+
+    # Verificar si el número de referencia ya fue cobrado/aprobado previamente
     duplicado_aprobado = None
     if referencia_final and len(str(referencia_final).strip()) >= 5:
-        duplicado_aprobado = db.query(models.Comprobante).filter(
+        q_dup = db.query(models.Comprobante).filter(
             models.Comprobante.numero_referencia == str(referencia_final).strip(),
             models.Comprobante.estado == "APROBADO"
-        ).first()
+        )
+        if comprobante_id_actual:
+            q_dup = q_dup.filter(models.Comprobante.id != comprobante_id_actual)
+        duplicado_aprobado = q_dup.first()
 
     razones_pendiente = []
 
     if duplicado_aprobado:
         razones_pendiente.append(
-            f"Comprobante duplicado: La referencia N° {referencia_final} ya fue aprobada en el registro #{duplicado_aprobado.id}."
+            f"Comprobante duplicado: La referencia N° {referencia_final} ya fue cobrada en el registro #{duplicado_aprobado.id}."
         )
 
     if not cliente:
         razones_pendiente.append(
-            f"Número remitente (+{num_clean or num_str}) no registrado y sin coincidencia con ningún cliente en la base de datos."
+            f"Número remitente (+{num_clean or numero_raw}) no está registrado y no tiene coincidencia con ningún cliente en la base de datos."
         )
     elif not telefono_registrado:
         tel_titular = getattr(cliente, "celular", None) or "Sin celular en BD"
         razones_pendiente.append(
-            f"Enviado desde otro número (+{num_clean or num_str}) distinto al registrado en BD para {cliente.nombre} (Tel. titular: {tel_titular})."
+            f"Enviado desde otro número (+{num_clean or numero_raw}) distinto al registrado en BD para {cliente.nombre} (ID #{cliente.id}, Cel. titular: {tel_titular})."
         )
-    else:
-        # Teléfono sí está registrado: verificar si el ordenante o nombre coincide con el titular
-        if ordenante_ocr and not _nombres_compatibles(cliente.nombre, ordenante_ocr):
-            # Si el ordenante del banco es otra persona, verificar si el pushname coincide o si el ordenante es otro cliente
-            if cliente_por_ordenante and cliente_por_ordenante.id != cliente.id:
-                razones_pendiente.append(
-                    f"El ordenante del comprobante ({ordenante_ocr}) corresponde a otro cliente ({cliente_por_ordenante.nombre}, ID #{cliente_por_ordenante.id}) distinto al titular de esta línea ({cliente.nombre}, ID #{cliente.id})."
-                )
-            elif not _nombres_compatibles(cliente.nombre, nombre_remitente or ""):
-                razones_pendiente.append(
-                    f"El nombre en el comprobante ({ordenante_ocr}) no coincide con el titular registrado en BD ({cliente.nombre})."
-                )
 
-    # Validar el monto pagado contra la deuda pendiente en la base de datos
-    if monto_final is None or monto_final <= 0:
+    # Validar el monto pagado contra la deuda/cuota pendiente en la base de datos
+    if monto_evaluado is None or monto_evaluado <= 0:
         razones_pendiente.append(
-            "No se detectó un monto válido en la imagen para comparar con el saldo pendiente."
+            "No se logró reconocer el monto en el comprobante. Requiere revisión manual."
         )
-    elif cliente:
-        if deuda_bd <= 0.009:
-            razones_pendiente.append(
-                f"Sin deuda pendiente en BD ($0.00) o paga de más: el comprobante es por ${monto_final:.2f}."
-            )
-        elif monto_final > deuda_bd + 0.01:
-            exceso = round(monto_final - deuda_bd, 2)
-            razones_pendiente.append(
-                f"Paga de más: El comprobante es por ${monto_final:.2f}, pero el saldo pendiente en BD es de ${deuda_bd:.2f} (excede por ${exceso:.2f})."
-            )
+    elif cliente and deuda_bd > 0.01 and monto_evaluado > deuda_bd + 0.05:
+        exceso = round(monto_evaluado - deuda_bd, 2)
+        razones_pendiente.append(
+            f"Paga de más: El comprobante es por ${monto_evaluado:.2f}, pero el valor pendiente en BD es de ${deuda_bd:.2f} (excede por ${exceso:.2f})."
+        )
 
-    if len(razones_pendiente) == 0 and cliente and telefono_registrado and monto_final and monto_final > 0:
+    if len(razones_pendiente) == 0 and cliente and telefono_registrado and monto_evaluado and monto_evaluado > 0:
         categoria = "CONFIRMACION_RECIBO"
-        if abs(monto_final - deuda_bd) <= 0.01:
+        if deuda_bd > 0 and abs(monto_evaluado - deuda_bd) <= 0.05:
             motivo = (
-                f"✅ Coincidencia exacta: Cliente registrado ID #{cliente.id} ({cliente.nombre}), "
-                f"paga ${monto_final:.2f} cubriendo el total pendiente en BD (${deuda_bd:.2f}). Listo para aprobar."
+                f"✅ Listo para confirmar cobro: Número registrado de {cliente.nombre} (ID #{cliente.id}, Cédula: {getattr(cliente, 'cedula', 'S/N')}). "
+                f"Paga ${monto_evaluado:.2f} coincidiendo con su valor pendiente en BD (${deuda_bd:.2f})."
+            )
+        elif deuda_bd > monto_evaluado:
+            restante = round(deuda_bd - monto_evaluado, 2)
+            motivo = (
+                f"✅ Listo para confirmar cobro (Abono parcial): Número registrado de {cliente.nombre} (ID #{cliente.id}). "
+                f"Paga ${monto_evaluado:.2f} de ${deuda_bd:.2f} pendiente en BD (restará ${restante:.2f})."
             )
         else:
-            restante = round(deuda_bd - monto_final, 2)
             motivo = (
-                f"✅ Coincidencia válida (Abono parcial): Cliente registrado ID #{cliente.id} ({cliente.nombre}), "
-                f"paga ${monto_final:.2f} de ${deuda_bd:.2f} pendiente en BD (quedará saldo de ${restante:.2f}). Listo para aprobar."
+                f"✅ Listo para confirmar cobro: Número registrado de {cliente.nombre} (ID #{cliente.id}). "
+                f"Monto a cobrar: ${monto_evaluado:.2f}."
             )
     else:
         categoria = "PENDIENTES_COMPROBANTE"
-        motivo = "⚠️ " + " | ".join(razones_pendiente) if razones_pendiente else "⚠️ Requiere revisión manual antes de aprobar."
+        motivo = "⚠️ " + " | ".join(razones_pendiente) if razones_pendiente else "⚠️ Requiere revisión manual antes de cobrar."
 
     return {
         "cliente": cliente,
+        "numero_limpio": num_clean,
         "telefono_registrado": telefono_registrado,
         "saldo_pendiente_bd": deuda_bd,
+        "monto_evaluado": monto_evaluado,
         "categoria_validacion": categoria,
         "motivo_validacion": motivo
     }
+
+
+def revalidar_comprobantes_existentes_pendientes(db: Session):
+    """
+    Re-evalúa automáticamente los comprobantes con estado 'PENDIENTE' que ya estaban en la BD
+    para que cualquier comprobante enviado desde un número registrado en la BD se vincule a su
+    cliente y pase a 'CONFIRMACION_RECIBO' si corresponde, y los que tengan problemas queden en 'PENDIENTES_COMPROBANTE'.
+    """
+    try:
+        from services.ocr_comprobantes import buscar_ruta_archivo, analizar_comprobante_ocr
+        pendientes = db.query(models.Comprobante).filter(models.Comprobante.estado == "PENDIENTE").all()
+        hubo_cambios = False
+
+        for r in pendientes:
+            ruta_real = buscar_ruta_archivo(r.ruta_archivo or r.nombre_archivo or "")
+            archivo_existe = bool(ruta_real and os.path.isfile(ruta_real))
+
+            # Si el archivo existe en disco y aún no se ha corrido el OCR nuevo sobre él
+            ocr_dict = {}
+            if archivo_existe and not r.texto_ocr and r.monto is None:
+                try:
+                    ocr_dict = analizar_comprobante_ocr(ruta_real)
+                    if ocr_dict.get("monto") is not None:
+                        r.monto = ocr_dict.get("monto")
+                    if ocr_dict.get("banco_origen") and not r.banco_origen:
+                        r.banco_origen = ocr_dict.get("banco_origen")
+                    if ocr_dict.get("banco_destino") and not r.banco_destino:
+                        r.banco_destino = ocr_dict.get("banco_destino")
+                    if ocr_dict.get("numero_referencia") and not r.numero_referencia:
+                        r.numero_referencia = ocr_dict.get("numero_referencia")
+                    if ocr_dict.get("cuenta_origen") and not r.cuenta_origen:
+                        r.cuenta_origen = ocr_dict.get("cuenta_origen")
+                    if ocr_dict.get("cuenta_destino") and not r.cuenta_destino:
+                        r.cuenta_destino = ocr_dict.get("cuenta_destino")
+                    if ocr_dict.get("beneficiario") and not r.beneficiario:
+                        r.beneficiario = ocr_dict.get("beneficiario")
+                    if ocr_dict.get("ordenante") and not r.ordenante:
+                        r.ordenante = ocr_dict.get("ordenante")
+                    if ocr_dict.get("fecha") and not r.fecha_comprobante:
+                        r.fecha_comprobante = ocr_dict.get("fecha")
+                    if ocr_dict.get("texto_extraido"):
+                        r.texto_ocr = ocr_dict.get("texto_extraido")
+                    hubo_cambios = True
+                except Exception:
+                    pass
+
+            es_historico_sin_ocr = (not archivo_existe) and (not r.texto_ocr)
+            eval_res = evaluar_validacion_comprobante(
+                db=db,
+                numero_raw=r.numero_telefono,
+                nombre_remitente=r.nombre_remitente,
+                ocr_data={"ordenante": r.ordenante or ocr_dict.get("ordenante")},
+                monto_final=r.monto,
+                referencia_final=r.numero_referencia,
+                nombre_archivo=r.nombre_archivo or "",
+                comprobante_id_actual=r.id,
+                es_registro_historico_sin_ocr=es_historico_sin_ocr
+            )
+
+            cli = eval_res["cliente"]
+            nuevo_cid = cli.id if cli else r.cliente_id
+            nueva_ced = (getattr(cli, "cedula", None) if cli else None) or r.cedula_cliente
+            nuevo_saldo_bd = eval_res["saldo_pendiente_bd"]
+            nueva_cat = eval_res["categoria_validacion"]
+            nuevo_motivo = eval_res["motivo_validacion"]
+            nuevo_monto = eval_res["monto_evaluado"]
+
+            if (
+                r.cliente_id != nuevo_cid
+                or r.categoria_validacion != nueva_cat
+                or r.motivo_validacion != nuevo_motivo
+                or r.cedula_cliente != nueva_ced
+                or r.saldo_pendiente_bd != nuevo_saldo_bd
+                or (r.monto is None and nuevo_monto is not None)
+            ):
+                r.cliente_id = nuevo_cid
+                r.cedula_cliente = nueva_ced
+                r.saldo_pendiente_bd = nuevo_saldo_bd
+                r.categoria_validacion = nueva_cat
+                r.motivo_validacion = nuevo_motivo
+                if r.monto is None and nuevo_monto is not None:
+                    r.monto = nuevo_monto
+                if eval_res["numero_limpio"] and (not r.numero_telefono or "@lid" in str(r.numero_telefono)):
+                    r.numero_telefono = eval_res["numero_limpio"]
+                hubo_cambios = True
+
+        if hubo_cambios:
+            db.commit()
+    except Exception as e_rev:
+        db.rollback()
+        print(f"[Comprobantes] Aviso en revalidación automática de pendientes: {e_rev}")
 
 
 @router.post("/registrar-comprobante")
@@ -2883,16 +3057,18 @@ def registrar_comprobante_endpoint(
             nombre_remitente=payload.nombre_remitente,
             ocr_data=ocr_data,
             monto_final=monto_final,
-            referencia_final=referencia_final
+            referencia_final=referencia_final,
+            nombre_archivo=payload.nombre_archivo or ""
         )
         cliente = eval_res["cliente"]
         saldo_pendiente_bd = eval_res["saldo_pendiente_bd"]
         categoria_validacion = eval_res["categoria_validacion"]
         motivo_validacion = eval_res["motivo_validacion"]
+        monto_final = eval_res["monto_evaluado"]
         cedula_cliente = getattr(cliente, "cedula", None) if cliente else None
 
         num_raw = payload.numero_telefono or ""
-        num_clean = "".join([c for c in num_raw if c.isdigit()])
+        num_clean = eval_res.get("numero_limpio") or "".join([c for c in num_raw if c.isdigit()])
 
         observaciones_lista = []
         if payload.observaciones:
@@ -2993,14 +3169,17 @@ def listar_comprobantes(
     db: Session = Depends(get_db)
 ):
     """
-    Lista todos los comprobantes guardados con detalles del cliente, comparación de saldos y categoría de notificación:
-    - CONFIRMACION_RECIBO (listos para aprobar pago)
-    - PENDIENTES_COMPROBANTE (anomalías, paga de más, otro número, no registrado)
+    Lista todos los comprobantes guardados con detalles del cliente, comparación de saldos y sección:
+    - CONFIRMACION_RECIBO (por confirmar para que se cobre en la BD)
+    - PENDIENTES_COMPROBANTE (tuvieron algún problema: número no registrado, otro número, paga de más, dato no reconocido)
+    - COBRADOS / HISTORIAL (registro de comprobantes ya cobrados en la BD)
     """
     try:
         asegurar_tabla_comprobantes(db)
+        # Re-evaluar automáticamente los comprobantes pendientes para vincular números registrados en BD
+        revalidar_comprobantes_existentes_pendientes(db)
 
-        # Contadores en tiempo real para notificaciones
+        # Contadores en tiempo real para las 3 secciones
         count_confirmacion = db.query(models.Comprobante).filter(
             models.Comprobante.estado == "PENDIENTE",
             models.Comprobante.categoria_validacion == "CONFIRMACION_RECIBO"
@@ -3039,6 +3218,8 @@ def listar_comprobantes(
                     ),
                     models.Comprobante.estado == "PENDIENTE"
                 )
+            elif cat_up in ("COBRADOS", "YA_COBRADOS"):
+                query = query.filter(models.Comprobante.estado == "APROBADO")
             elif cat_up == "HISTORIAL":
                 query = query.filter(models.Comprobante.estado.in_(["APROBADO", "RECHAZADO", "REVISADO"]))
 
@@ -3069,7 +3250,7 @@ def listar_comprobantes(
             c_info = None
             deuda_actual_bd = r.saldo_pendiente_bd
             if r.cliente:
-                deuda_actual_bd = calcular_deuda_pendiente_cliente(r.cliente)
+                deuda_actual_bd = calcular_deuda_pendiente_cliente(r.cliente, db)
                 c_info = {
                     "id": r.cliente.id,
                     "nombre": r.cliente.nombre,
@@ -3079,7 +3260,8 @@ def listar_comprobantes(
                     "nodo": getattr(r.cliente, "nodo", "N/A"),
                     "estado_servicio": getattr(r.cliente, "estado", "Activo"),
                     "saldo": float(getattr(r.cliente, "saldo", 0.0) or 0.0),
-                    "deuda_total": deuda_actual_bd
+                    "deuda_total": deuda_actual_bd,
+                    "deuda_total_bd": deuda_actual_bd
                 }
             resultado.append({
                 "id": r.id,
@@ -3122,6 +3304,7 @@ def listar_comprobantes(
                 "confirmacion_recibo": count_confirmacion,
                 "pendientes_comprobante": count_pendientes_anomalia,
                 "total_por_atender": count_confirmacion + count_pendientes_anomalia,
+                "cobrados": count_aprobados,
                 "aprobados": count_aprobados,
                 "rechazados": count_rechazados
             },
@@ -3136,6 +3319,7 @@ def listar_comprobantes(
                 "confirmacion_recibo": 0,
                 "pendientes_comprobante": 0,
                 "total_por_atender": 0,
+                "cobrados": 0,
                 "aprobados": 0,
                 "rechazados": 0
             },
@@ -3151,12 +3335,12 @@ def aprobar_pago_comprobante(
     db: Session = Depends(get_db)
 ):
     """
-    Confirma y aprueba un comprobante de pago:
+    Confirma y cobra un comprobante de pago (desde Confirmación de Recibo o Pendientes Comprobante):
     1. Vincula al cliente (el detectado automáticamente o el indicado por el operador).
     2. Registra el pago en 'historial_pagos' con el banco y número de referencia del OCR.
     3. Descuenta el monto pagado de la deuda pendiente del cliente (Adicional -> Plus -> Internet).
     4. Si la deuda queda en $0.00, reactiva automáticamente el servicio del cliente.
-    5. Marca el comprobante como 'APROBADO' y envía confirmación por WhatsApp al cliente.
+    5. Pasa el comprobante a 'APROBADO' (Registro de Comprobantes ya Cobrados) y envía confirmación por WhatsApp.
     """
     try:
         asegurar_tabla_comprobantes(db)
@@ -3165,27 +3349,39 @@ def aprobar_pago_comprobante(
             raise HTTPException(status_code=404, detail="Comprobante no encontrado")
 
         if comp.estado == "APROBADO" and comp.pago_id:
-            raise HTTPException(status_code=400, detail="Este comprobante ya fue aprobado y aplicado anteriormente.")
+            raise HTTPException(status_code=400, detail="Este comprobante ya fue cobrado y aplicado anteriormente.")
 
         target_cliente_id = (payload.cliente_id if payload and payload.cliente_id else None) or comp.cliente_id
         if not target_cliente_id:
             raise HTTPException(
                 status_code=400,
-                detail="Este comprobante no tiene un cliente vinculado. Selecciona o vincula primero el cliente para aplicar el pago."
+                detail="Este comprobante no tiene un cliente vinculado. Selecciona o vincula primero el cliente para cobrar el pago."
             )
 
         cliente = db.query(models.Cliente).filter(models.Cliente.id == target_cliente_id).first()
         if not cliente:
             raise HTTPException(status_code=404, detail=f"Cliente ID #{target_cliente_id} no encontrado en la base de datos.")
 
-        monto_pagar = (payload.monto if payload and payload.monto is not None else None) or comp.monto
+        monto_payload = None
+        if payload:
+            if payload.monto_aplicar is not None:
+                monto_payload = payload.monto_aplicar
+            elif payload.monto is not None:
+                monto_payload = payload.monto
+
+        monto_pagar = monto_payload if monto_payload is not None else comp.monto
         if monto_pagar is None or float(monto_pagar) <= 0:
-            raise HTTPException(status_code=400, detail="El monto del comprobante debe ser mayor a $0.00 para aprobar el pago.")
+            deuda_fallback = calcular_deuda_pendiente_cliente(cliente, db)
+            if deuda_fallback > 0:
+                monto_pagar = deuda_fallback
+            else:
+                raise HTTPException(status_code=400, detail="El monto del comprobante debe ser mayor a $0.00 para cobrar el pago.")
         monto_pagar = round(float(monto_pagar), 2)
 
         metodo_pago = (
             (payload.metodo_pago if payload and payload.metodo_pago else None)
             or comp.banco_origen
+            or comp.banco_destino
             or "Transferencia"
         )
         referencia_pago = (
@@ -3266,7 +3462,7 @@ def aprobar_pago_comprobante(
 
         db.flush()
 
-        # Actualizar estado del comprobante
+        # Actualizar estado del comprobante y moverlo a Registro de Comprobantes ya Cobrados
         comp.cliente_id = cliente.id
         comp.cedula_cliente = getattr(cliente, "cedula", None)
         comp.monto = monto_pagar
@@ -3274,14 +3470,27 @@ def aprobar_pago_comprobante(
         comp.numero_referencia = referencia_pago
         comp.estado = "APROBADO"
         comp.pago_id = nuevo_pago.id
+        if payload and payload.observaciones:
+            comp.observaciones = payload.observaciones
         comp.updated_at = datetime.utcnow()
 
         db.commit()
 
-        deuda_restante = calcular_deuda_pendiente_cliente(cliente)
+        deuda_restante = max(0.0, round(
+            max(0.0, _try_float_val(cliente.saldo)) +
+            max(0.0, _try_float_val(cliente.plus)) +
+            max(0.0, _try_float_val(cliente.adicional)),
+            2
+        ))
 
         # Enviar notificación de recibo aprobado por WhatsApp al cliente si está activo
-        notificar = True if (payload is None or payload.notificar_whatsapp is None) else payload.notificar_whatsapp
+        notificar = True
+        if payload is not None:
+            if payload.notificar_cliente is not None:
+                notificar = bool(payload.notificar_cliente)
+            elif payload.notificar_whatsapp is not None:
+                notificar = bool(payload.notificar_whatsapp)
+
         if notificar and comp.numero_telefono:
             try:
                 estado_cuenta_txt = (
@@ -3291,7 +3500,7 @@ def aprobar_pago_comprobante(
                 )
                 msg_confirmacion = (
                     f"🧾 *RECIBO DE PAGO CONFIRMADO - OPSATEL*\n\n"
-                    f"Hola *{cliente.nombre}* (ID #{cliente.id}), tu comprobante ha sido verificado y aprobado exitosamente:\n\n"
+                    f"Hola *{cliente.nombre}* (ID #{cliente.id}), tu comprobante ha sido verificado y cobrado exitosamente:\n\n"
                     f"💰 *Valor abonado:* ${monto_pagar:.2f}\n"
                     f"🏦 *Entidad:* {metodo_pago}\n"
                     f"🔢 *N° Referencia:* {referencia_pago}\n"
@@ -3305,7 +3514,7 @@ def aprobar_pago_comprobante(
 
         return {
             "success": True,
-            "message": f"Pago de ${monto_pagar:.2f} aprobado y aplicado a {cliente.nombre} (ID #{cliente.id}). Saldo restante: ${deuda_restante:.2f}",
+            "message": f"Pago de ${monto_pagar:.2f} cobrado en BD para {cliente.nombre} (ID #{cliente.id}). Movido a Registro de Comprobantes ya Cobrados.",
             "comprobante_id": comp.id,
             "pago_id": nuevo_pago.id,
             "cliente_id": cliente.id,

@@ -309,8 +309,8 @@ function getUploadscrDirectories() {
         dirs.push(path.resolve(process.env.UPLOADSCR_DIR));
     }
     
-    // 2. Rutas comunes en servidor de producción Linux (Nginx /var/www)
-    const linuxFrontends = ['/var/www/opsatel-frontend', '/var/www/html'];
+    // 2. Rutas comunes en servidor de producción Linux (Nginx /var/www y volumen persistente /var/www/html/entornos)
+    const linuxFrontends = ['/var/www/opsatel-frontend', '/var/www/html', '/var/www/html/entornos'];
     for (const lf of linuxFrontends) {
         if (fs.existsSync(lf)) {
             dirs.push(path.join(lf, 'uploadscr'));

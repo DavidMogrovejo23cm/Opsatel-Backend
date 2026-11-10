@@ -82,10 +82,16 @@ def buscar_ruta_archivo(file_path_or_name: str) -> Optional[str]:
         clean_name,
         os.path.join("/app", clean_name),
         os.path.join("/app/uploadscr", file_basename),
+        os.path.join("/app/uploads/uploadscr", file_basename),
+        os.path.join("/var/www/html/entornos/uploadscr", file_basename),
+        os.path.join("/var/www/html/uploadscr", file_basename),
+        os.path.join("/var/www/opsatel-frontend/uploadscr", file_basename),
         os.path.join(os.getcwd(), clean_name),
         os.path.join(os.getcwd(), "uploadscr", file_basename),
+        os.path.join(os.getcwd(), "uploads", "uploadscr", file_basename),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", clean_name)),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploadscr", file_basename)),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploads", "uploadscr", file_basename)),
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "Opsatel-Frontend", "dist", "uploadscr", file_basename))
     ]
 
