@@ -731,6 +731,7 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
 
         # C. Prioridad 3: Pytesseract LSTM en proceso actual sobre imagen HD
         if not texto_extraido or not texto_extraido.strip():
+            extraer_texto_tesseract_mejorado = None
             texto_extraido = extraer_texto_tesseract_mejorado(ruta_ocr_hd)
 
         # D. Prioridad 4: Binario CLI tesseract del sistema sobre imagen HD
