@@ -2651,25 +2651,24 @@ def buscar_cliente_por_telefono_comprobante(db: Session, numero_raw: str, nombre
     except Exception:
         pass
 
-    # 2. Búsqueda exhaustiva limpiando espacios, guiones y prefijos (+593 / 0) en la tabla de clientes
+    # 2. Búsqueda directa optimizada por los últimos 8 o 9 dígitos en la tabla de clientes
     ultimos_9 = num_clean[-9:] if len(num_clean) >= 9 else num_clean
     ultimos_8 = num_clean[-8:]
     try:
-        candidatos_sql = db.query(models.Cliente).filter(
+        cand_sql = db.query(models.Cliente).filter(
             models.Cliente.celular != None,
             models.Cliente.celular.like(f"%{ultimos_8}%")
-        ).all()
-        if candidatos_sql:
-            return candidatos_sql[0], num_clean
+        ).first()
+        if cand_sql:
+            return cand_sql, num_clean
 
-        # Escaneo normalizando dígitos por si el celular en BD tiene espacios o guiones (ej. '099 188 0500')
-        todos_clientes = db.query(models.Cliente).filter(models.Cliente.celular != None).all()
-        for c in todos_clientes:
-            cel_digits = re.sub(r"\D", "", str(c.celular or ""))
-            if not cel_digits or len(cel_digits) < 8:
-                continue
-            if (len(ultimos_9) == 9 and ultimos_9 in cel_digits) or cel_digits.endswith(ultimos_8):
-                return c, num_clean
+        if len(ultimos_9) == 9:
+            cand_sql9 = db.query(models.Cliente).filter(
+                models.Cliente.celular != None,
+                models.Cliente.celular.like(f"%{ultimos_9}%")
+            ).first()
+            if cand_sql9:
+                return cand_sql9, num_clean
     except Exception:
         pass
 
@@ -2821,25 +2820,30 @@ def evaluar_validacion_comprobante(
     cliente_por_telefono, num_clean = buscar_cliente_por_telefono_comprobante(db, numero_raw, nombre_archivo)
     telefono_registrado = cliente_por_telefono is not None
 
-    # Buscar también por nombre del ordenante (OCR) o nombre del remitente (WhatsApp) si el teléfono no está registrado
+    # Buscar por nombre solo si el teléfono no arrojó coincidencia y el texto es suficientemente largo
     ordenante_ocr = (ocr_data.get("ordenante") or "").strip()
     cliente_por_ordenante = None
-    if ordenante_ocr:
+    if not cliente_por_telefono and ordenante_ocr and len(ordenante_ocr) >= 6:
         try:
-            import sam_bot_service
-            c_ord, _ = sam_bot_service.buscar_cliente_por_nombre(ordenante_ocr, db)
-            if c_ord:
-                cliente_por_ordenante = c_ord
+            # Consulta SQL directa acotada para evitar recorrer toda la tabla en memoria
+            partes = [p for p in ordenante_ocr.split() if len(p) >= 4]
+            if partes:
+                q_nom = db.query(models.Cliente)
+                for p in partes[:2]:
+                    q_nom = q_nom.filter(models.Cliente.nombre.ilike(f"%{p}%"))
+                cliente_por_ordenante = q_nom.first()
         except Exception:
             pass
 
     cliente_por_pushname = None
-    if not cliente_por_telefono and nombre_remitente and len(nombre_remitente.strip().split()) >= 2:
+    if not cliente_por_telefono and not cliente_por_ordenante and nombre_remitente and len(nombre_remitente.strip().split()) >= 2:
         try:
-            import sam_bot_service
-            c_push, _ = sam_bot_service.buscar_cliente_por_nombre(nombre_remitente.strip(), db)
-            if c_push:
-                cliente_por_pushname = c_push
+            partes_p = [p for p in nombre_remitente.strip().split() if len(p) >= 4]
+            if partes_p:
+                q_p = db.query(models.Cliente)
+                for p in partes_p[:2]:
+                    q_p = q_p.filter(models.Cliente.nombre.ilike(f"%{p}%"))
+                cliente_por_pushname = q_p.first()
         except Exception:
             pass
 
@@ -2925,56 +2929,37 @@ def evaluar_validacion_comprobante(
     }
 
 
-def revalidar_comprobantes_existentes_pendientes(db: Session):
-    """
-    Re-evalúa automáticamente los comprobantes con estado 'PENDIENTE' que ya estaban en la BD
-    para que cualquier comprobante enviado desde un número registrado en la BD se vincule a su
-    cliente y pase a 'CONFIRMACION_RECIBO' si corresponde, y los que tengan problemas queden en 'PENDIENTES_COMPROBANTE'.
-    """
-    try:
-        from services.ocr_comprobantes import buscar_ruta_archivo, analizar_comprobante_ocr
-        pendientes = db.query(models.Comprobante).filter(models.Comprobante.estado == "PENDIENTE").all()
-        hubo_cambios = False
+_ULTIMA_REVALIDACION_COMPROBANTES: float = 0.0
 
+def revalidar_comprobantes_existentes_pendientes(db: Session, force: bool = False):
+    """
+    Re-evalúa de forma ágil comprobantes pendientes para vincular números registrados en la BD.
+    Utiliza una ventana de enfriamiento (cooldown) para no re-ejecutar en cada petición HTTP
+    y nunca bloquea la respuesta con análisis OCR pesado sincrónico.
+    """
+    global _ULTIMA_REVALIDACION_COMPROBANTES
+    ahora = time.time()
+    if not force and (ahora - _ULTIMA_REVALIDACION_COMPROBANTES) < 60.0:
+        return
+    _ULTIMA_REVALIDACION_COMPROBANTES = ahora
+
+    try:
+        from services.ocr_comprobantes import buscar_ruta_archivo
+        pendientes = db.query(models.Comprobante).filter(
+            models.Comprobante.estado == "PENDIENTE"
+        ).order_by(models.Comprobante.id.desc()).limit(50).all()
+
+        hubo_cambios = False
         for r in pendientes:
             ruta_real = buscar_ruta_archivo(r.ruta_archivo or r.nombre_archivo or "")
             archivo_existe = bool(ruta_real and os.path.isfile(ruta_real))
-
-            # Si el archivo existe en disco y aún no se ha corrido el OCR nuevo sobre él
-            ocr_dict = {}
-            if archivo_existe and not r.texto_ocr and r.monto is None:
-                try:
-                    ocr_dict = analizar_comprobante_ocr(ruta_real)
-                    if ocr_dict.get("monto") is not None:
-                        r.monto = ocr_dict.get("monto")
-                    if ocr_dict.get("banco_origen") and not r.banco_origen:
-                        r.banco_origen = ocr_dict.get("banco_origen")
-                    if ocr_dict.get("banco_destino") and not r.banco_destino:
-                        r.banco_destino = ocr_dict.get("banco_destino")
-                    if ocr_dict.get("numero_referencia") and not r.numero_referencia:
-                        r.numero_referencia = ocr_dict.get("numero_referencia")
-                    if ocr_dict.get("cuenta_origen") and not r.cuenta_origen:
-                        r.cuenta_origen = ocr_dict.get("cuenta_origen")
-                    if ocr_dict.get("cuenta_destino") and not r.cuenta_destino:
-                        r.cuenta_destino = ocr_dict.get("cuenta_destino")
-                    if ocr_dict.get("beneficiario") and not r.beneficiario:
-                        r.beneficiario = ocr_dict.get("beneficiario")
-                    if ocr_dict.get("ordenante") and not r.ordenante:
-                        r.ordenante = ocr_dict.get("ordenante")
-                    if ocr_dict.get("fecha") and not r.fecha_comprobante:
-                        r.fecha_comprobante = ocr_dict.get("fecha")
-                    if ocr_dict.get("texto_extraido"):
-                        r.texto_ocr = ocr_dict.get("texto_extraido")
-                    hubo_cambios = True
-                except Exception:
-                    pass
-
             es_historico_sin_ocr = (not archivo_existe) and (not r.texto_ocr)
+
             eval_res = evaluar_validacion_comprobante(
                 db=db,
                 numero_raw=r.numero_telefono,
                 nombre_remitente=r.nombre_remitente,
-                ocr_data={"ordenante": r.ordenante or ocr_dict.get("ordenante")},
+                ocr_data={"ordenante": r.ordenante},
                 monto_final=r.monto,
                 referencia_final=r.numero_referencia,
                 nombre_archivo=r.nombre_archivo or "",
@@ -2982,13 +2967,13 @@ def revalidar_comprobantes_existentes_pendientes(db: Session):
                 es_registro_historico_sin_ocr=es_historico_sin_ocr
             )
 
-            cli = eval_res["cliente"]
+            cli = eval_res.get("cliente")
             nuevo_cid = cli.id if cli else r.cliente_id
             nueva_ced = (getattr(cli, "cedula", None) if cli else None) or r.cedula_cliente
-            nuevo_saldo_bd = eval_res["saldo_pendiente_bd"]
-            nueva_cat = eval_res["categoria_validacion"]
-            nuevo_motivo = eval_res["motivo_validacion"]
-            nuevo_monto = eval_res["monto_evaluado"]
+            nuevo_saldo_bd = eval_res.get("saldo_pendiente_bd")
+            nueva_cat = eval_res.get("categoria_validacion")
+            nuevo_motivo = eval_res.get("motivo_validacion")
+            nuevo_monto = eval_res.get("monto_evaluado")
 
             if (
                 r.cliente_id != nuevo_cid
@@ -3005,8 +2990,8 @@ def revalidar_comprobantes_existentes_pendientes(db: Session):
                 r.motivo_validacion = nuevo_motivo
                 if r.monto is None and nuevo_monto is not None:
                     r.monto = nuevo_monto
-                if eval_res["numero_limpio"] and (not r.numero_telefono or "@lid" in str(r.numero_telefono)):
-                    r.numero_telefono = eval_res["numero_limpio"]
+                if eval_res.get("numero_limpio") and (not r.numero_telefono or "@lid" in str(r.numero_telefono)):
+                    r.numero_telefono = eval_res.get("numero_limpio")
                 hubo_cambios = True
 
         if hubo_cambios:
