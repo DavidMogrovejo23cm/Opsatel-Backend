@@ -3148,10 +3148,43 @@ def evaluar_validacion_comprobante(
             f"Paga de más: El comprobante es por ${monto_evaluado:.2f}, pero el valor pendiente en BD es de ${deuda_bd:.2f} (excede por ${exceso:.2f})."
         )
 
-    # Si es duplicado, forzamos clasificación a PENDIENTES_COMPROBANTE con aviso crítico
+    # =========================================================================
+    # CLASIFICACIÓN FINAL DE BANDEJA: CONFIRMACION_RECIBO vs PENDIENTES_COMPROBANTE
+    # =========================================================================
+    # 1. Si es duplicado (mismo hash, misma referencia cobrada o repetida), SIEMPRE va a PENDIENTES_COMPROBANTE
     if es_duplicado:
         categoria = "PENDIENTES_COMPROBANTE"
         motivo = " | ".join(razones_pendiente)
+
+    # 2. Si es Real 100% Verificado (Score >= 80%) y tiene un monto válido:
+    # Va DIRECTAMENTE a CONFIRMACION_RECIBO (Listo para confirmar y cobrar en 1 clic)
+    elif score_autenticidad >= 80 and monto_evaluado and monto_evaluado > 0:
+        categoria = "CONFIRMACION_RECIBO"
+        sello_ops = " 🏛️ [Cuenta Opsatel Verificada]" if ocr_data.get("es_opsatel_destinatario") else ""
+        nombre_cli_str = cliente.nombre if cliente else (nombre_remitente or "Cliente WhatsApp")
+        id_cli_str = f" (ID #{cliente.id})" if cliente else ""
+
+        detalles_aut = [f"🛡️ Real Verificado ({score_autenticidad}%)"]
+        if cliente:
+            if deuda_bd > 0 and abs(monto_evaluado - deuda_bd) <= 0.05:
+                detalles_aut.append(f"Paga ${monto_evaluado:.2f} coincidiendo con valor pendiente (${deuda_bd:.2f})")
+            elif deuda_bd > monto_evaluado:
+                restante = round(deuda_bd - monto_evaluado, 2)
+                detalles_aut.append(f"Abono parcial de ${monto_evaluado:.2f} (restará ${restante:.2f})")
+            elif deuda_bd > 0:
+                detalles_aut.append(f"Paga ${monto_evaluado:.2f} (deuda BD: ${deuda_bd:.2f})")
+            else:
+                detalles_aut.append(f"Monto: ${monto_evaluado:.2f}")
+
+            if not telefono_registrado:
+                detalles_aut.append(f"Enviado desde otro número (+{num_clean or numero_raw})")
+        else:
+            detalles_aut.append(f"Monto: ${monto_evaluado:.2f}")
+            detalles_aut.append(f"Remitente +{num_clean or numero_raw}")
+
+        motivo = f"✅ Listo para confirmar cobro: {nombre_cli_str}{id_cli_str}. " + " | ".join(detalles_aut) + f"{sello_ops}"
+
+    # 3. Comprobante sin anomalías estándar (número registrado, sin exceso de pago, monto válido)
     elif len(razones_pendiente) == 0 and cliente and telefono_registrado and monto_evaluado and monto_evaluado > 0:
         categoria = "CONFIRMACION_RECIBO"
         sello_ops = " 🏛️ [Cuenta Opsatel Verificada]" if ocr_data.get("es_opsatel_destinatario") else ""
@@ -3171,6 +3204,8 @@ def evaluar_validacion_comprobante(
                 f"✅ Listo para confirmar cobro: Número registrado de {cliente.nombre} (ID #{cliente.id}). "
                 f"Monto a cobrar: ${monto_evaluado:.2f}.{sello_ops}"
             )
+
+    # 4. En cualquier otro caso dudoso, incompleto o con alertas críticas va a PENDIENTES_COMPROBANTE
     else:
         categoria = "PENDIENTES_COMPROBANTE"
         motivo = "⚠️ " + " | ".join(razones_pendiente) if razones_pendiente else "⚠️ Requiere revisión manual antes de cobrar."
@@ -3237,11 +3272,42 @@ def revalidar_comprobantes_existentes_pendientes(db: Session, force: bool = Fals
             archivo_existe = bool(ruta_real and os.path.isfile(ruta_real))
             es_historico_sin_ocr = (not archivo_existe) and (not r.texto_ocr)
 
+            score_aut = getattr(r, "score_autenticidad", 0) or 0
+            if score_aut == 0 and r.texto_ocr:
+                try:
+                    from services.ocr_comprobantes import calcular_score_autenticidad
+                    sc_res = calcular_score_autenticidad(r.texto_ocr, {
+                        "banco_origen": r.banco_origen,
+                        "banco_destino": r.banco_destino,
+                        "monto": r.monto,
+                        "numero_comprobante": r.numero_referencia,
+                        "cuenta_destino": r.cuenta_destino,
+                        "cuenta_origen": r.cuenta_origen,
+                        "beneficiario": r.beneficiario,
+                        "estado_transaccion": "EXITOSA"
+                    })
+                    score_aut = sc_res.get("score_autenticidad", 0)
+                    r.score_autenticidad = score_aut
+                except Exception:
+                    pass
+
+            es_opsatel = bool(
+                "opsatel" in (r.observaciones or "").lower()
+                or "opsatel" in (r.motivo_validacion or "").lower()
+                or "solano herrera bryan" in (r.beneficiario or "").lower()
+                or "2206388858" in str(r.cuenta_destino or "")
+                or "406060337400" in str(r.cuenta_destino or "")
+            )
+
             eval_res = evaluar_validacion_comprobante(
                 db=db,
                 numero_raw=r.numero_telefono,
                 nombre_remitente=r.nombre_remitente,
-                ocr_data={"ordenante": r.ordenante, "score_autenticidad": getattr(r, "score_autenticidad", 0)},
+                ocr_data={
+                    "ordenante": r.ordenante,
+                    "score_autenticidad": score_aut,
+                    "es_opsatel_destinatario": es_opsatel
+                },
                 monto_final=r.monto,
                 referencia_final=r.numero_referencia,
                 nombre_archivo=r.nombre_archivo or "",
@@ -3277,6 +3343,7 @@ def revalidar_comprobantes_existentes_pendientes(db: Session, force: bool = Fals
                 r.motivo_validacion = nuevo_motivo
                 r.es_duplicado = nuevo_dup
                 r.duplicado_detalle = nuevo_dup_det
+                r.score_autenticidad = score_aut
                 if r.monto is None and nuevo_monto is not None:
                     r.monto = nuevo_monto
                 if eval_res.get("numero_limpio") and (not r.numero_telefono or "@lid" in str(r.numero_telefono)):
