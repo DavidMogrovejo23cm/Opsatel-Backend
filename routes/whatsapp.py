@@ -3119,13 +3119,30 @@ def evaluar_validacion_comprobante(
                 pass
 
     # =========================================================================
-    # 2. EVALUACIÓN DE AUTENTICIDAD, DESTINATARIO Y VIGENCIA
+    # 2. EVALUACIÓN DE AUTENTICIDAD, DESTINATARIO Y VIGENCIA (ÚLTIMO MES)
     # =========================================================================
     score_autenticidad = int(ocr_data.get("score_autenticidad") or 0)
     alertas_ocr = ocr_data.get("alertas_autenticidad") or []
+    fecha_txt = ocr_data.get("fecha") or ocr_data.get("fecha_transaccion") or ocr_data.get("fecha_comprobante")
+    es_fecha_reciente = bool(ocr_data.get("es_fecha_reciente", True))
+
+    if fecha_txt:
+        try:
+            from services.ocr_comprobantes import parsear_fecha_texto, es_fecha_del_ultimo_mes
+            dt_comp = parsear_fecha_texto(fecha_txt)
+            if dt_comp:
+                es_rec, dias_ant, mot_ant = es_fecha_del_ultimo_mes(dt_comp)
+                if not es_rec:
+                    es_fecha_reciente = False
+                    razones_pendiente.append(f"⚠️ FECHA ANTERIOR: {mot_ant}")
+        except Exception as e_fcheck:
+            print(f"[Comprobantes] Aviso verificando fecha: {e_fcheck}")
+
     for al in alertas_ocr:
-        if "antiguo" in al.lower():
-            razones_pendiente.append(f"⚠️ {al}")
+        if "antiguo" in al.lower() or "anterior" in al.lower():
+            if not any("fecha" in r.lower() for r in razones_pendiente):
+                razones_pendiente.append(f"⚠️ {al}")
+            es_fecha_reciente = False
 
     if not cliente:
         razones_pendiente.append(
@@ -3156,7 +3173,12 @@ def evaluar_validacion_comprobante(
         categoria = "PENDIENTES_COMPROBANTE"
         motivo = " | ".join(razones_pendiente)
 
-    # 2. Si es Real 100% Verificado (Score >= 80%) y tiene un monto válido:
+    # 2. Si la fecha es anterior al último mes, SIEMPRE va a PENDIENTES_COMPROBANTE
+    elif not es_fecha_reciente:
+        categoria = "PENDIENTES_COMPROBANTE"
+        motivo = "⚠️ " + " | ".join(razones_pendiente) if razones_pendiente else "⚠️ Comprobante con fecha anterior (no es del último mes). Requiere revisión manual."
+
+    # 3. Si es Real 100% Verificado (Score >= 80%), tiene monto válido Y es del último mes:
     # Va DIRECTAMENTE a CONFIRMACION_RECIBO (Listo para confirmar y cobrar en 1 clic)
     elif score_autenticidad >= 80 and monto_evaluado and monto_evaluado > 0:
         categoria = "CONFIRMACION_RECIBO"
@@ -3306,7 +3328,8 @@ def revalidar_comprobantes_existentes_pendientes(db: Session, force: bool = Fals
                 ocr_data={
                     "ordenante": r.ordenante,
                     "score_autenticidad": score_aut,
-                    "es_opsatel_destinatario": es_opsatel
+                    "es_opsatel_destinatario": es_opsatel,
+                    "fecha": r.fecha_comprobante
                 },
                 monto_final=r.monto,
                 referencia_final=r.numero_referencia,

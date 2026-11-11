@@ -599,6 +599,93 @@ def es_documento_comprobante_valido(texto: str, datos_extraidos: Dict[str, Any])
     return False, "la imagen mandada no es un documento valido"
 
 
+MESES_ES = {
+    'ene': 1, 'enero': 1, 'feb': 2, 'febrero': 2, 'mar': 3, 'marzo': 3,
+    'abr': 4, 'abril': 4, 'may': 5, 'mayo': 5, 'jun': 6, 'junio': 6,
+    'jul': 7, 'julio': 7, 'ago': 8, 'agosto': 8, 'sep': 9, 'sept': 9,
+    'septiembre': 9, 'setiembre': 9, 'oct': 10, 'octubre': 10,
+    'nov': 11, 'noviembre': 11, 'dic': 12, 'diciembre': 12
+}
+
+
+def parsear_fecha_texto(fecha_str: str) -> Optional[datetime]:
+    """
+    Parsea una fecha en texto común de comprobantes ecuatorianos (ej. '23 ene 2026',
+    '23 de enero de 2026', '09/11/2026', '2026-11-11').
+    """
+    if not fecha_str:
+        return None
+    s = str(fecha_str).lower().strip()
+    # 1. '23 ene 2026', '23 de enero de 2026', '05 de octubre 2026'
+    m_txt = re.search(r'(\d{1,2})\s*(?:de\s*)?([a-záéíóúñ]+)\s*(?:del?\s*)?(\d{2,4})', s)
+    if m_txt:
+        dia = int(m_txt.group(1))
+        mes_str = m_txt.group(2)[:3]
+        mes = MESES_ES.get(mes_str)
+        anio = int(m_txt.group(3))
+        if anio < 100:
+            anio += 2000
+        if mes and 1 <= dia <= 31:
+            try:
+                return datetime(anio, mes, dia)
+            except ValueError:
+                pass
+
+    # 2. '23/01/2026' o '23-01-2026'
+    m_num = re.search(r'(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})', s)
+    if m_num:
+        dia = int(m_num.group(1))
+        mes = int(m_num.group(2))
+        anio = int(m_num.group(3))
+        if anio < 100:
+            anio += 2000
+        if 1 <= mes <= 12 and 1 <= dia <= 31:
+            try:
+                return datetime(anio, mes, dia)
+            except ValueError:
+                pass
+
+    # 3. '2026-01-23'
+    m_iso = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', s)
+    if m_iso:
+        anio = int(m_iso.group(1))
+        mes = int(m_iso.group(2))
+        dia = int(m_iso.group(3))
+        if 1 <= mes <= 12 and 1 <= dia <= 31:
+            try:
+                return datetime(anio, mes, dia)
+            except ValueError:
+                pass
+
+    return None
+
+
+def es_fecha_del_ultimo_mes(fecha_dt: Optional[datetime], ahora: Optional[datetime] = None) -> Tuple[bool, int, str]:
+    """
+    Verifica si una fecha corresponde al último mes (mes en curso o mes inmediatamente anterior hasta 42 días).
+    Retorna (es_valido, dias_diferencia, mensaje_motivo).
+    """
+    if not fecha_dt:
+        return True, 0, ""
+    if not ahora:
+        ahora = datetime.now()
+
+    dias = (ahora.date() - fecha_dt.date()).days
+
+    # Fecha en el futuro por descuadre
+    if dias < -2:
+        return False, dias, f"Fecha en el futuro ({fecha_dt.strftime('%d/%m/%Y')})"
+
+    # Diferencia de meses calendario
+    meses_dif = (ahora.year - fecha_dt.year) * 12 + (ahora.month - fecha_dt.month)
+
+    # Permitir mes en curso (meses_dif == 0) o mes inmediatamente anterior (meses_dif == 1) hasta 42 días
+    if meses_dif == 0 or (meses_dif == 1 and dias <= 42):
+        return True, dias, ""
+
+    return False, dias, f"Comprobante con fecha anterior ({fecha_dt.strftime('%d/%m/%Y')}, hace {dias} días). Solo se admiten comprobantes del último mes."
+
+
 def calcular_score_autenticidad(texto: str, datos: Dict[str, Any]) -> Dict[str, Any]:
     """
     Evalúa minuciosamente la autenticidad y certeza de que el documento es un comprobante de pago real
@@ -663,18 +750,26 @@ def calcular_score_autenticidad(texto: str, datos: Dict[str, Any]) -> Dict[str, 
         if datos.get("beneficiario") and len(datos.get("beneficiario", "")) >= 4:
             alertas.append(f"Beneficiario no coincide con cuentas de Opsatel ({datos.get('beneficiario')})")
 
-    # 6. Evaluación de fecha y vigencia
+    # 6. Evaluación de fecha y vigencia (solo comprobantes del último mes)
     fecha_txt = datos.get("fecha")
     fecha_reciente = True
     if fecha_txt:
-        m_anio = re.search(r"\b(202[0-9])\b", fecha_txt)
-        if m_anio:
-            anio_comp = int(m_anio.group(1))
-            ahora_anio = datetime.utcnow().year
-            if anio_comp < ahora_anio:
-                score = max(0, score - 30)
+        dt_comp = parsear_fecha_texto(fecha_txt)
+        if dt_comp:
+            es_rec, dias_ant, mot_ant = es_fecha_del_ultimo_mes(dt_comp)
+            if not es_rec:
                 fecha_reciente = False
-                alertas.append(f"Comprobante antiguo de año anterior ({anio_comp})")
+                score = max(0, score - 35)
+                alertas.append(mot_ant)
+        else:
+            m_anio = re.search(r"\b(202[0-9])\b", str(fecha_txt))
+            if m_anio:
+                anio_comp = int(m_anio.group(1))
+                ahora_anio = datetime.utcnow().year
+                if anio_comp < ahora_anio:
+                    score = max(0, score - 35)
+                    fecha_reciente = False
+                    alertas.append(f"Comprobante antiguo de año anterior ({anio_comp})")
 
     score = min(100, max(0, score))
 
