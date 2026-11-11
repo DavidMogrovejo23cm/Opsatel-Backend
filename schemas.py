@@ -932,6 +932,8 @@ class ComprobanteCreate(BaseModel):
     banco_origen: Optional[str] = None
     banco_destino: Optional[str] = None
     numero_referencia: Optional[str] = None
+    hash_imagen: Optional[str] = None
+    score_autenticidad: Optional[int] = None
     observaciones: Optional[str] = None
 
 class ComprobanteUpdate(BaseModel):
@@ -940,6 +942,8 @@ class ComprobanteUpdate(BaseModel):
     banco_origen: Optional[str] = None
     banco_destino: Optional[str] = None
     numero_referencia: Optional[str] = None
+    hash_imagen: Optional[str] = None
+    score_autenticidad: Optional[int] = None
     observaciones: Optional[str] = None
     cliente_id: Optional[int] = None
     categoria_validacion: Optional[str] = None
@@ -951,6 +955,8 @@ class ComprobanteAprobarRequest(BaseModel):
     monto_aplicar: Optional[float] = None
     metodo_pago: Optional[str] = None
     numero_referencia: Optional[str] = None
+    hash_imagen: Optional[str] = None
+    score_autenticidad: Optional[int] = None
     observaciones: Optional[str] = None
     notificar_whatsapp: Optional[bool] = True
     notificar_cliente: Optional[bool] = True
@@ -981,6 +987,10 @@ class ComprobanteResponse(BaseModel):
     saldo_pendiente_bd: Optional[float] = None
     categoria_validacion: Optional[str] = "PENDIENTES_COMPROBANTE"
     motivo_validacion: Optional[str] = None
+    hash_imagen: Optional[str] = None
+    score_autenticidad: Optional[int] = 0
+    es_duplicado: Optional[bool] = False
+    duplicado_detalle: Optional[str] = None
     pago_id: Optional[int] = None
     observaciones: Optional[str] = None
     fecha_hora: Optional[datetime] = None

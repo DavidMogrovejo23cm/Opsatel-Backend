@@ -19,6 +19,8 @@ import re
 import logging
 import tempfile
 import subprocess
+import hashlib
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
 
 logger = logging.getLogger("opsatel.ocr_comprobantes")
@@ -100,6 +102,22 @@ def buscar_ruta_archivo(file_path_or_name: str) -> Optional[str]:
             return os.path.abspath(c)
 
     return None
+
+
+def calcular_hash_archivo(file_path_or_name: str) -> Optional[str]:
+    """Calcula el hash SHA-256 de un archivo para detectar duplicados exactos."""
+    ruta_real = buscar_ruta_archivo(file_path_or_name)
+    if not ruta_real or not os.path.isfile(ruta_real):
+        return None
+    try:
+        hasher = hashlib.sha256()
+        with open(ruta_real, "rb") as f:
+            while chunk := f.read(65536):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+    except Exception as e:
+        logger.warning(f"[OCR] Error calculando hash SHA-256 de '{file_path_or_name}': {e}")
+        return None
 
 
 def mejorar_calidad_imagen_para_ocr(image_path: str) -> Tuple[str, Optional[str]]:
@@ -514,15 +532,38 @@ def parsear_texto_comprobante(texto: str) -> Dict[str, Any]:
 def es_documento_comprobante_valido(texto: str, datos_extraidos: Dict[str, Any]) -> Tuple[bool, str]:
     """
     Determina con rigurosidad si una imagen es un comprobante bancario o documento financiero
-    admitido en lugar de fotos personales, memes, paisajes o imágenes no relacionadas.
+    admitido en lugar de fotos personales, memes, paisajes, capturas de chat o facturas de compras.
     Retorna (es_valido, motivo).
     """
-    if not texto or len(texto.strip()) < 12:
-        return False, "sin_texto_financiero"
+    if not texto or len(texto.strip()) < 18:
+        return False, "sin_texto_financiero_suficiente"
 
     texto_lower = texto.lower()
 
-    # 1. Palabras clave obligatorias del ámbito bancario y transaccional ecuatoriano
+    # 1. Filtro de exclusión: facturas de supermercados, tiendas o restaurantes que no son comprobantes bancarios
+    patron_factura_comercial = re.compile(
+        r"(ruc\s*[:.]?\s*\d{10,13}|factura\s*(?:electr[oó]nica|f[ií]sica)?\s*(?:n[º°.:]|no\.?|num\.?)\s*\d+|"
+        r"nota\s*de\s*venta|consumidor\s*final|subtotal\s*1[25]%|subtotal\s*0%|iva\s*1[25]%|"
+        r"supermaxi|megamaxi|gran\s*ak[ií]|tiendas\s*t[ií]a|coral\s*hipermercados|farmacias\s*(?:fybeca|sana|medicity|econok)|"
+        r"mesero|mesa\s*#?\d+|propina\s*\$)",
+        re.IGNORECASE
+    )
+    if patron_factura_comercial.search(texto_lower):
+        # Si tiene indicadores de factura de compra comercial y NO menciona transferencia bancaria hacia Opsatel
+        tiene_transferencia_explicita = bool(re.search(r"(transferencia\s*interbancaria|transferencia\s*directa|pichincha|jep|deuna)", texto_lower))
+        if not tiene_transferencia_explicita:
+            return False, "factura_comercial_no_bancaria"
+
+    # 2. Filtro de exclusión: capturas de pantalla de chats o redes sociales
+    patron_chat = re.compile(
+        r"(escribiendo\.\.\.|visto\s*a\s*las|en\s*l[ií]nea|eliminar\s*para\s*todos|reenviado|grabar\s*audio|llamada\s*perdida)",
+        re.IGNORECASE
+    )
+    matches_chat = patron_chat.findall(texto_lower)
+    if len(matches_chat) >= 2 and not bool(datos_extraidos.get("banco_origen")):
+        return False, "captura_de_chat_no_comprobante"
+
+    # 3. Palabras clave obligatorias del ámbito bancario y transaccional ecuatoriano
     patron_terminos_bancarios = re.compile(
         r"(transferencia|comprobante|dep[oó]sito|transacci[oó]n|pago|cta\.?\s*destino|cuenta\s*destino|"
         r"cta\.?\s*origen|cuenta\s*origen|instituci[oó]n|beneficiario|ordenante|interbancari[ao]|"
@@ -534,7 +575,7 @@ def es_documento_comprobante_valido(texto: str, datos_extraidos: Dict[str, Any])
     terminos_encontrados = patron_terminos_bancarios.findall(texto_lower)
     tiene_terminos_bancarios = len(terminos_encontrados) >= 1
 
-    # 2. Indicadores de campos financieros detectados
+    # 4. Indicadores de campos financieros detectados
     tiene_banco = bool(datos_extraidos.get("banco_origen") or datos_extraidos.get("banco_destino"))
     tiene_monto = datos_extraidos.get("monto") is not None and float(datos_extraidos.get("monto") or 0) > 0
     tiene_ref = bool(datos_extraidos.get("numero_comprobante"))
@@ -547,15 +588,116 @@ def es_documento_comprobante_valido(texto: str, datos_extraidos: Dict[str, Any])
     if tiene_banco and (tiene_monto or tiene_ref or tiene_cuenta):
         return True, "banco_y_datos_transaccion"
 
-    # B: Monto con símbolo de dólar/divisa Y (palabra transferencia/comprobante/pago O número de referencia/cuenta)
-    if tiene_monto and (tiene_palabra_transferencia or tiene_ref or tiene_cuenta):
+    # B: Monto con símbolo de divisa Y palabra de transferencia/comprobante/pago Y (referencia O cuenta)
+    if tiene_monto and tiene_palabra_transferencia and (tiene_ref or tiene_cuenta or tiene_banco):
         return True, "monto_y_referencia_financiera"
 
-    # C: Al menos dos términos bancarios distintivos y referencia o cuenta
-    if len(terminos_encontrados) >= 2 and (tiene_ref or tiene_cuenta or tiene_participante):
+    # C: Al menos dos términos bancarios distintivos y referencia o cuenta válida
+    if len(terminos_encontrados) >= 2 and (tiene_ref or tiene_cuenta) and (tiene_monto or tiene_participante):
         return True, "multiples_indicadores_bancarios"
 
     return False, "la imagen mandada no es un documento valido"
+
+
+def calcular_score_autenticidad(texto: str, datos: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Evalúa minuciosamente la autenticidad y certeza de que el documento es un comprobante de pago real
+    dirigido o vinculado a Opsatel.
+    Retorna score (0-100), nivel de confianza ('ALTO', 'MEDIO', 'BAJO', 'INVALIDO'),
+    indicadores booleanos y lista de alertas.
+    """
+    score = 0
+    alertas = []
+    texto_lower = (texto or "").lower()
+
+    # 1. Banco emisor/receptor identificado (+25 pts)
+    banco_ok = bool(datos.get("banco_origen") or datos.get("banco_destino"))
+    if banco_ok:
+        score += 25
+    else:
+        alertas.append("Entidad bancaria o cooperativa no identificada")
+
+    # 2. Monto financiero válido (+25 pts)
+    monto_val = datos.get("monto")
+    monto_ok = monto_val is not None and 1.0 <= float(monto_val) <= 2000.0
+    if monto_ok:
+        score += 25
+    elif monto_val is not None and float(monto_val) > 2000.0:
+        score += 15
+        alertas.append(f"Monto inusualmente alto (${monto_val:.2f})")
+    else:
+        alertas.append("Monto no detectado o inválido")
+
+    # 3. Referencia o número de comprobante (+20 pts)
+    ref_val = datos.get("numero_comprobante")
+    ref_ok = bool(ref_val and len(str(ref_val).strip()) >= 5)
+    if ref_ok:
+        score += 20
+    else:
+        alertas.append("Referencia o secuencial bancario no detectado")
+
+    # 4. Estado de transacción exitosa (+15 pts)
+    estado_ok = bool(re.search(
+        r"(transferencia\s*exitosa|transacci[oó]n\s*exitosa|pago\s*exitoso|comprobante\s*(?:electr[oó]nico|de\s*pago|de\s*transferencia)|dep[oó]sito\s*exitoso|pagaste|enviaste|recibiste|aplicad[ao])",
+        texto_lower
+    ))
+    if estado_ok:
+        score += 15
+
+    # 5. Destinatario o Cuenta coincidente con Opsatel (+15 pts)
+    # Cuentas autorizadas: Pichincha 2206388858, JEP 406060337400, Bryan Solano / Opsatel
+    beneficiario_txt = (datos.get("beneficiario") or "").lower()
+    cuenta_dest_txt = str(datos.get("cuenta_destino") or "")
+    
+    es_opsatel = False
+    if any(k in beneficiario_txt for k in ["bryan", "solano", "opsatel", "0105905251"]):
+        es_opsatel = True
+    elif any(k in cuenta_dest_txt for k in ["2206388858", "406060337400", "8858", "7400"]):
+        es_opsatel = True
+    elif any(k in texto_lower for k in ["bryan andres solano", "solano herrera", "0105905251", "2206388858", "406060337400"]):
+        es_opsatel = True
+
+    if es_opsatel:
+        score += 15
+    else:
+        if datos.get("beneficiario") and len(datos.get("beneficiario", "")) >= 4:
+            alertas.append(f"Beneficiario no coincide con cuentas de Opsatel ({datos.get('beneficiario')})")
+
+    # 6. Evaluación de fecha y vigencia
+    fecha_txt = datos.get("fecha")
+    fecha_reciente = True
+    if fecha_txt:
+        m_anio = re.search(r"\b(202[0-9])\b", fecha_txt)
+        if m_anio:
+            anio_comp = int(m_anio.group(1))
+            ahora_anio = datetime.utcnow().year
+            if anio_comp < ahora_anio:
+                score = max(0, score - 30)
+                fecha_reciente = False
+                alertas.append(f"Comprobante antiguo de año anterior ({anio_comp})")
+
+    score = min(100, max(0, score))
+
+    if score >= 80:
+        nivel = "ALTO"
+    elif score >= 55:
+        nivel = "MEDIO"
+    elif score > 0:
+        nivel = "BAJO"
+    else:
+        nivel = "INVALIDO"
+
+    return {
+        "score": score,
+        "nivel": nivel,
+        "es_opsatel_destinatario": es_opsatel,
+        "es_fecha_reciente": fecha_reciente,
+        "banco_identificado": banco_ok,
+        "monto_identificado": monto_ok,
+        "referencia_identificada": ref_ok,
+        "estado_transaccion_exitoso": estado_ok,
+        "alertas": alertas
+    }
 
 
 def extraer_texto_tesseract_mejorado(image_path: str) -> str:
@@ -762,6 +904,10 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
     # Validar si es realmente un comprobante bancario o documento financiero admitido
     es_valido, motivo_doc = es_documento_comprobante_valido(texto_extraido, datos_extraidos)
 
+    # Evaluación profunda de autenticidad, destino Opsatel y vigencia
+    autenticidad = calcular_score_autenticidad(texto_extraido, datos_extraidos)
+    hash_imagen = calcular_hash_archivo(ruta_real)
+
     # F. Construir resumen descriptivo
     partes = []
     if datos_extraidos.get("banco_origen"):
@@ -780,6 +926,7 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
         partes.append(f"Cta Origen: {datos_extraidos['cuenta_origen']}")
     if datos_extraidos.get("fecha"):
         partes.append(f"Fecha: {datos_extraidos['fecha']}")
+    partes.append(f"Certeza: {autenticidad.get('score', 0)}%")
 
     resumen_str = " | ".join(partes) if partes else ("Comprobante procesado con éxito" if es_valido else "Documento no admitido")
 
@@ -789,6 +936,12 @@ def analizar_comprobante_ocr(file_path_or_name: str) -> Dict[str, Any]:
         "success": True,
         "es_documento_valido": es_valido,
         "motivo_validacion_documento": motivo_doc,
+        "hash_imagen": hash_imagen,
+        "score_autenticidad": autenticidad.get("score", 0),
+        "nivel_confianza": autenticidad.get("nivel", "INVALIDO"),
+        "es_opsatel_destinatario": autenticidad.get("es_opsatel_destinatario", False),
+        "alertas_autenticidad": autenticidad.get("alertas", []),
+        "es_fecha_reciente": autenticidad.get("es_fecha_reciente", True),
         "banco_origen": datos_extraidos.get("banco_origen"),
         "banco_destino": datos_extraidos.get("banco_destino"),
         "monto": datos_extraidos.get("monto"),

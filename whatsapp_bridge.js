@@ -12,6 +12,7 @@ const express = require('express');
 const { execSync, statSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 // Cargar variables de entorno locales desde .env si existe
 try {
@@ -403,6 +404,7 @@ function guardarImagenUploadscr(base64Data, mimeType, senderPhone, originalFilen
         }
 
         console.log(`[WhatsApp Bridge] 💾 Imagen guardada con éxito en ${savedCount} ubicación(es) de 'uploadscr' (${fileName}, ${buffer.length} bytes)`);
+        const sha256Hash = crypto.createHash('sha256').update(buffer).digest('hex');
 
         return {
             success: savedCount > 0,
@@ -410,6 +412,7 @@ function guardarImagenUploadscr(base64Data, mimeType, senderPhone, originalFilen
             relativePath: path.join('uploadscr', fileName).replace(/\\/g, '/'),
             publicUrl: `/uploadscr/${fileName}`,
             fileSize: buffer.length,
+            sha256: sha256Hash,
             primaryPath: primaryPath
         };
     } catch (err) {
@@ -1267,10 +1270,23 @@ client.on('message', async (msg) => {
                         url_archivo: fileInfo.publicUrl,
                         mimetype: media.mimetype || 'image/jpeg',
                         tamano_bytes: fileInfo.fileSize,
+                        hash_imagen: fileInfo.sha256,
                         mensaje_texto: msg.body || ''
                     });
                     if (regResult && (regResult.success || regResult.comprobante_id)) {
                         ocrData = regResult;
+                        if (regResult.es_duplicado) {
+                            console.log(`[WhatsApp Bridge] ⚠️ Comprobante duplicado detectado de ${realPhone || remitente}: ${regResult.duplicado_detalle || ''}`);
+                            const msgRechazoDup = "⚠️ Estimado cliente, hemos detectado que este comprobante ya se encuentra registrado en nuestro sistema. Un asesor revisará su solicitud a la brevedad. ¡Gracias!";
+                            try {
+                                const chatOrigen = msg.from;
+                                await sleep(rand(600, 1200));
+                                await client.sendMessage(chatOrigen, msgRechazoDup);
+                                lastOutboundAt = Date.now();
+                            } catch (eSendDup) {
+                                console.warn('[WhatsApp Bridge] No se pudo enviar aviso de comprobante duplicado:', eSendDup.message);
+                            }
+                        }
                     } else if (regResult && regResult.es_documento_valido === false) {
                         // La imagen recibida NO es un comprobante bancario o documento financiero válido
                         console.log(`[WhatsApp Bridge] ⚠️ Imagen descartada de ${realPhone || remitente}: no es un comprobante válido.`);

@@ -1780,12 +1780,16 @@ def webhook_mensaje_whatsapp(
                     ocr_data=ocr_verif,
                     monto_final=ocr_verif.get("monto"),
                     referencia_final=ocr_verif.get("numero_referencia"),
-                    nombre_archivo=nombre_archivo or ""
+                    nombre_archivo=nombre_archivo or "",
+                    hash_imagen=ocr_verif.get("hash_imagen")
                 )
                 cli_wh = eval_webhook.get("cliente")
                 cat_val = eval_webhook.get("categoria_validacion") or "CONFIRMACION_RECIBO"
                 mot_val = eval_webhook.get("motivo_validacion") or ""
                 ced_val = getattr(cli_wh, "cedula", None) if cli_wh else None
+                es_dup_wh = bool(eval_webhook.get("es_duplicado", False))
+                dup_det_wh = eval_webhook.get("duplicado_detalle")
+                score_aut_wh = int(ocr_verif.get("score_autenticidad") or 0)
 
                 nuevo_comp = models.Comprobante(
                     cliente_id=cli_wh.id if cli_wh else (c_por_msg.id if c_por_msg else None),
@@ -1812,6 +1816,10 @@ def webhook_mensaje_whatsapp(
                     saldo_pendiente_bd=eval_webhook.get("saldo_pendiente_bd"),
                     categoria_validacion=cat_val,
                     motivo_validacion=mot_val,
+                    hash_imagen=ocr_verif.get("hash_imagen"),
+                    score_autenticidad=score_aut_wh,
+                    es_duplicado=es_dup_wh,
+                    duplicado_detalle=dup_det_wh,
                     observaciones=ocr_verif.get("resumen_ocr"),
                     fecha_hora=ahora_ec,
                     created_at=datetime.utcnow(),
@@ -2824,6 +2832,10 @@ def asegurar_tabla_comprobantes(db: Session = None):
         ("saldo_pendiente_bd", "FLOAT"),
         ("categoria_validacion", "VARCHAR(60) DEFAULT 'PENDIENTES_COMPROBANTE'"),
         ("motivo_validacion", "TEXT"),
+        ("hash_imagen", "VARCHAR(64)"),
+        ("score_autenticidad", "INTEGER DEFAULT 0"),
+        ("es_duplicado", "BOOLEAN DEFAULT 0"),
+        ("duplicado_detalle", "TEXT"),
         ("pago_id", "INTEGER"),
     ]
 
@@ -2917,16 +2929,16 @@ def evaluar_validacion_comprobante(
     referencia_final: Optional[str],
     nombre_archivo: str = "",
     comprobante_id_actual: Optional[int] = None,
-    es_registro_historico_sin_ocr: bool = False
+    es_registro_historico_sin_ocr: bool = False,
+    hash_imagen: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Compara el comprobante recibido con la Base de Datos y lo clasifica en:
-    - 'CONFIRMACION_RECIBO': Enviado desde un número registrado en la BD (vinculado automáticamente al cliente),
-                             todavía por confirmar para que se cobre en la base de datos (el monto que paga
-                             coincide o es menor al saldo/cuota pendiente).
-    - 'PENDIENTES_COMPROBANTE': Enviado desde un número NO registrado, enviado desde otro número distinto al del
-                                cliente, sin coincidencia en la BD, paga de más sobre el valor pendiente,
-                                referencia duplicada o no se reconoció algún dato crítico.
+    Compara el comprobante recibido con la Base de Datos, verifica autenticidad, detecta duplicados
+    y lo clasifica en:
+    - 'CONFIRMACION_RECIBO': Comprobante real, verificado, enviado desde un número registrado en la BD,
+                             sin duplicados de referencia ni de imagen, y con monto coherente con la deuda.
+    - 'PENDIENTES_COMPROBANTE': Enviado desde otro número, no registrado, duplicado (referencia o imagen),
+                                paga de más, comprobante extemporáneo o novedad en el OCR.
     """
     cliente_por_telefono, num_clean = buscar_cliente_por_telefono_comprobante(db, numero_raw, nombre_archivo)
     telefono_registrado = cliente_por_telefono is not None
@@ -2936,7 +2948,6 @@ def evaluar_validacion_comprobante(
     cliente_por_ordenante = None
     if not cliente_por_telefono and ordenante_ocr and len(ordenante_ocr) >= 6:
         try:
-            # Consulta SQL directa acotada para evitar recorrer toda la tabla en memoria
             partes = [p for p in ordenante_ocr.split() if len(p) >= 4]
             if partes:
                 q_nom = db.query(models.Cliente)
@@ -2962,29 +2973,107 @@ def evaluar_validacion_comprobante(
     cliente = cliente_por_telefono or cliente_por_ordenante or cliente_por_pushname
     deuda_bd = calcular_deuda_pendiente_cliente(cliente, db) if cliente else 0.0
 
-    # Si es un registro previo al OCR que viene de un número registrado y aún no tenía monto leído,
-    # sugerimos su valor pendiente en BD para que pueda confirmarse en Confirmación de Recibo
     monto_evaluado = monto_final
     if (monto_evaluado is None or monto_evaluado <= 0) and telefono_registrado and es_registro_historico_sin_ocr and deuda_bd > 0:
         monto_evaluado = deuda_bd
 
-    # Verificar si el número de referencia ya fue cobrado/aprobado previamente
-    duplicado_aprobado = None
-    if referencia_final and len(str(referencia_final).strip()) >= 5:
-        q_dup = db.query(models.Comprobante).filter(
-            models.Comprobante.numero_referencia == str(referencia_final).strip(),
+    razones_pendiente = []
+    es_duplicado = False
+    duplicado_detalle = None
+
+    # =========================================================================
+    # 1. VERIFICACIÓN ESTRICTA DE DUPLICADOS (IMAGEN, REFERENCIA, PAGOS EN BD)
+    # =========================================================================
+    hash_evaluar = hash_imagen or ocr_data.get("hash_imagen")
+    if hash_evaluar and len(str(hash_evaluar).strip()) >= 16:
+        q_dup_hash = db.query(models.Comprobante).filter(
+            models.Comprobante.hash_imagen == str(hash_evaluar).strip(),
+            models.Comprobante.estado.notin_(["DESCARTADO", "RECHAZADO"])
+        )
+        if comprobante_id_actual:
+            q_dup_hash = q_dup_hash.filter(models.Comprobante.id != comprobante_id_actual)
+        dup_hash = q_dup_hash.first()
+        if dup_hash:
+            es_duplicado = True
+            duplicado_detalle = f"Imagen idéntica (hash SHA-256) ya fue enviada en comprobante #{dup_hash.id} ({dup_hash.estado})"
+            razones_pendiente.append(
+                f"🚨 IMAGEN DUPLICADA: Esta misma foto/archivo ya fue registrada en el comprobante #{dup_hash.id} ({dup_hash.estado})."
+            )
+
+    ref_clean = str(referencia_final or "").strip()
+    if ref_clean and len(ref_clean) >= 5 and ref_clean.lower() not in ["null", "none", "00000", "000000"]:
+        # A) Buscar en Comprobantes APROBADOS (ya cobrados)
+        q_dup_aprob = db.query(models.Comprobante).filter(
+            models.Comprobante.numero_referencia == ref_clean,
             models.Comprobante.estado == "APROBADO"
         )
         if comprobante_id_actual:
-            q_dup = q_dup.filter(models.Comprobante.id != comprobante_id_actual)
-        duplicado_aprobado = q_dup.first()
+            q_dup_aprob = q_dup_aprob.filter(models.Comprobante.id != comprobante_id_actual)
+        dup_aprob = q_dup_aprob.first()
+        if dup_aprob:
+            es_duplicado = True
+            duplicado_detalle = f"Referencia N° {ref_clean} ya fue cobrada en comprobante #{dup_aprob.id}"
+            razones_pendiente.append(
+                f"🚨 COMPROBANTE YA COBRADO: La referencia N° {ref_clean} ya fue cobrada en el comprobante #{dup_aprob.id}."
+            )
 
-    razones_pendiente = []
+        # B) Buscar en Comprobantes PENDIENTES (cola de revisión)
+        if not dup_aprob:
+            q_dup_pend = db.query(models.Comprobante).filter(
+                models.Comprobante.numero_referencia == ref_clean,
+                models.Comprobante.estado == "PENDIENTE"
+            )
+            if comprobante_id_actual:
+                q_dup_pend = q_dup_pend.filter(models.Comprobante.id != comprobante_id_actual)
+            dup_pend = q_dup_pend.first()
+            if dup_pend:
+                es_duplicado = True
+                duplicado_detalle = f"Referencia N° {ref_clean} ya registrada en comprobante #{dup_pend.id} (pendiente de aprobación)"
+                razones_pendiente.append(
+                    f"⚠️ COMPROBANTE REPETIDO: La referencia N° {ref_clean} ya fue enviada previamente y consta en el comprobante #{dup_pend.id} en revisión."
+                )
 
-    if duplicado_aprobado:
-        razones_pendiente.append(
-            f"Comprobante duplicado: La referencia N° {referencia_final} ya fue cobrada en el registro #{duplicado_aprobado.id}."
-        )
+        # C) Buscar en historial_pagos (tabla Pago)
+        if not dup_aprob:
+            try:
+                pago_dup = db.query(models.Pago).filter(
+                    models.Pago.referencia == ref_clean,
+                    models.Pago.anulado == False
+                ).first()
+                if pago_dup:
+                    es_duplicado = True
+                    fecha_p_str = pago_dup.fecha_pago.strftime("%Y-%m-%d") if pago_dup.fecha_pago else ""
+                    duplicado_detalle = f"Referencia N° {ref_clean} ya consta en el Pago #{pago_dup.id} (${pago_dup.monto}) del {fecha_p_str}"
+                    razones_pendiente.append(
+                        f"🚨 REFERENCIA COBRADA EN BD: El código N° {ref_clean} ya consta en el Pago #{pago_dup.id} (${pago_dup.monto}) de la fecha {fecha_p_str}."
+                    )
+            except Exception as e_pago:
+                print(f"[Comprobantes] Error buscando referencia en historial_pagos: {e_pago}")
+
+        # D) Buscar en historial_pagos_extras (tabla PagoExtra)
+        if not dup_aprob and not es_duplicado:
+            try:
+                pe_dup = db.query(models.PagoExtra).filter(
+                    models.PagoExtra.referencia == ref_clean,
+                    models.PagoExtra.anulado == False
+                ).first()
+                if pe_dup:
+                    es_duplicado = True
+                    duplicado_detalle = f"Referencia N° {ref_clean} ya consta en Pagos Extras #{pe_dup.id} (${pe_dup.monto})"
+                    razones_pendiente.append(
+                        f"🚨 REFERENCIA COBRADA EN EXTRAS: El código N° {ref_clean} ya fue cobrado en Pago Extra #{pe_dup.id}."
+                    )
+            except Exception:
+                pass
+
+    # =========================================================================
+    # 2. EVALUACIÓN DE AUTENTICIDAD, DESTINATARIO Y VIGENCIA
+    # =========================================================================
+    score_autenticidad = int(ocr_data.get("score_autenticidad") or 0)
+    alertas_ocr = ocr_data.get("alertas_autenticidad") or []
+    for al in alertas_ocr:
+        if "antiguo" in al.lower():
+            razones_pendiente.append(f"⚠️ {al}")
 
     if not cliente:
         razones_pendiente.append(
@@ -3007,23 +3096,28 @@ def evaluar_validacion_comprobante(
             f"Paga de más: El comprobante es por ${monto_evaluado:.2f}, pero el valor pendiente en BD es de ${deuda_bd:.2f} (excede por ${exceso:.2f})."
         )
 
-    if len(razones_pendiente) == 0 and cliente and telefono_registrado and monto_evaluado and monto_evaluado > 0:
+    # Si es duplicado, forzamos clasificación a PENDIENTES_COMPROBANTE con aviso crítico
+    if es_duplicado:
+        categoria = "PENDIENTES_COMPROBANTE"
+        motivo = " | ".join(razones_pendiente)
+    elif len(razones_pendiente) == 0 and cliente and telefono_registrado and monto_evaluado and monto_evaluado > 0:
         categoria = "CONFIRMACION_RECIBO"
+        sello_ops = " 🏛️ [Cuenta Opsatel Verificada]" if ocr_data.get("es_opsatel_destinatario") else ""
         if deuda_bd > 0 and abs(monto_evaluado - deuda_bd) <= 0.05:
             motivo = (
                 f"✅ Listo para confirmar cobro: Número registrado de {cliente.nombre} (ID #{cliente.id}, Cédula: {getattr(cliente, 'cedula', 'S/N')}). "
-                f"Paga ${monto_evaluado:.2f} coincidiendo con su valor pendiente en BD (${deuda_bd:.2f})."
+                f"Paga ${monto_evaluado:.2f} coincidiendo con su valor pendiente en BD (${deuda_bd:.2f}).{sello_ops}"
             )
         elif deuda_bd > monto_evaluado:
             restante = round(deuda_bd - monto_evaluado, 2)
             motivo = (
                 f"✅ Listo para confirmar cobro (Abono parcial): Número registrado de {cliente.nombre} (ID #{cliente.id}). "
-                f"Paga ${monto_evaluado:.2f} de ${deuda_bd:.2f} pendiente en BD (restará ${restante:.2f})."
+                f"Paga ${monto_evaluado:.2f} de ${deuda_bd:.2f} pendiente en BD (restará ${restante:.2f}).{sello_ops}"
             )
         else:
             motivo = (
                 f"✅ Listo para confirmar cobro: Número registrado de {cliente.nombre} (ID #{cliente.id}). "
-                f"Monto a cobrar: ${monto_evaluado:.2f}."
+                f"Monto a cobrar: ${monto_evaluado:.2f}.{sello_ops}"
             )
     else:
         categoria = "PENDIENTES_COMPROBANTE"
@@ -3036,7 +3130,10 @@ def evaluar_validacion_comprobante(
         "saldo_pendiente_bd": deuda_bd,
         "monto_evaluado": monto_evaluado,
         "categoria_validacion": categoria,
-        "motivo_validacion": motivo
+        "motivo_validacion": motivo,
+        "es_duplicado": es_duplicado,
+        "duplicado_detalle": duplicado_detalle,
+        "score_autenticidad": score_autenticidad
     }
 
 
@@ -3092,12 +3189,13 @@ def revalidar_comprobantes_existentes_pendientes(db: Session, force: bool = Fals
                 db=db,
                 numero_raw=r.numero_telefono,
                 nombre_remitente=r.nombre_remitente,
-                ocr_data={"ordenante": r.ordenante},
+                ocr_data={"ordenante": r.ordenante, "score_autenticidad": getattr(r, "score_autenticidad", 0)},
                 monto_final=r.monto,
                 referencia_final=r.numero_referencia,
                 nombre_archivo=r.nombre_archivo or "",
                 comprobante_id_actual=r.id,
-                es_registro_historico_sin_ocr=es_historico_sin_ocr
+                es_registro_historico_sin_ocr=es_historico_sin_ocr,
+                hash_imagen=getattr(r, "hash_imagen", None)
             )
 
             cli = eval_res.get("cliente")
@@ -3107,6 +3205,8 @@ def revalidar_comprobantes_existentes_pendientes(db: Session, force: bool = Fals
             nueva_cat = eval_res.get("categoria_validacion")
             nuevo_motivo = eval_res.get("motivo_validacion")
             nuevo_monto = eval_res.get("monto_evaluado")
+            nuevo_dup = bool(eval_res.get("es_duplicado", False))
+            nuevo_dup_det = eval_res.get("duplicado_detalle")
 
             if (
                 r.cliente_id != nuevo_cid
@@ -3114,6 +3214,8 @@ def revalidar_comprobantes_existentes_pendientes(db: Session, force: bool = Fals
                 or r.motivo_validacion != nuevo_motivo
                 or r.cedula_cliente != nueva_ced
                 or r.saldo_pendiente_bd != nuevo_saldo_bd
+                or getattr(r, "es_duplicado", False) != nuevo_dup
+                or getattr(r, "duplicado_detalle", None) != nuevo_dup_det
                 or (r.monto is None and nuevo_monto is not None)
             ):
                 r.cliente_id = nuevo_cid
@@ -3121,6 +3223,8 @@ def revalidar_comprobantes_existentes_pendientes(db: Session, force: bool = Fals
                 r.saldo_pendiente_bd = nuevo_saldo_bd
                 r.categoria_validacion = nueva_cat
                 r.motivo_validacion = nuevo_motivo
+                r.es_duplicado = nuevo_dup
+                r.duplicado_detalle = nuevo_dup_det
                 if r.monto is None and nuevo_monto is not None:
                     r.monto = nuevo_monto
                 if eval_res.get("numero_limpio") and (not r.numero_telefono or "@lid" in str(r.numero_telefono)):
@@ -3182,6 +3286,9 @@ def registrar_comprobante_endpoint(
         fecha_comp_final = ocr_data.get("fecha")
         texto_ocr_final = ocr_data.get("texto_extraido") or ""
 
+        hash_final = payload.hash_imagen or ocr_data.get("hash_imagen")
+        score_autenticidad = int(ocr_data.get("score_autenticidad") or 0)
+
         # 2. Evaluar validación contra la Base de Datos
         eval_res = evaluar_validacion_comprobante(
             db=db,
@@ -3190,7 +3297,8 @@ def registrar_comprobante_endpoint(
             ocr_data=ocr_data,
             monto_final=monto_final,
             referencia_final=referencia_final,
-            nombre_archivo=payload.nombre_archivo or ""
+            nombre_archivo=payload.nombre_archivo or "",
+            hash_imagen=hash_final
         )
         cliente = eval_res["cliente"]
         saldo_pendiente_bd = eval_res["saldo_pendiente_bd"]
@@ -3198,6 +3306,8 @@ def registrar_comprobante_endpoint(
         motivo_validacion = eval_res["motivo_validacion"]
         monto_final = eval_res["monto_evaluado"]
         cedula_cliente = getattr(cliente, "cedula", None) if cliente else None
+        es_duplicado = bool(eval_res.get("es_duplicado", False))
+        duplicado_detalle = eval_res.get("duplicado_detalle")
 
         num_raw = payload.numero_telefono or ""
         num_clean = eval_res.get("numero_limpio") or "".join([c for c in num_raw if c.isdigit()])
@@ -3239,6 +3349,10 @@ def registrar_comprobante_endpoint(
             saldo_pendiente_bd=saldo_pendiente_bd,
             categoria_validacion=categoria_validacion,
             motivo_validacion=motivo_validacion,
+            hash_imagen=hash_final,
+            score_autenticidad=score_autenticidad,
+            es_duplicado=es_duplicado,
+            duplicado_detalle=duplicado_detalle,
             observaciones=observaciones_final,
             fecha_hora=ahora_ec,
             created_at=datetime.utcnow(),
@@ -3252,11 +3366,16 @@ def registrar_comprobante_endpoint(
         print(
             f"[Comprobantes] ✅ Comprobante #{nuevo_comp.id} registrado [{categoria_validacion}] - "
             f"Cliente: {cliente.nombre if cliente else 'No vinculado'} | Monto: ${monto_final or 0:.2f} | Deuda BD: ${saldo_pendiente_bd:.2f}"
+            + (f" | 🚨 DUPLICADO: {duplicado_detalle}" if es_duplicado else "")
         )
 
         return {
             "success": True,
             "es_documento_valido": True,
+            "es_duplicado": es_duplicado,
+            "duplicado_detalle": duplicado_detalle,
+            "score_autenticidad": score_autenticidad,
+            "hash_imagen": hash_final,
             "message": "Comprobante registrado y validado exitosamente",
             "comprobante_id": nuevo_comp.id,
             "url_archivo": nuevo_comp.url_archivo,
@@ -3420,6 +3539,10 @@ def listar_comprobantes(
                 "deuda_actual_bd": deuda_actual_bd,
                 "categoria_validacion": r.categoria_validacion or "PENDIENTES_COMPROBANTE",
                 "motivo_validacion": r.motivo_validacion,
+                "hash_imagen": getattr(r, "hash_imagen", None),
+                "score_autenticidad": getattr(r, "score_autenticidad", 0) or 0,
+                "es_duplicado": bool(getattr(r, "es_duplicado", False)),
+                "duplicado_detalle": getattr(r, "duplicado_detalle", None),
                 "pago_id": r.pago_id,
                 "observaciones": r.observaciones,
                 "fecha_hora": r.fecha_hora.isoformat() if r.fecha_hora else None,

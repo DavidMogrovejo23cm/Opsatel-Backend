@@ -885,6 +885,10 @@ class Comprobante(Base):
     saldo_pendiente_bd = Column(Float, nullable=True)
     categoria_validacion = Column(String(60), default="PENDIENTES_COMPROBANTE", index=True)  # CONFIRMACION_RECIBO, PENDIENTES_COMPROBANTE
     motivo_validacion = Column(Text, nullable=True)
+    hash_imagen = Column(String(64), nullable=True, index=True)
+    score_autenticidad = Column(Integer, default=0)
+    es_duplicado = Column(Boolean, default=False, index=True)
+    duplicado_detalle = Column(Text, nullable=True)
     pago_id = Column(Integer, nullable=True)
     observaciones = Column(Text, nullable=True)
     fecha_hora = Column(DateTime, default=datetime.datetime.utcnow, index=True)
