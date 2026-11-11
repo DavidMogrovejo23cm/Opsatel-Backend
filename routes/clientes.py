@@ -55,6 +55,7 @@ from config_manager import get_config, save_config
 import calendar
 
 import unicodedata
+from text_utils import normalize_opsatel_text
 
 def is_nodo_sayausi(nodo_val) -> bool:
     if not nodo_val:
@@ -3276,7 +3277,7 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                         proximo_id_hueco += 1
                     nuevo_id = proximo_id_hueco
                 
-                cliente = models.Cliente(id=nuevo_id, nombre=nombre, estado="Activo")
+                cliente = models.Cliente(id=nuevo_id, nombre=normalize_opsatel_text(nombre), estado="Activo")
                 ids_existentes.add(nuevo_id)
                 db.add(cliente)
                 count_nuevos += 1
@@ -3315,6 +3316,8 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
                         elif field == "celular":
                             if clean_val and clean_val.isdigit() and len(clean_val) == 9 and clean_val.startswith("9"):
                                 clean_val = "0" + clean_val
+                        elif field in ["nombre", "direccion", "parroquia", "nodo", "comentarios", "observaciones", "notas_pago", "tecnico", "activador", "nap", "referencia", "bank", "bank_plus", "app", "cuenta", "arrienda"]:
+                            clean_val = normalize_opsatel_text(clean_val)
                         setattr(cliente, field, clean_val)
                 
                 # Respetar y estandarizar el estado del cliente según el Excel (ACTIVO, INACTIVO, FINIQUITO, etc.)

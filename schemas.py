@@ -9,6 +9,7 @@
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List, Dict, Union
 from datetime import datetime
+from text_utils import normalize_opsatel_text
 
 class ClienteCreate(BaseModel):
     nombre: str
@@ -39,6 +40,11 @@ class ClienteCreate(BaseModel):
     comentarios: Optional[str] = None
     estado: Optional[str] = "En Activación"
     saldo: Optional[float] = None
+
+    @field_validator('nombre', 'direccion', 'nodo', 'parroquia', 'comentarios', mode='before')
+    @classmethod
+    def normalizar_campos_texto(cls, v):
+        return normalize_opsatel_text(v)
 
 class ClienteUpdateTecnico(BaseModel):
     mac: str
@@ -113,6 +119,11 @@ class ClienteUpdateAdmin(BaseModel):
     fecha_firma: Optional[str] = None
     instalation_date: Optional[str] = None
 
+    @field_validator('comentarios', 'observaciones', 'notas_pago', mode='before')
+    @classmethod
+    def normalizar_campos_admin(cls, v):
+        return normalize_opsatel_text(v)
+
 class ClienteUpdateGeneral(BaseModel):
     nombre: Optional[str] = None
     cedula: Optional[str] = None
@@ -176,6 +187,11 @@ class ClienteUpdateGeneral(BaseModel):
     iptv_bouquets: Optional[str] = None
     iptv_exp_date: Optional[str] = None
     iptv_max_conn: Optional[int] = None
+
+    @field_validator('nombre', 'direccion', 'nodo', 'parroquia', 'comentarios', 'observaciones', 'notas_pago', 'tecnico', 'activador', 'nap', mode='before')
+    @classmethod
+    def normalizar_campos_texto(cls, v):
+        return normalize_opsatel_text(v)
 
     @field_validator('pago_mensual', 'total', 'total_pago', 'saldo', 'precio_plan_especial', mode='before')
     @classmethod
@@ -255,6 +271,11 @@ class ClienteResponse(BaseModel):
     cuenta: Optional[str] = None
     fecha_firma: Optional[str] = None
     instalation_date: Optional[str] = None
+
+    @field_validator('comentarios', 'observaciones', 'notas_pago', mode='before')
+    @classmethod
+    def normalizar_campos_admin(cls, v):
+        return normalize_opsatel_text(v)
     puerto: Optional[str] = None
     ont: Optional[str] = None
     servicio: Optional[str] = None
@@ -550,6 +571,11 @@ class ClienteExtraBase(BaseModel):
     diciembre_cod: Optional[str] = None
     diciembre_saldo: Optional[float] = 0.0
 
+    @field_validator('nombre_cliente', 'observaciones', 'proveedor', mode='before')
+    @classmethod
+    def normalizar_campos_extra(cls, v):
+        return normalize_opsatel_text(v)
+
 class ClienteExtraCreate(ClienteExtraBase):
     pass
 
@@ -585,6 +611,11 @@ class HojaRutaBase(BaseModel):
     estado: Optional[str] = "Pendiente"
     callcenter_ticket_id: Optional[int] = None
 
+    @field_validator('tecnico', 'nombre_cliente', 'ubicacion_cliente', 'ubicacion_caja', 'actividad', 'observacion', 'observacion_tecnico', 'parroquia', mode='before')
+    @classmethod
+    def normalizar_campos_hoja_ruta(cls, v):
+        return normalize_opsatel_text(v)
+
 class HojaRutaCreate(HojaRutaBase):
     pass
 
@@ -603,6 +634,11 @@ class HojaRutaUpdate(BaseModel):
     parroquia: Optional[str] = None
     estado: Optional[str] = None
     callcenter_ticket_id: Optional[int] = None
+
+    @field_validator('tecnico', 'nombre_cliente', 'ubicacion_cliente', 'ubicacion_caja', 'actividad', 'observacion', 'observacion_tecnico', 'parroquia', mode='before')
+    @classmethod
+    def normalizar_campos_hoja_ruta_update(cls, v):
+        return normalize_opsatel_text(v)
 
 class HojaRutaResponse(HojaRutaBase):
     id: int
@@ -642,6 +678,11 @@ class CallCenterTicketBase(BaseModel):
     problema: Optional[str] = None
     observacion_revision: Optional[str] = None
     fecha_cambio_estado: Optional[str] = None
+
+    @field_validator('cliente_nombre', 'direccion', 'a_cargo', 'problema', 'observacion_revision', mode='before')
+    @classmethod
+    def normalizar_campos_callcenter(cls, v):
+        return normalize_opsatel_text(v)
 
 class CallCenterTicketCreate(CallCenterTicketBase):
     pass
@@ -936,6 +977,11 @@ class ComprobanteCreate(BaseModel):
     score_autenticidad: Optional[int] = None
     observaciones: Optional[str] = None
 
+    @field_validator('nombre_remitente', 'observaciones', 'banco_origen', 'banco_destino', mode='before')
+    @classmethod
+    def normalizar_campos_comprobante_create(cls, v):
+        return normalize_opsatel_text(v)
+
 class ComprobanteUpdate(BaseModel):
     estado: Optional[str] = None
     monto: Optional[float] = None
@@ -945,6 +991,11 @@ class ComprobanteUpdate(BaseModel):
     hash_imagen: Optional[str] = None
     score_autenticidad: Optional[int] = None
     observaciones: Optional[str] = None
+
+    @field_validator('observaciones', 'banco_origen', 'banco_destino', mode='before')
+    @classmethod
+    def normalizar_campos_comprobante_update(cls, v):
+        return normalize_opsatel_text(v)
     cliente_id: Optional[int] = None
     categoria_validacion: Optional[str] = None
     motivo_validacion: Optional[str] = None
@@ -958,6 +1009,11 @@ class ComprobanteAprobarRequest(BaseModel):
     hash_imagen: Optional[str] = None
     score_autenticidad: Optional[int] = None
     observaciones: Optional[str] = None
+
+    @field_validator('observaciones', 'metodo_pago', mode='before')
+    @classmethod
+    def normalizar_campos_comprobante_aprobar(cls, v):
+        return normalize_opsatel_text(v)
     notificar_whatsapp: Optional[bool] = True
     notificar_cliente: Optional[bool] = True
 

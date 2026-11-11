@@ -13,6 +13,8 @@ Flujo de procesamiento:
 """
 
 import os
+import unicodedata
+from text_utils import normalize_opsatel_text
 import sys
 import json
 import re
@@ -476,14 +478,14 @@ def parsear_texto_comprobante(texto: str) -> Dict[str, Any]:
     if m_ben:
         ben_str = m_ben.group(1).strip()
         if not re.match(r"^(cuenta|banco|fecha|transferencia|comprobante|monto|valor)", ben_str, re.IGNORECASE):
-            data["beneficiario"] = ben_str
+            data["beneficiario"] = normalize_opsatel_text(ben_str)
 
     # 5. Ordenante / Remitente (De: ...)
     m_ord = re.search(r"(?:^|\n)\s*(?:de|ordenante|remitente|debitado\s*de)\s*[:.]?\s*([A-Za-zÁÉÍÓÚáéíóúñÑ\s]{3,55}?)(?=\n|cuenta|banco|\$|fecha|comprobante|\Z)", texto, re.IGNORECASE)
     if m_ord:
         ord_str = m_ord.group(1).strip()
         if not re.match(r"^(cuenta|banco|comprobante|transferencia|fecha|monto|valor)", ord_str, re.IGNORECASE):
-            data["ordenante"] = ord_str
+            data["ordenante"] = normalize_opsatel_text(ord_str)
 
     # 6. Cuenta destino (e.g. "*** *** 8858" o "2205849102")
     m_cd = re.search(r"(?:cuenta\s*destino|cta\.?\s*destino|destino)\s*[:.]?\s*([*0-9\s-]{4,25})", texto, re.IGNORECASE)

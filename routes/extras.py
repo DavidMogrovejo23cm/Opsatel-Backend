@@ -20,6 +20,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 import unicodedata
 import re
+from text_utils import normalize_opsatel_text
 from services.xui_service import create_xui_user, delete_xui_user
 from .auth import get_current_user, require_role
 
@@ -641,14 +642,14 @@ def upload_database_extras(
                 count_nuevos += 1
 
             db_cliente.cod = cod_raw
-            db_cliente.nombre_cliente = nom_raw
+            db_cliente.nombre_cliente = normalize_opsatel_text(nom_raw)
             db_cliente.contacto = contacto_raw
-            db_cliente.proveedor = proveedor_raw
+            db_cliente.proveedor = normalize_opsatel_text(proveedor_raw)
             db_cliente.usuario = usuario_raw
             db_cliente.contrasena = contrasena_raw
             db_cliente.cuentas = cuentas_raw
             db_cliente.mac_smart_one = mac_raw
-            db_cliente.observaciones = obs_raw
+            db_cliente.observaciones = normalize_opsatel_text(obs_raw)
             db_cliente.estado = estado_raw
             db_cliente.valor = valor_raw
             db_cliente.activo = activo_raw

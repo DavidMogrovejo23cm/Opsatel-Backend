@@ -51,6 +51,7 @@ from sqlalchemy import or_, func
 import unicodedata
 import re
 import time
+from text_utils import normalize_opsatel_text
 
 # Caché anti-duplicados para respuestas de comprobantes por WhatsApp (número -> timestamp)
 _ultimos_comprobantes_respondidos = {}
@@ -2996,7 +2997,7 @@ def evaluar_validacion_comprobante(
     telefono_registrado = cliente_por_telefono is not None
 
     # Buscar por nombre solo si el teléfono no arrojó coincidencia y el texto es suficientemente largo
-    ordenante_ocr = (ocr_data.get("ordenante") or "").strip()
+    ordenante_ocr = normalize_opsatel_text(ocr_data.get("ordenante") or "").strip()
     cliente_por_ordenante = None
     if not cliente_por_telefono and ordenante_ocr and len(ordenante_ocr) >= 6:
         try:
@@ -3010,9 +3011,10 @@ def evaluar_validacion_comprobante(
             pass
 
     cliente_por_pushname = None
-    if not cliente_por_telefono and not cliente_por_ordenante and nombre_remitente and len(nombre_remitente.strip().split()) >= 2:
+    remitente_norm = normalize_opsatel_text(nombre_remitente or "").strip()
+    if not cliente_por_telefono and not cliente_por_ordenante and remitente_norm and len(remitente_norm.split()) >= 2:
         try:
-            partes_p = [p for p in nombre_remitente.strip().split() if len(p) >= 4]
+            partes_p = [p for p in remitente_norm.split() if len(p) >= 4]
             if partes_p:
                 q_p = db.query(models.Cliente)
                 for p in partes_p[:2]:
@@ -3679,18 +3681,19 @@ def listar_comprobantes(
             query = query.filter(models.Comprobante.cliente_id == cliente_id)
 
         if q and q.strip():
-            filtro = f"%{q.strip()}%"
+            filtro = f"%{normalize_opsatel_text(q.strip())}%"
+            filtro_raw = f"%{q.strip()}%"
             query = query.filter(
                 or_(
-                    models.Comprobante.numero_telefono.ilike(filtro),
+                    models.Comprobante.numero_telefono.ilike(filtro_raw),
                     models.Comprobante.nombre_remitente.ilike(filtro),
-                    models.Comprobante.cedula_cliente.ilike(filtro),
+                    models.Comprobante.cedula_cliente.ilike(filtro_raw),
                     models.Comprobante.ordenante.ilike(filtro),
                     models.Comprobante.beneficiario.ilike(filtro),
                     models.Comprobante.banco_origen.ilike(filtro),
-                    models.Comprobante.nombre_archivo.ilike(filtro),
-                    models.Comprobante.mensaje_texto.ilike(filtro),
-                    models.Comprobante.numero_referencia.ilike(filtro)
+                    models.Comprobante.nombre_archivo.ilike(filtro_raw),
+                    models.Comprobante.mensaje_texto.ilike(filtro_raw),
+                    models.Comprobante.numero_referencia.ilike(filtro_raw)
                 )
             )
 
