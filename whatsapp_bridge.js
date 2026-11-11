@@ -1571,7 +1571,7 @@ client.on('message', async (msg) => {
                             let targetChatId = `${dNum}@c.us`;
                             try {
                                 const contactId = await client.getNumberId(dNum);
-                                if (contactId && contactId._serialized) {
+                                if (contactId && contactId._serialized && !contactId._serialized.endsWith('@lid')) {
                                     targetChatId = contactId._serialized;
                                 }
                             } catch (_) {}

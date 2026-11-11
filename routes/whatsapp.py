@@ -1776,6 +1776,8 @@ def webhook_mensaje_whatsapp(
                 )
             ).first()
 
+            es_dup_wh = bool(getattr(comp_existente, "es_duplicado", False)) if comp_existente else False
+
             if not comp_existente:
                 eval_webhook = evaluar_validacion_comprobante(
                     db=db,
@@ -1909,7 +1911,8 @@ def webhook_mensaje_whatsapp(
 
             resp_comprobante = (
                 "¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago.\n"
-                "Ha sido guardado en el sistema y remitido al área administrativa (+593 98 714 9097) para su verificación. ¡Que tengas un excelente día! 😊"
+                "Ha sido registrado exitosamente y se encuentra en estado de verificación y aprobación. "
+                "No es necesario enviarlo de nuevo. ¡Que tengas un excelente día! 😊"
             )
             registrar_mensaje_chat(
                 db, jid_destino, "asistente", resp_comprobante,
