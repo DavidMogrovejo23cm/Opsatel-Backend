@@ -50,6 +50,10 @@ def obtener_info_contacto_bridge(chat_id: str):
 from sqlalchemy import or_, func
 import unicodedata
 import re
+import time
+
+# Caché anti-duplicados para respuestas de comprobantes por WhatsApp (número -> timestamp)
+_ultimos_comprobantes_respondidos = {}
 
 def personalizar_mensaje_cliente(mensaje_base: str, cliente) -> str:
     """
@@ -1873,7 +1877,36 @@ def webhook_mensaje_whatsapp(
             )
             sam_bot_service.guardar_mensaje_historial(jid_destino, "user", msg_formateado_chat)
 
+            # Evitar responder dos veces: verificar si el cliente ya fue notificado o si ya se le envió confirmación recientemente
+            ahora_ts = time.time()
+            num_clean_track = re.sub(r'\D', '', str(num_db or jid_destino or ""))
+
+            # Limpiar entradas antiguas (> 180s)
+            for k, ts in list(_ultimos_comprobantes_respondidos.items()):
+                if ahora_ts - ts > 180:
+                    _ultimos_comprobantes_respondidos.pop(k, None)
+
+            ya_respondido = False
+            if num_clean_track and (ahora_ts - _ultimos_comprobantes_respondidos.get(num_clean_track, 0)) < 25:
+                ya_respondido = True
+            if jid_destino and (ahora_ts - _ultimos_comprobantes_respondidos.get(jid_destino, 0)) < 25:
+                ya_respondido = True
+
+            if ya_respondido:
+                print(f"[WhatsApp Webhook] ⏭️ Confirmación de comprobante ya enviada recientemente a {num_clean_track or jid_destino}. Omitiendo envío duplicado.")
+                return {"success": True, "response": "", "comprobante": True, "duplicado_omitido": True}
+
+            if getattr(payload, "ya_notificado_cliente", False) or getattr(payload, "es_duplicado", False) or es_dup_wh:
+                print(f"[WhatsApp Webhook] Cliente {num_clean_track or jid_destino} ya notificado o comprobante duplicado. Omitiendo mensaje de agradecimiento normal.")
+                return {"success": True, "response": "", "comprobante": True, "ya_notificado": True}
+
             # D. Respuesta cordial de confirmación del comprobante (SIN saludo genérico de bienvenida)
+            # Marcar de inmediato en el caché para asegurar que no se duplique
+            if num_clean_track:
+                _ultimos_comprobantes_respondidos[num_clean_track] = ahora_ts
+            if jid_destino:
+                _ultimos_comprobantes_respondidos[jid_destino] = ahora_ts
+
             resp_comprobante = (
                 "¡Muchas gracias! 🧾 Hemos recibido tu comprobante de pago.\n"
                 "Ha sido guardado en el sistema y remitido al área administrativa (+593 98 714 9097) para su verificación. ¡Que tengas un excelente día! 😊"
@@ -2743,9 +2776,21 @@ def calcular_deuda_pendiente_cliente(cliente: models.Cliente, db: Session = None
 def buscar_cliente_por_telefono_comprobante(db: Session, numero_raw: str, nombre_archivo: str = "") -> Tuple[Optional[models.Cliente], str]:
     """
     Busca exhaustivamente si el número de teléfono del remitente (o el incrustado en el nombre de archivo
-    comp_<ts>_<telefono>_wa.jpg) pertenece a un cliente registrado en la base de datos.
+    comp_<ts>_<telefono>_wa.jpg / comp_ID_<id>_...) pertenece a un cliente registrado en la base de datos.
     Retorna (cliente, telefono_limpio).
     """
+    # 0. Si el nombre de archivo contiene explícitamente el ID del cliente (ej. comp_ID_45_...)
+    if nombre_archivo:
+        m_id = re.search(r"comp_ID_(\d+)_", str(nombre_archivo))
+        if m_id:
+            try:
+                c_id_match = db.query(models.Cliente).filter(models.Cliente.id == int(m_id.group(1))).first()
+                if c_id_match:
+                    c_clean = "".join([c for c in str(c_id_match.celular or "") if c.isdigit()])
+                    return c_id_match, c_clean
+            except Exception:
+                pass
+
     num_str = str(numero_raw or "").strip()
     es_lid = num_str.lower().endswith("@lid")
     num_clean = "" if es_lid else "".join([c for c in num_str if c.isdigit()])
@@ -2757,6 +2802,10 @@ def buscar_cliente_por_telefono_comprobante(db: Session, numero_raw: str, nombre
             cand_arch = m_arch.group(1)
             if cand_arch.startswith("5939") or cand_arch.startswith("09") or (len(cand_arch) == 9 and cand_arch.startswith("9")):
                 num_clean = cand_arch
+        else:
+            m_sin = re.search(r"comp_ID_sin_registrar_.*?_(\d{8,13})_", str(nombre_archivo))
+            if m_sin:
+                num_clean = m_sin.group(1)
 
     if not num_clean or len(num_clean) < 8:
         return None, num_clean
@@ -3238,6 +3287,30 @@ def revalidar_comprobantes_existentes_pendientes(db: Session, force: bool = Fals
         print(f"[Comprobantes] Aviso en revalidación automática de pendientes: {e_rev}")
 
 
+@router.get("/identificar-cliente-rapido")
+def identificar_cliente_rapido(
+    numero: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Consulta rápida de cliente por teléfono para que el bridge de WhatsApp
+    nombre el archivo de imagen con ID, Nombre y Fecha al momento de descargarlo en uploads.
+    """
+    try:
+        cli, num_clean = buscar_cliente_por_telefono_comprobante(db, numero)
+        if cli:
+            return {
+                "encontrado": True,
+                "cliente_id": cli.id,
+                "nombre": cli.nombre,
+                "cedula": getattr(cli, "cedula", None),
+                "numero_limpio": num_clean
+            }
+    except Exception as e:
+        print(f"[Identificar Cliente] Error en consulta rápida: {e}")
+    return {"encontrado": False, "cliente_id": None, "nombre": None, "numero_limpio": numero}
+
+
 @router.post("/registrar-comprobante")
 def registrar_comprobante_endpoint(
     payload: schemas.ComprobanteCreate,
@@ -3323,14 +3396,52 @@ def registrar_comprobante_endpoint(
 
         ahora_ec = datetime.now(ECUADOR_TZ).replace(tzinfo=None)
 
+        # Si el comprobante se guardó inicialmente como sin_registrar pero OCR/BD identificó al cliente:
+        nombre_arch_final = payload.nombre_archivo or ""
+        ruta_arch_final = payload.ruta_archivo or ""
+        url_arch_final = payload.url_archivo or ""
+        if cliente and cliente.id and "ID_sin_registrar" in nombre_arch_final:
+            try:
+                nom_limpio = re.sub(r'[^a-zA-Z0-9_\-]', '_', getattr(cliente, 'nombre', '') or 'Cliente')
+                nom_limpio = re.sub(r'_+', '_', nom_limpio).strip('_')[:40]
+                nuevo_nombre_arch = re.sub(
+                    r"comp_ID_sin_registrar_[^_]+_(?:\d{8,13}_)?",
+                    f"comp_ID_{cliente.id}_{nom_limpio}_",
+                    nombre_arch_final
+                )
+                backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+                candidatos_dir = [
+                    os.path.join(backend_dir, "uploadscr"),
+                    os.path.join(backend_dir, "uploads", "uploadscr"),
+                    os.path.join(backend_dir, "uploads", "comprobantes"),
+                    os.path.join(backend_dir, "..", "Opsatel-Frontend", "uploadscr"),
+                    os.path.join(backend_dir, "..", "Opsatel-Frontend", "public", "uploadscr"),
+                ]
+                renombrado = False
+                for c_dir in candidatos_dir:
+                    old_f = os.path.join(c_dir, nombre_arch_final)
+                    new_f = os.path.join(c_dir, nuevo_nombre_arch)
+                    if os.path.exists(old_f):
+                        try:
+                            os.rename(old_f, new_f)
+                            renombrado = True
+                        except Exception:
+                            pass
+                if renombrado:
+                    nombre_arch_final = nuevo_nombre_arch
+                    url_arch_final = f"/uploadscr/{nuevo_nombre_arch}"
+                    ruta_arch_final = f"uploadscr/{nuevo_nombre_arch}"
+            except Exception as e_ren:
+                print(f"[Comprobante] Aviso renombrando archivo con cliente_id: {e_ren}")
+
         # 3. Crear registro en la tabla comprobantes
         nuevo_comp = models.Comprobante(
             cliente_id=cliente.id if cliente else None,
             numero_telefono=num_clean or payload.numero_telefono,
             nombre_remitente=payload.nombre_remitente or (cliente.nombre if cliente else (ordenante_final or "Cliente WhatsApp")),
-            nombre_archivo=payload.nombre_archivo,
-            ruta_archivo=payload.ruta_archivo,
-            url_archivo=payload.url_archivo,
+            nombre_archivo=nombre_arch_final,
+            ruta_archivo=ruta_arch_final,
+            url_archivo=url_arch_final,
             mimetype=payload.mimetype or "image/jpeg",
             tamano_bytes=payload.tamano_bytes,
             mensaje_texto=payload.mensaje_texto or "",

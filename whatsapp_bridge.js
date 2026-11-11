@@ -335,6 +335,7 @@ function getUploadscrDirectories() {
     // 4. Directorio en el Backend local (para que FastAPI lo sirva mediante app.mount)
     dirs.push(path.resolve(__dirname, 'uploadscr'));
     dirs.push(path.resolve(__dirname, 'uploads', 'uploadscr'));
+    dirs.push(path.resolve(__dirname, 'uploads', 'comprobantes'));
 
 
     // Asegurar que todas las carpetas candidatas existan en el servidor
@@ -372,18 +373,128 @@ function getExtensionFromMime(mime, originalFilename = '') {
     return map[mime] || '.jpg';
 }
 
+// --- Caché anti-duplicados de eventos de WhatsApp Web ---
+const processedMsgIds = new Map();
+function isDuplicateMessage(msgId) {
+    if (!msgId) return false;
+    const now = Date.now();
+    for (const [id, ts] of processedMsgIds.entries()) {
+        if (now - ts > 180000) processedMsgIds.delete(id);
+    }
+    if (processedMsgIds.has(msgId)) return true;
+    processedMsgIds.set(msgId, now);
+    return false;
+}
+
+const processedMediaHashes = new Map();
+function isDuplicateMediaHash(hash, senderPhone) {
+    if (!hash) return false;
+    const key = `${(senderPhone || '').replace(/\D/g, '')}_${hash}`;
+    const now = Date.now();
+    for (const [k, ts] of processedMediaHashes.entries()) {
+        if (now - ts > 45000) processedMediaHashes.delete(k);
+    }
+    if (processedMediaHashes.has(key)) return true;
+    processedMediaHashes.set(key, now);
+    return false;
+}
+
+function sanitizarParaNombreArchivo(texto) {
+    if (!texto) return '';
+    return String(texto)
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Eliminar acentos
+        .replace(/[^a-zA-Z0-9_\-]/g, '_')                // Caracteres seguros
+        .replace(/_+/g, '_')                             // Unificar guiones
+        .replace(/^_+|_+$/g, '')                         // Quitar bordes
+        .substring(0, 45);                               // Longitud razonable
+}
+
+function generarFechaArchivoEcuador() {
+    try {
+        const fecha = new Date();
+        const partes = new Intl.DateTimeFormat('es-EC', {
+            timeZone: 'America/Guayaquil',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        }).formatToParts(fecha);
+
+        const m = {};
+        for (const p of partes) {
+            m[p.type] = p.value;
+        }
+        return `${m.year}-${m.month}-${m.day}_${m.hour}-${m.minute}-${m.second}`;
+    } catch (_) {
+        const d = new Date();
+        return d.toISOString().replace(/T/, '_').replace(/:/g, '-').split('.')[0];
+    }
+}
+
+function obtenerDatosClienteAPI(phone) {
+    return new Promise((resolve) => {
+        try {
+            const cleanPhone = (phone || '').replace(/\D/g, '');
+            if (!cleanPhone || cleanPhone.length < 8) {
+                return resolve({ encontrado: false, cliente_id: null, nombre: null });
+            }
+            const http = require('http');
+            const options = {
+                hostname: '127.0.0.1',
+                port: fastapiPort,
+                path: `/whatsapp/identificar-cliente-rapido?numero=${encodeURIComponent(cleanPhone)}`,
+                method: 'GET'
+            };
+            const req = http.request(options, (res) => {
+                let body = '';
+                res.on('data', chunk => body += chunk);
+                res.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(body);
+                        resolve(parsed);
+                    } catch (_) {
+                        resolve({ encontrado: false, cliente_id: null, nombre: null });
+                    }
+                });
+            });
+            req.setTimeout(2500, () => {
+                req.destroy();
+                resolve({ encontrado: false, cliente_id: null, nombre: null });
+            });
+            req.on('error', () => {
+                resolve({ encontrado: false, cliente_id: null, nombre: null });
+            });
+            req.end();
+        } catch (_) {
+            resolve({ encontrado: false, cliente_id: null, nombre: null });
+        }
+    });
+}
+
 /**
- * Guarda los datos binarios de la imagen en 'uploadscr' dentro de la carpeta
- * donde se guarda la página y carpetas asociadas.
+ * Guarda los datos binarios de la imagen en 'uploads' y 'uploadscr' dentro de la carpeta
+ * donde se guarda la página y carpetas asociadas con el ID, Nombre y Fecha requeridos.
  */
-function guardarImagenUploadscr(base64Data, mimeType, senderPhone, originalFilename = '') {
+function guardarImagenUploadscr(base64Data, mimeType, senderPhone, originalFilename = '', senderName = '', clientId = null) {
     try {
         const dirs = getUploadscrDirectories();
         const ext = getExtensionFromMime(mimeType, originalFilename);
         const cleanPhone = (senderPhone || '').replace(/\D/g, '') || 'anonimo';
-        const timestamp = Date.now();
-        const randSuffix = Math.floor(1000 + Math.random() * 9000);
-        const fileName = `comp_${timestamp}_${cleanPhone}_${randSuffix}${ext}`;
+        const fechaStr = generarFechaArchivoEcuador();
+
+        // 1. Identificador: ID de cliente si está registrado en BD, o número de teléfono
+        const idPart = (clientId !== null && clientId !== undefined && String(clientId) !== 'sin_id') 
+            ? `ID_${clientId}` 
+            : `ID_sin_registrar_${cleanPhone}`;
+
+        // 2. Nombre del cliente o remitente limpio
+        const nombrePart = sanitizarParaNombreArchivo(senderName) || 'Cliente';
+
+        // 3. Formato requerido: con ID, Nombre y Fecha que se generó o descargó la imagen
+        const fileName = `comp_${idPart}_${nombrePart}_${fechaStr}${ext}`;
         const buffer = Buffer.from(base64Data, 'base64');
 
         let savedCount = 0;
@@ -403,7 +514,7 @@ function guardarImagenUploadscr(base64Data, mimeType, senderPhone, originalFilen
             }
         }
 
-        console.log(`[WhatsApp Bridge] 💾 Imagen guardada con éxito en ${savedCount} ubicación(es) de 'uploadscr' (${fileName}, ${buffer.length} bytes)`);
+        console.log(`[WhatsApp Bridge] 💾 Imagen guardada con éxito en ${savedCount} ubicación(es) de 'uploads' (${fileName}, ${buffer.length} bytes)`);
         const sha256Hash = crypto.createHash('sha256').update(buffer).digest('hex');
 
         return {
@@ -1178,6 +1289,13 @@ client.on('message', async (msg) => {
     if (client.info && client.info.wid && msg.from === client.info.wid._serialized) return;
     if (msg.from.endsWith('@g.us')) return; // Ignore group chats
 
+    // Evitar procesamiento duplicado del mismo mensaje (evento disparado dos veces por WhatsApp Web en multimedia/LID)
+    const msgId = (msg.id && (msg.id._serialized || msg.id.id)) || msg._data?.id?._serialized;
+    if (msgId && isDuplicateMessage(msgId)) {
+        console.log(`[WhatsApp Bridge] ⏭️ Mensaje duplicado omitido por ID (${msgId})`);
+        return;
+    }
+
     let remitente = msg.from;
     let pushname = msg._data?.notifyName || '';
     let realPhone = '';
@@ -1256,15 +1374,26 @@ client.on('message', async (msg) => {
             const media = await descargarFotoOriginalWhatsApp(msg, client, realPhone, remitente);
 
             if (media && media.data && media.data.length > 2500) {
-                // 1. Guardar automáticamente en la carpeta uploadscr en el servidor donde se guarda la página
-                const fileInfo = guardarImagenUploadscr(media.data, media.mimetype, realPhone || remitente, media.filename);
+                // Consultar ID y nombre del cliente registrado en la BD para nombrar el archivo
+                const infoCli = await obtenerDatosClienteAPI(realPhone || remitente);
+                const nombreParaFoto = (infoCli && infoCli.nombre) ? infoCli.nombre : (pushname || 'Cliente');
+                const idParaFoto = (infoCli && infoCli.cliente_id) ? infoCli.cliente_id : null;
+
+                // 1. Guardar automáticamente en las carpetas de uploads con ID, Nombre y Fecha
+                const fileInfo = guardarImagenUploadscr(media.data, media.mimetype, realPhone || remitente, media.filename, nombreParaFoto, idParaFoto);
+
+                // Anti-duplicados por ráfaga: si se envió el mismo hash en los últimos 45s, ignorar
+                if (fileInfo && fileInfo.sha256 && isDuplicateMediaHash(fileInfo.sha256, realPhone || remitente)) {
+                    console.log(`[WhatsApp Bridge] ⏭️ Comprobante con idéntico contenido (${fileInfo.sha256.substring(0, 10)}) enviado en ráfaga por ${realPhone || remitente}. Omitiendo reprocesamiento.`);
+                    return;
+                }
 
                 // 2. Registrar en la tabla comprobantes de la base de datos con análisis OCR Tesseract automático
                 let ocrData = null;
                 if (fileInfo && fileInfo.success) {
                     const regResult = await registrarComprobanteAPI({
                         numero_telefono: realPhone || remitente,
-                        nombre_remitente: pushname,
+                        nombre_remitente: nombreParaFoto,
                         nombre_archivo: fileInfo.fileName,
                         ruta_archivo: fileInfo.relativePath,
                         url_archivo: fileInfo.publicUrl,
@@ -1286,6 +1415,20 @@ client.on('message', async (msg) => {
                             } catch (eSendDup) {
                                 console.warn('[WhatsApp Bridge] No se pudo enviar aviso de comprobante duplicado:', eSendDup.message);
                             }
+
+                            // Notificar a la administración pero OMITIR el envío del mensaje normal de confirmación al cliente
+                            sendWebhook(numeroParaWebhook, `⚠️ [Comprobante ya registrado / Duplicado] ${fileInfo.publicUrl || ''} - ${regResult.duplicado_detalle || ''}`, pushname, remitente, {
+                                url_archivo: fileInfo.publicUrl,
+                                nombre_archivo: fileInfo.fileName,
+                                ruta_archivo: fileInfo.relativePath,
+                                mimetype: media.mimetype || 'image/jpeg',
+                                tamano_bytes: fileInfo.fileSize,
+                                es_duplicado: true,
+                                ya_notificado_cliente: true
+                            });
+
+                            // Salir de inmediato para no enviar respuesta doble ni reenviar a OCR administrativo
+                            return;
                         }
                     } else if (regResult && regResult.es_documento_valido === false) {
                         // La imagen recibida NO es un comprobante bancario o documento financiero válido
