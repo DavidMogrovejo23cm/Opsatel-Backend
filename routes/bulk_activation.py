@@ -114,7 +114,7 @@ def bulk_activate(
                 nombre=temp_name,
                 estado="Pendiente",
                 puerto=str(puerto_num),
-                nodo=default_olt.nodo_asociado if default_olt else "BAÑOS",
+                nodo=default_olt.nodo_asociado if default_olt else "BANOS",
                 plan="GAMER PRO"
             )
             db.add(cliente)

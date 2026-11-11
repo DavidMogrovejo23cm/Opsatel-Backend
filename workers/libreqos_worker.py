@@ -96,7 +96,7 @@ running = True
 
 def handle_sigterm(signum, frame):
     global running
-    logger.info("Recibida señal SIGTERM/SIGINT. Deteniendo de forma ordenada...")
+    logger.info("Recibida senal SIGTERM/SIGINT. Deteniendo de forma ordenada...")
     running = False
 
 class LibreQoSWorker:
@@ -140,7 +140,7 @@ class LibreQoSWorker:
                 signal.signal(signal.SIGTERM, handle_sigterm)
                 signal.signal(signal.SIGINT, handle_sigterm)
             except ValueError:
-                logger.warning("No se pudieron registrar los manejadores de señales (no es el intérprete principal).")
+                logger.warning("No se pudieron registrar los manejadores de senales (no es el intérprete principal).")
         
         while running:
             self.cycle_count += 1

@@ -125,7 +125,7 @@ class OLTInterface:
             host: IP de la OLT
             port: Puerto Telnet (default 23)
             username: Usuario de acceso
-            password: Contraseña
+            password: Contrasena
             timeout: Timeout en segundos
             max_retries: Máximo de reintentos
             retry_backoff_base: Base para exponential backoff
@@ -2137,7 +2137,7 @@ def test_olt_interface():
     print("=" * 60)
     
     # Configuración de test (REEMPLAZAR CON IP REAL DE OLT)
-    OLT_HOST = "OLT_HOST_BAÑOS"  # ← CAMBIAR POR IP REAL
+    OLT_HOST = "OLT_HOST_BANOS"  # ← CAMBIAR POR IP REAL
     OLT_USER = "admin"
     OLT_PASS = "admin123"
     

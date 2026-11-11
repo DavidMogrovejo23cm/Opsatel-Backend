@@ -322,7 +322,7 @@ def enviar_whatsapp_programado():
                     difusion_prog.total_fallidos = fallidos
                     if cancelado_programado or should_cancel_prog():
                         difusion_prog.estado = "cancelado"
-                        print(f"[WhatsApp Scheduler] Campaña programada #{prog_dif_id} marcada como CANCELADA.")
+                        print(f"[WhatsApp Scheduler] Campana programada #{prog_dif_id} marcada como CANCELADA.")
                     else:
                         difusion_prog.estado = "completado" if fallidos < len(clientes_unicos) else "fallido"
                     db.commit()
@@ -454,7 +454,7 @@ def suspension_automatica_por_mora(force_run: bool = False, nodo_filtro: Optiona
     """
     Ejecuta el proceso de suspensión automática por corte de fecha (ej. día 20 de cada mes).
     Agrega las IPs de clientes morosos a la lista de MikroTik por nodo:
-      - Baños: CLIENTES_SUSPENDIDOS_POR_PAGO
+      - Banos: CLIENTES_SUSPENDIDOS_POR_PAGO
       - Sayausí: CLIENTES_SUSPENDIDOS_POR_PAGOS
     Y cambia el estado del cliente a 'Moroso'.
     Permite filtrar por nodo específico o 'TODOS'.

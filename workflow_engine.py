@@ -353,7 +353,7 @@ class WorkflowEngine:
                 if not target_ip:
                     # Validar si existe esta IP en el pool de nuestro inventario BD
                     pool_ip_rec = self.db.query(inventory_models.InventoryIpPool).filter(
-                        inventory_models.InventoryIpPool.nodo == (cliente.nodo or "BAÑOS"),
+                        inventory_models.InventoryIpPool.nodo == (cliente.nodo or "BANOS"),
                         inventory_models.InventoryIpPool.estado == "LIBRE"
                     ).order_by(inventory_models.InventoryIpPool.id.asc()).first()
 

@@ -614,7 +614,7 @@ def clasificar_intencion(contexto: str, mensaje_actual: str = "") -> str:
     # 6. Soporte técnico / fallas / lentitud / mal internet
     if any(w in msg_limpio for w in [
         "foco rojo", "luz roja", "sin internet", "sin servicio", "no tengo internet",
-        "no hay internet", "se fue el internet", "sin señal", "sin senal", "luz los",
+        "no hay internet", "se fue el internet", "sin senal", "sin senal", "luz los",
         "los rojo", "parpadea", "modem", "módem", "router", "falla", "fallando", "desconectado", "cable roto",
         "lento", "lentitud", "internet lento", "muy lento", "mal internet", "pésimo internet", "pesimo internet",
         "se corta", "intermitente", "no carga", "baja velocidad", "cae el internet", "problema con el internet",
@@ -951,7 +951,7 @@ def buscar_cliente_por_cedula(cedula_str: str, db: Session):
     except Exception as e:
         print(f"[SAM Chatbot] Aviso buscando cliente por cédula en SQL: {e}")
 
-    # 2. Búsqueda en memoria escaneando clientes de la BD si SQL no coincidió por formatos extraños
+    # 2. Búsqueda en memoria escaneando clientes de la BD si SQL no coincidió por formatos extranios
     try:
         clientes = db.query(models.Cliente).all()
         for c in clientes:
@@ -1377,8 +1377,8 @@ Tu misión es recomendar películas o series de forma personalizada, entusiasta 
 - Si NO menciona género, elige uno al azar que sea popular.
 
 ### 📅 Contexto temporal (si menciona alguno):
-- "actual", "reciente", "nuevos", "últimos años" → películas de 2021 en adelante.
-- "2024", "2025", "2026" → estrenos de ese año específico.
+- "actual", "reciente", "nuevos", "últimos anios" → películas de 2021 en adelante.
+- "2024", "2025", "2026" → estrenos de ese anio específico.
 - "mejor valoradas", "clásica", "top" → producciones de alta crítica de cualquier época.
 - Si NO menciona tiempo, mezcla recientes con clásicos bien valorados.
 
@@ -1390,7 +1390,7 @@ Tu misión es recomendar películas o series de forma personalizada, entusiasta 
 ## PASO 2 — Responde con 2 a 3 recomendaciones concretas y REALES.
 
 Formato para cada recomendación:
-🎬 *[TÍTULO]* ([AÑO]) — [Género]
+🎬 *[TÍTULO]* ([ANIO]) — [Género]
 📖 [Sinopsis atractiva de 2-3 frases que enganche al usuario]
 ⭐ [Tu valoración entusiasta en 1 frase, ej: "Una obra maestra que no puedes perderte" / "Perfecta para una noche de suspenso"]
 
@@ -1398,7 +1398,7 @@ Formato para cada recomendación:
 
 ## REGLAS IMPORTANTES:
 - Recomienda SOLO películas y series reales que existen en el mundo real (son reconocidas, tienen buenas críticas).
-- Indica siempre título real, año real y género correcto.
+- Indica siempre título real, anio real y género correcto.
 - Mantén el tono amigable, divertido y natural, como si hablaras por WhatsApp.
 - Respuesta máxima de 5-6 líneas por recomendación. Sé conciso.
 - No uses markdown complejo, solo *cursiva* y emojis, que WhatsApp renderiza.
@@ -1426,7 +1426,7 @@ def procesar_recomendacion_peliculas(numero: str, mensaje: str, contexto: str) -
             "🎬 Te recomiendo estas joyas del cine para hoy:\n\n"
             "🎬 *Oppenheimer* (2023) — Drama/Historia\n"
             "📖 La historia del padre de la bomba atómica. Impresionante y profunda.\n"
-            "⭐ Una de las mejores del año, ¡imprescindible!\n\n"
+            "⭐ Una de las mejores del anio, ¡imprescindible!\n\n"
             "🎬 *Top Gun: Maverick* (2022) — Acción/Aventura\n"
             "📖 El legendario Maverick vuelve a los cielos en una misión imposible.\n"
             "⭐ Pura adrenalina de principio a fin. ¡La vas a amar! 🔥\n\n"
@@ -1441,8 +1441,8 @@ NUMERO_TECNICO_GUARDIA = "593988804142"
 def analizar_potencia_optica(potencia_str: str) -> dict:
     """
     Analiza la potencia óptica (dBm) según estándares de Opsatel:
-    - Rango Óptimo: -16.0 a -25.0 dBm (Excelente señal de fibra)
-    - Rango Límite: -25.01 a -27.0 dBm (Señal levemente atenuada)
+    - Rango Óptimo: -16.0 a -25.0 dBm (Excelente senal de fibra)
+    - Rango Límite: -25.01 a -27.0 dBm (Senal levemente atenuada)
     - Rango Crítico: peor a -27.0 dBm (< -27.0) o nula/desconectada
     """
     if not potencia_str:
@@ -1469,7 +1469,7 @@ def analizar_potencia_optica(potencia_str: str) -> dict:
         return {
             "valor": val,
             "estado": "optima",
-            "descripcion": f"{val:.2f} dBm (Señal óptica excelente y óptima)",
+            "descripcion": f"{val:.2f} dBm (Senal óptica excelente y óptima)",
             "es_optima": True,
             "es_critica": False
         }
@@ -1477,7 +1477,7 @@ def analizar_potencia_optica(potencia_str: str) -> dict:
         return {
             "valor": val,
             "estado": "al_limite",
-            "descripcion": f"{val:.2f} dBm (Señal en el límite permisible)",
+            "descripcion": f"{val:.2f} dBm (Senal en el límite permisible)",
             "es_optima": False,
             "es_critica": False
         }
@@ -1658,22 +1658,22 @@ DIRECTRICES DE ATENCIÓN TÉCNICA (SÉ PRECISO, CÁLIDO Y HUMANO):
 2. INDAGACIÓN PASO A PASO (UNA SOLA PREGUNTA A LA VEZ):
    - Al inicio cuando el cliente reporta lentitud o mal servicio:
      Dile con calma: "Deme un momento y reviso su servicio..."
-     Hazle UNA SOLA pregunta amable para indagar el problema específico (ej: preguntarle desde hace cuánto tiempo nota el inconveniente y si se le corta la señal o si son videos/páginas específicas que no cargan).
+     Hazle UNA SOLA pregunta amable para indagar el problema específico (ej: preguntarle desde hace cuánto tiempo nota el inconveniente y si se le corta la senal o si son videos/páginas específicas que no cargan).
      NUNCA hagas múltiples preguntas juntas ni interrogatorios largos.
 
-3. CASO NO GRAVE (POTENCIA Y SEÑAL ÓPTIMAS):
-   - Cuando el diagnóstico interno muestra que la señal y el router están óptimos:
+3. CASO NO GRAVE (POTENCIA Y SENAL ÓPTIMAS):
+   - Cuando el diagnóstico interno muestra que la senal y el router están óptimos:
      Concluye con calidez y tranquilidad:
-     "Luego de revisar su servicio en nuestra central, concluimos que la señal de fibra óptica llega de forma estable y óptima a su hogar."
+     "Luego de revisar su servicio en nuestra central, concluimos que la senal de fibra óptica llega de forma estable y óptima a su hogar."
    - Indícale con amabilidad que realice una prueba rápida en casa:
      1) Desconectar el router de la corriente eléctrica durante 30 segundos y volverlo a conectar.
      2) Reiniciar también el Wi-Fi o reiniciar los dispositivos celulares y computadoras conectados.
    - Pídele amablemente que lo pruebe y te confirme si nota la mejoría para seguir al tanto.
    - ¡NO avises al departamento técnico en este caso! Es solo una optimización en el domicilio.
 
-4. CASO GRAVE (POTENCIA CRÍTICA O EQUIPO SIN RESPUESTA / SEÑAL CORTADA):
+4. CASO GRAVE (POTENCIA CRÍTICA O EQUIPO SIN RESPUESTA / SENAL CORTADA):
    - Calma al cliente con suma empatía:
-     "Luego de revisar su servicio concluimos que se detectó una interrupción o anomalía en la señal hacia su domicilio. Ya informé directamente a nuestro departamento técnico con su reporte para que lo atiendan con prioridad."
+     "Luego de revisar su servicio concluimos que se detectó una interrupción o anomalía en la senal hacia su domicilio. Ya informé directamente a nuestro departamento técnico con su reporte para que lo atiendan con prioridad."
    - Bríndale tranquilidad de que su caso ya está siendo gestionado.
 
 5. CASO SUSPENSIÓN POR PAGO PENDIENTE:
@@ -1716,7 +1716,7 @@ DATOS CONFIDENCIALES DEL CLIENTE (SOLO PARA TU ANÁLISIS INTERNO):
 - Primer nombre: {primer_nombre}
 - Sector/Nodo: {cliente.nodo if cliente else 'N/A'}
 - ¿Presenta corte por pago pendiente?: {"SÍ (" + diag["motivo_corte"] + ")" if diag["cortado_por_pago"] else "NO"}
-- Estado de fibra óptica: {"ÓPTIMA (Potencia excelente entre -16 y -25 dBm)" if diag["potencia"]["es_optima"] else ("CRÍTICA (Potencia peor a -27 dBm o sin señal)" if diag["potencia"]["es_critica"] else "Aceptable")}
+- Estado de fibra óptica: {"ÓPTIMA (Potencia excelente entre -16 y -25 dBm)" if diag["potencia"]["es_optima"] else ("CRÍTICA (Potencia peor a -27 dBm o sin senal)" if diag["potencia"]["es_critica"] else "Aceptable")}
 - Estado del equipo en red: {"EN LÍNEA Y RESPONDE" if diag["ping"]["online"] else "NO RESPONDE PING (Apagado o desconectado)"}
 - Nivel de gravedad: {"GRAVE (Ya se alertó a técnicos de guardia)" if (diag["es_grave"] or falla_persiste_tras_prueba) else "NO GRAVE / NORMAL (Manejar con calma, indagación y reinicio de router y celulares)"}
 - Falla persiste tras prueba: {"Sí, cliente indica que sigue igual" if falla_persiste_tras_prueba else "En proceso de indagación/prueba inicial"}
@@ -1738,10 +1738,10 @@ Mensaje actual del cliente: "{mensaje}"
         if diag["cortado_por_pago"]:
             return f"¡Hola *{primer_nombre}*! Al revisar su servicio observo que presenta una suspensión temporal por un valor pendiente. ¿Desea que le comparta nuestras cuentas bancarias para ayudarle con su reactivación? 😊"
         elif diag["es_grave"]:
-            return f"¡Hola *{primer_nombre}*! Luego de revisar su servicio concluimos que se detectó una interrupción en la señal hacia su domicilio. Ya informé directamente a nuestro departamento técnico para su revisión prioritaria."
+            return f"¡Hola *{primer_nombre}*! Luego de revisar su servicio concluimos que se detectó una interrupción en la senal hacia su domicilio. Ya informé directamente a nuestro departamento técnico para su revisión prioritaria."
         else:
             return (
-                f"¡Hola *{primer_nombre}*! Luego de revisar su servicio en nuestra central, concluimos que la señal de fibra óptica llega de forma estable a su hogar 😊\n"
+                f"¡Hola *{primer_nombre}*! Luego de revisar su servicio en nuestra central, concluimos que la senal de fibra óptica llega de forma estable a su hogar 😊\n"
                 f"Para mejorar la velocidad, por favor desconecte el router de la corriente 30 segundos, vuelva a conectarlo y reinicie también el Wi-Fi de sus celulares. Pruébelo y me comenta si nota la mejoría."
             )
 
@@ -2026,7 +2026,7 @@ Campos:
 * celular: Teléfono celular del cliente.
 * direccion: Dirección domiciliaria y referencias.
 * plan: Plan solicitado. Puede decirse por nombre (ej: LAG CERO), velocidad (ej: 100 megas, 150 Mbps) o precio (ej: $17.50, 20 dólares, 20).
-* nodo: Sector, barrio o nodo de red (ej: Baños, Sayausí, Centro, Misicata).
+* nodo: Sector, barrio o nodo de red (ej: Banos, Sayausí, Centro, Misicata).
 * parroquia: Parroquia (opcional).
 * cedula: Cédula o RUC (10 o 13 dígitos, opcional).
 * comentarios: Observaciones adicionales o promociones.
@@ -2082,7 +2082,7 @@ Responde ÚNICAMENTE con el JSON en este formato:
                 f"📦 *Plan Asignado*: {resultado.get('detalles_plan')}\n"
                 f"📅 *Fecha*: {resultado.get('fecha')} ({resultado.get('hora')})\n"
                 f"🛠️ *Estado*: Pendiente de asignación técnica\n\n"
-                f"_La orden ya está disponible en la pestaña 'Hoja de Ruta' del panel de Opsatel._"
+                f"_La orden ya está disponible en la pestana 'Hoja de Ruta' del panel de Opsatel._"
             )
         else:
             # Mantiene el skill activo para que el admin pueda enviar el dato faltante
@@ -2159,7 +2159,7 @@ def procesar_comando_administrador(numero: str, mensaje: str, contexto: str, db:
         f"Como tu número está registrado en el *apartado de Administradores*, tienes acceso prioritario a tus funciones exclusivas de gestión:\n"
         f"• 💰 *'Resumen de caja'* (recaudación y pagos del día)\n"
         f"• ⚠️ *'Reporte de morosos'* (clientes suspendidos o en corte)\n"
-        f"• 🛠️ *Datos de instalación* (ej: *INSTALACION BAÑOS ...* para registrarla y pasarla directo a la Hoja de Ruta)\n\n"
+        f"• 🛠️ *Datos de instalación* (ej: *INSTALACION BANOS ...* para registrarla y pasarla directo a la Hoja de Ruta)\n\n"
         f"💡 _Nota: Como también eres cliente de Opsatel, si deseas consultar tu propio saldo personal solo pregúntame '¿cuánto debo?' o solicita soporte técnico cuando lo requieras._ 😊\n\n"
         f"¿En qué te colaboro hoy?"
     )

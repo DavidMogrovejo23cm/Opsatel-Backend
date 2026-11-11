@@ -68,7 +68,7 @@ Opsatel-Backend/
 │   ├── asistencia.py           # Marcaciones de entrada/salida del personal
 │   ├── extras.py               # Gestión comercial y financiera de clientes y cobros extras
 │   ├── backup.py               # Creación, descarga y restauración de respaldos SQL
-│   ├── whatsapp.py             # Control de campañas masivas, estado del bridge y código QR
+│   ├── whatsapp.py             # Control de campanas masivas, estado del bridge y código QR
 │   ├── bulk_activation.py      # Flujo de activación masiva de dispositivos
 │   ├── olt_tasks.py            # Ejecución asíncrona de comandos GPON en la OLT
 │   ├── discovery.py            # Descubrimiento de ONTs en línea no registradas
@@ -81,7 +81,7 @@ Opsatel-Backend/
 ├── rutas_configuraciones.py     # CRUD de Nodos, Planes, Bancos, Puertos y Finanzas Base
 ├── sync_db.py                  # Script para sincronizar nuevas columnas de SQLAlchemy con MySQL
 ├── create_users.py             # Inicializador de usuarios administrativos por defecto
-├── seed_configuraciones.py     # Carga de catálogo inicial (Nodos Baños/Sayausí, Planes, Puertos)
+├── seed_configuraciones.py     # Carga de catálogo inicial (Nodos Banos/Sayausí, Planes, Puertos)
 ├── wait-for-db.py              # Verificador de disponibilidad de la base de datos para Docker
 ├── requirements.txt            # Dependencias de paquetes Python
 ├── package.json                # Dependencias Node.js para el bridge de WhatsApp
@@ -125,7 +125,7 @@ Crear o editar el archivo `.env` en la raíz de `Opsatel-Backend`:
 ```env
 # Conexión a Base de Datos MySQL
 DB_USER=root
-DB_PASSWORD=tu_contraseña
+DB_PASSWORD=tu_contrasena
 DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=opsatel
@@ -306,7 +306,7 @@ Al momento de aprovisionar un cliente (`GET /clientes/siguiente-valor-tecnico`):
 *   `GET /whatsapp/qr`: Retorna el código QR en Base64 para emparejar la sesión con un teléfono móvil.
 *   `POST /whatsapp/enviar-mensaje`: Envía un mensaje individual directo a un número celular.
 *   `POST /whatsapp/campana-masiva`: Encola un comunicado o recordatorio de cobro a un grupo de clientes.
-*   `POST /whatsapp/cancelar-todos-envios`: Detiene de emergencia cualquier campaña masiva en curso.
+*   `POST /whatsapp/cancelar-todos-envios`: Detiene de emergencia cualquier campana masiva en curso.
 
 ### 9. Respaldos y Base de Datos (`/backup`)
 *   `GET /backup/listar`: Muestra los archivos `.sql` generados históricamente en `backups/`.
@@ -342,7 +342,7 @@ Utiliza tareas asíncronas para ejecutar procesos críticos sin intervención hu
 ## 🛠️ Scripts de Mantenimiento y Utilidades
 
 En la raíz del proyecto se encuentran herramientas para administración del sistema:
-*   `sync_db.py`: Compara los modelos declarados en SQLAlchemy con las tablas reales de MySQL y añade columnas faltantes sin perder información.
+*   `sync_db.py`: Compara los modelos declarados en SQLAlchemy con las tablas reales de MySQL y agrega columnas faltantes sin perder información.
 *   `create_users.py`: Crea o restablece las cuentas iniciales (`admin`, `tecnico`, `secretario`).
 *   `seed_configuraciones.py`: Carga los nodos territoriales primarios, velocidades y puertos de prueba.
 *   `reconciliar_extras.py`: Corrige posibles discrepancias contables en la tabla de clientes extras.

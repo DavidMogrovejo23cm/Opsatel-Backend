@@ -43,9 +43,9 @@ def sync_schema():
                         query = f"ALTER TABLE {quote}{table_name}{quote} ADD COLUMN {quote}{column.name}{quote} {col_type}"
                         print(f"Ejecutando: {query}")
                         conn.execute(text(query))
-                        print(f"Columna {table_name}.{column.name} añadida exitosamente.")
+                        print(f"Columna {table_name}.{column.name} agregada exitosamente.")
                     except Exception as e:
-                        print(f"Error al añadir columna {table_name}.{column.name}: {e}")
+                        print(f"Error al agregar columna {table_name}.{column.name}: {e}")
                 else:
                     # Si ya existe, comprobamos si necesitamos ampliarla (ej: de 50 a 1000)
                     db_col = db_columns_info[column.name]

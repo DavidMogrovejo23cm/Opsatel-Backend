@@ -57,7 +57,7 @@ class InventoryIpPool(Base):
     __tablename__ = "inventory_ip_pools"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    nodo = Column(String(100), nullable=False, index=True)      # ej: "BAÑOS", "SAYAUSI"
+    nodo = Column(String(100), nullable=False, index=True)      # ej: "BANOS", "SAYAUSI"
     ip_address = Column(String(50), nullable=False, index=True)  # ej: "172.16.15.3"
     
     estado = Column(String(50), default="LIBRE", index=True)    # LIBRE, RESERVADO, OCUPADO

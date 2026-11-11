@@ -101,7 +101,7 @@ class NetworkCommand(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     workflow = Column(String(100), index=True, nullable=True)  # ej: "ACTIVAR_CLIENTE"
-    equipo = Column(String(100), index=True, nullable=False)   # ej: "OLT_BAÑOS_01"
+    equipo = Column(String(100), index=True, nullable=False)   # ej: "OLT_BANOS_01"
     comando = Column(Text, nullable=False)                     # ej: "ont add 0 1 sn-auth ..."
     respuesta = Column(Text, nullable=True)                    # Respuesta cruda del CLI
     duracion_ms = Column(Integer, default=0)
@@ -213,7 +213,7 @@ def log_network_command(
                 workflow=workflow,
                 equipo=equipo,
                 comando=comando,
-                respuesta=respuesta[:4000] if respuesta else None, # Limitar tamaño
+                respuesta=respuesta[:4000] if respuesta else None, # Limitar tamano
                 duracion_ms=duracion_ms,
                 exit_status=exit_status,
                 retry_count=retry_count,

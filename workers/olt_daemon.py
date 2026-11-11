@@ -125,7 +125,7 @@ logger = setup_logger()
 class OLTDaemon:
     """
     Daemon para procesar tareas OLT.
-    Maneja ciclo de vida, señales, locking.
+    Maneja ciclo de vida, senales, locking.
     """
     
     def __init__(self):
@@ -138,7 +138,7 @@ class OLTDaemon:
         self.last_error = None
         self.last_keepalive_time = 0
         
-        # Registrar handlers de señales
+        # Registrar handlers de senales
         # Los handlers solo pueden registrarse desde el hilo principal.
         if threading.current_thread() is threading.main_thread():
             signal.signal(signal.SIGTERM, self._handle_sigterm)
@@ -149,12 +149,12 @@ class OLTDaemon:
     
     def _handle_sigterm(self, signum, frame):
         """Manejador de SIGTERM para graceful shutdown"""
-        logger.warning(f"Recibida señal {signum} (SIGTERM/SIGINT). Iniciando graceful shutdown...")
+        logger.warning(f"Recibida senal {signum} (SIGTERM/SIGINT). Iniciando graceful shutdown...")
         self.running = False
     
     def _handle_sighup(self, signum, frame):
         """Manejador de SIGHUP para recargar config (no implementado por ahora)"""
-        logger.info(f"Recibida señal {signum} (SIGHUP). Reloading config...")
+        logger.info(f"Recibida senal {signum} (SIGHUP). Reloading config...")
         # Aquí se podría recargar config de BD
     
     def acquire_lock(self) -> bool:

@@ -50,7 +50,7 @@ class LibreQoSManager:
         """
         Resuelve el servidor LibreQoS adecuado para el cliente en base a su topología:
         - Si es Sayausí (nodo/parroquia/IP 172.18) -> LibreQoS-SAYAUSI
-        - Si es Baños o General (IP 172.16) -> LibreQoS-OLT-BAÑOS (o servidor de Baños)
+        - Si es Banos o General (IP 172.16) -> LibreQoS-OLT-BANOS (o servidor de Banos)
         """
         cli_ip = (cliente.ip or "").strip()
         cli_is_sayausi = (
@@ -72,7 +72,7 @@ class LibreQoSManager:
             if server:
                 return server
         else:
-            # Baños / General
+            # Banos / General
             server = db.query(LibreQoSServer).filter(
                 LibreQoSServer.name.ilike("%BA%"),
                 LibreQoSServer.enabled == True

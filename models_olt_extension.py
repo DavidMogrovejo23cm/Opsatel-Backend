@@ -64,7 +64,7 @@ class OLTConfig(Base):
     retry_backoff_base = Column(Integer, default=1)
     
     active = Column(Boolean, default=True, index=True)
-    nodo_asociado = Column(String(100), index=True)  # BAÑOS, SAYAUSI, etc.
+    nodo_asociado = Column(String(100), index=True)  # BANOS, SAYAUSI, etc.
 
     # Credenciales MikroTik (RouterOS API) asociado a este nodo
     mikrotik_host     = Column(String(50),  nullable=True)

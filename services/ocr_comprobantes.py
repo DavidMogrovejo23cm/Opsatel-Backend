@@ -9,7 +9,7 @@ Flujo de procesamiento:
    - Motor Deep Learning RapidOCR (PP-OCRv4 ONNX) con reconstrucción geométrica de filas/columnas.
    - Entorno virtual del servidor (/var/www/html/entornos/ia_env) con Tesseract LSTM (--oem 1) a 300 DPI.
    - Proceso local pytesseract y binario CLI tesseract como respaldo.
-3. Post-procesamiento léxico bancario en español y extracción estructurada de todos los campos.
+3. Post-procesamiento léxico bancario en espaniol y extracción estructurada de todos los campos.
 """
 
 import os
@@ -233,7 +233,7 @@ def mejorar_calidad_imagen_para_ocr(image_path: str) -> Tuple[str, Optional[str]
 
 def postprocesar_texto_comprobante(texto: str) -> str:
     """
-    Limpia artefactos comunes de OCR en comprobantes bancarios en español,
+    Limpia artefactos comunes de OCR en comprobantes bancarios en espaniol,
     restaurando espacios en etiquetas conocidas y corrigiendo símbolos.
     """
     if not texto:
@@ -771,7 +771,7 @@ def calcular_score_autenticidad(texto: str, datos: Dict[str, Any]) -> Dict[str, 
                 if anio_comp < ahora_anio:
                     score = max(0, score - 35)
                     fecha_reciente = False
-                    alertas.append(f"Comprobante antiguo de año anterior ({anio_comp})")
+                    alertas.append(f"Comprobante antiguo de anio anterior ({anio_comp})")
 
     score = min(100, max(0, score))
 
@@ -812,7 +812,7 @@ def extraer_texto_tesseract_mejorado(image_path: str) -> str:
             for lang in ["spa+eng", "spa", "eng", None]:
                 lang_kwargs = {"lang": lang} if lang else {}
                 try:
-                    # PSM 4: Columna única de tamaños variables con motor neuronal LSTM (--oem 1)
+                    # PSM 4: Columna única de tamanos variables con motor neuronal LSTM (--oem 1)
                     t1 = pytesseract.image_to_string(img, **lang_kwargs, config="--oem 1 --psm 4 -c preserve_interword_spaces=1")
                     if t1 and t1.strip():
                         textos_brutos.append(t1)

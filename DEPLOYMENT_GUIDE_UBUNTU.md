@@ -84,7 +84,7 @@ nano /home/opsatel/.env
 
 # Editar estos valores con tus datos reales:
 # DATABASE_URL
-# OLT_BAÑOS_HOST, OLT_BAÑOS_PASSWORD
+# OLT_BANOS_HOST, OLT_BANOS_PASSWORD
 # OLT_SAYAUSI_HOST, OLT_SAYAUSI_PASSWORD
 # WORKER_LOG_FILE (verificar permisos)
 ```
@@ -102,7 +102,7 @@ mysql -h localhost -u root -p opsatel -e "SHOW TABLES LIKE 'olt%';"
 ```bash
 # Por CLI o via phpmyadmin:
 # INSERT INTO olt_config (nombre, host, port, username, password, nodo_asociado, active)
-# VALUES ('huawei-baños', '192.168.1.100', 23, 'admin', 'admin123', 'BAÑOS', 1);
+# VALUES ('huawei-banos', '192.168.1.100', 23, 'admin', 'admin123', 'BANOS', 1);
 ```
 
 ## 🔌 Paso 4: Instalar Systemd Service
@@ -312,7 +312,7 @@ sudo chmod +x /usr/local/bin/opsatel-backup.sh
 
 # Agregar a crontab para backup diario
 sudo crontab -e
-# Añadir línea:
+# Agregar línea:
 # 0 2 * * * /usr/local/bin/opsatel-backup.sh
 ```
 

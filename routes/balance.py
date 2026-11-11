@@ -1423,10 +1423,10 @@ def exportar_reporte_anual_excel(anio: int, db: Session = Depends(get_db)):
         cell.fill = fill_total
         cell.number_format = num_fmt
 
-    # ── SECCIÓN 3: PROYECTOS Y OBRAS DEL AÑO ──
+    # ── SECCIÓN 3: PROYECTOS Y OBRAS DEL ANIO ──
     if proyectos:
         current_row += 3
-        ws.cell(row=current_row, column=1, value="PROYECTOS Y OBRAS DEL AÑO").font = font_section
+        ws.cell(row=current_row, column=1, value="PROYECTOS Y OBRAS DEL ANIO").font = font_section
         current_row += 1
         
         headers_proy = ["NOMBRE PROYECTO", "MONTO TOTAL", "MONTO INVERTIDO", "ESTADO"]
@@ -2138,7 +2138,7 @@ def exportar_reporte_excel(mes: str, db: Session = Depends(get_db)):
         if p.nombre:
             planes_megas[p.nombre.strip().upper()] = int(p.megas or 0)
     
-    # ── NOMBRES DE MES EN ESPAÑOL Y INGLÉS ──
+    # ── NOMBRES DE MES EN ESPANIOL Y INGLÉS ──
     month_num = parts[1] if len(parts) == 2 else "01"
     month_name_en = {
         "01": "JANUARY", "02": "FEBRUARY", "03": "MARCH", "04": "APRIL",

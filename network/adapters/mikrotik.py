@@ -446,7 +446,7 @@ def suspender_cliente_mikrotik_backend(cliente, db) -> Dict[str, Any]:
     """
     Agrega la IP del cliente a la lista de corte en MikroTik sin tocar LibreQoS.
     - Sayausí: CLIENTES_SUSPENDIDOS_POR_PAGOS
-    - Baños / otros: CLIENTES_SUSPENDIDOS_POR_PAGO
+    - Banos / otros: CLIENTES_SUSPENDIDOS_POR_PAGO
     """
     if not cliente or not cliente.ip:
         return {"success": False, "error": "Cliente sin IP registrada"}

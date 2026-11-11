@@ -754,7 +754,7 @@ def download_database_extras(db: Session = Depends(get_db)):
         meses = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"]
 
         # Encabezados
-        headers = ["COD", "NOMBRE CLIENTE", "CONTACTO", "PROVEEDOR", "USUARIO", "CONTRASEÑA", "CUENTAS", "MAC SMART ONE", "OBSERVACIONES", "ESTADO", "VALOR", "ACTIVO"]
+        headers = ["COD", "NOMBRE CLIENTE", "CONTACTO", "PROVEEDOR", "USUARIO", "CONTRASENA", "CUENTAS", "MAC SMART ONE", "OBSERVACIONES", "ESTADO", "VALOR", "ACTIVO"]
         for m in meses:
             headers.extend([m, "FACTURA", "FECHA A PAGAR", "FECHA DE PAGO", "PAGO", "BANCO", "COD", "SALDO"])
 

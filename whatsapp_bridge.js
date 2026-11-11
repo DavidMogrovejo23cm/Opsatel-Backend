@@ -1193,7 +1193,7 @@ async function descargarFotoOriginalWhatsApp(msg, clientInstance, realPhone = ''
             }, mediaOpts);
 
             if (resOriginal && resOriginal.success && resOriginal.data && resOriginal.data.length > 2500) {
-                console.log(`[WhatsApp Bridge] 🎯 ¡FOTO ORIGINAL COMPLETA DESCARGADA! Tamaño: ${resOriginal.size} bytes (${resOriginal.data.length} chars base64, vía ${resOriginal.source})`);
+                console.log(`[WhatsApp Bridge] 🎯 ¡FOTO ORIGINAL COMPLETA DESCARGADA! Tamano: ${resOriginal.size} bytes (${resOriginal.data.length} chars base64, vía ${resOriginal.source})`);
                 if (resOriginal.trueSerializedId) {
                     msg.id._serialized = resOriginal.trueSerializedId;
                 }
@@ -1751,8 +1751,8 @@ app.post('/cancel', (req, res) => {
     ab.pauseReason = '';
     ab.nextBulkAt = 0;
     saveAb();
-    console.log('[WhatsApp Bridge] 🛑 Señal de cancelación recibida: pausas y temporizadores de lote reseteados.');
-    res.json({ success: true, message: 'Señal de cancelación procesada correctamente en el puente.' });
+    console.log('[WhatsApp Bridge] 🛑 Senal de cancelación recibida: pausas y temporizadores de lote reseteados.');
+    res.json({ success: true, message: 'Senal de cancelación procesada correctamente en el puente.' });
 });
 
 app.post('/antiban/opt-out', (req, res) => {

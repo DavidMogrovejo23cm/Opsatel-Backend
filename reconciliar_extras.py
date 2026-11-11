@@ -316,7 +316,7 @@ def run():
     meses_nombres = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"]
     
     headers = [
-        "COD", "NOMBRE CLIENTE", "CONTACTO", "PROVEEDOR", "USUARIO", "CONTRASEÑA",
+        "COD", "NOMBRE CLIENTE", "CONTACTO", "PROVEEDOR", "USUARIO", "CONTRASENA",
         "CUENTAS", "MAC SMART ONE", "OBSERVACIONES", "ESTADO", "VALOR", "ACTIVO"
     ]
     for m in meses_nombres:

@@ -164,7 +164,7 @@ def force_fix_columns():
         except Exception as upd_err:
             print(f"Aviso actualizando registros anteriores de egresos: {upd_err}")
     
-    # Ampliar columnas existentes que requieren mayor tamaño
+    # Ampliar columnas existentes que requieren mayor tamano
     modify_columns = [
         ("hoja_de_c__lculo_sin_t__tulo", "CLAVE", "TEXT"),
         ("hoja_de_c__lculo_sin_t__tulo", "RED", "VARCHAR(255)"),

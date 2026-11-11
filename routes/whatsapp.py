@@ -60,7 +60,7 @@ def personalizar_mensaje_cliente(mensaje_base: str, cliente) -> str:
     """
     Personaliza un mensaje con los datos del cliente desde la BD.
     Soporta etiquetas: {nombre}, {nombre_completo}, {cliente}, {saldo}, {plan}, {cedula}, {nodo}, {parroquia}.
-    Si el mensaje no contiene ninguna etiqueta de nombre, se añade automáticamente un saludo cordial personalizado con su nombre.
+    Si el mensaje no contiene ninguna etiqueta de nombre, se agrega automáticamente un saludo cordial personalizado con su nombre.
     """
     if not mensaje_base:
         return ""
@@ -119,7 +119,7 @@ def personalizar_mensaje_cliente(mensaje_base: str, cliente) -> str:
 
     if not tiene_etiqueta_nombre:
         if primer_nombre != "estimado/a cliente":
-            # Variar el saludo entre destinatarios evita mensajes idénticos (señal de spam)
+            # Variar el saludo entre destinatarios evita mensajes idénticos (senal de spam)
             saludo = random.choice([
                 f"Hola *{primer_nombre}*,\n",
                 f"¡Hola *{primer_nombre}*!\n",
@@ -468,7 +468,7 @@ def send_global_broadcast_task(
         total_clientes = len(clientes_unicos)
         print(f"[Broadcast Task] Iniciando difusión masiva con protección anti-baneo a {total_clientes} clientes únicos ({alcance_label}). Lotes: {tamano_lote}. Intervalo por mensaje: {delay_a:.1f}-{delay_b:.1f}s. Pausa entre lotes: {pausa_lote_a/60:.1f}-{pausa_lote_b/60:.1f} min.")
         
-        # Obtener o registrar campaña de difusión en historial
+        # Obtener o registrar campana de difusión en historial
         if difusion_id:
             difusion_registro = db.query(models.WhatsAppDifusionHistorial).filter(
                 models.WhatsAppDifusionHistorial.id == difusion_id
@@ -589,7 +589,7 @@ def send_global_broadcast_task(
         if difusion_registro:
             if cancelado_por_usuario or should_cancel():
                 difusion_registro.estado = "cancelado"
-                print(f"[Broadcast Task] Campaña #{cur_dif_id} marcada como CANCELADA. Entregados antes de cancelar: {exitosos}/{total_clientes}")
+                print(f"[Broadcast Task] Campana #{cur_dif_id} marcada como CANCELADA. Entregados antes de cancelar: {exitosos}/{total_clientes}")
             else:
                 difusion_registro.estado = "completado"
                 print(f"[Broadcast Task] Envío masivo #{cur_dif_id} finalizado exitosamente. Exitosos: {exitosos}, Fallidos: {fallidos}")
@@ -800,7 +800,7 @@ def _calcular_proximo_envio(config: models.WhatsAppConfiguracion) -> str:
             if ahora < hora_hoy:
                 return f"Hoy a las {config.hora_programada}"
             else:
-                return f"Mañana a las {config.hora_programada}"
+                return f"Manana a las {config.hora_programada}"
         elif rec == "mensual":
             dia = config.fecha_programada.day if config.fecha_programada else 1
             try:
@@ -1225,7 +1225,7 @@ def cancelar_difusion(difusion_id: int, db: Session = Depends(get_db)):
         ).first()
         
         if not dif:
-            raise HTTPException(status_code=404, detail="Campaña de difusión no encontrada")
+            raise HTTPException(status_code=404, detail="Campana de difusión no encontrada")
             
         dif.estado = "cancelado"
         db.commit()
@@ -1273,7 +1273,7 @@ def cancelar_todos_los_envios(db: Session = Depends(get_db)):
 
         return {
             "success": True,
-            "message": f"Se cancelaron exitosamente {actualizados} campañas de envío en proceso.",
+            "message": f"Se cancelaron exitosamente {actualizados} campanas de envío en proceso.",
             "total_cancelados": actualizados
         }
     except Exception as e:
@@ -3023,7 +3023,7 @@ def evaluar_validacion_comprobante(
         except Exception:
             pass
 
-    # Si el teléfono sí está registrado en la BD, siempre vinculamos al dueño de esa línea registrada
+    # Si el teléfono sí está registrado en la BD, siempre vinculamos al titular de esa línea registrada
     cliente = cliente_por_telefono or cliente_por_ordenante or cliente_por_pushname
     deuda_bd = calcular_deuda_pendiente_cliente(cliente, db) if cliente else 0.0
 

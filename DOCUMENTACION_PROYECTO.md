@@ -116,7 +116,7 @@ Ubicación: `routes/clientes.py -> @router.post("/parse-smart")`
     1.  El backend extrae los nombres válidos de Nodos, Planes y Parroquias desde la base de datos MySQL en tiempo real.
     2.  Envía el texto crudo pegado por el usuario al modelo con instrucciones estrictas de extracción JSON.
     3.  Limpia cédulas ecuatorianas asegurando 10 dígitos (añadiendo ceros iniciales si el portapapeles los omitió).
-    4.  Mapea variaciones coloquiales ("nodo los baños", "plan 50") al registro oficial correspondiente.
+    4.  Mapea variaciones coloquiales ("nodo los banos", "plan 50") al registro oficial correspondiente.
 
 ### D. Ciclo de SLA y Auto-Expiración en Hoja de Ruta
 Ubicación: `routes/hoja_ruta.py -> @router.get("/")`
@@ -143,7 +143,7 @@ Ubicación: `routes/callcenter.py -> @router.post("/tickets/{id}/agendar-hoja-ru
 | `routes/hoja_ruta.py` | `/hoja-ruta` | Despacho de personal de campo, cronograma de visitas y SLA de 24h |
 | `routes/asistencia.py` | `/asistencia` | Marcación biométrica/digital de ingreso y egreso de trabajadores |
 | `routes/backup.py` | `/backup` | Volcados SQL automáticos, descarga y restauración con validación de integridad |
-| `routes/whatsapp.py` | `/whatsapp` | Monitoreo del socket web, código QR y orquestación de campañas masivas |
+| `routes/whatsapp.py` | `/whatsapp` | Monitoreo del socket web, código QR y orquestación de campanas masivas |
 | `routes/extras.py` | `/extras` | Gestión paralela de clientes y cobranzas especiales |
 | `routes/bulk_activation.py`| `/bulk-activation` | Procesamiento en lote para activación de ONTs detectadas |
 | `routes/olt_tasks.py` | `/olt` | Envío asíncrono de comandos directos al chasis OLT |

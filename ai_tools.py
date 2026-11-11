@@ -87,7 +87,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "verificar_conexion_y_potencia",
-            "description": "Diagnóstico de conexión técnica: primero comprueba si la IP del cliente está en la lista de suspendidos por pago del firewall MikroTik, y luego consulta la potencia óptica RX de la ONT en la OLT y si está en rango óptimo (-15 a -27 dBm) o sin señal (LOS / foco rojo). Usar de forma obligatoria cuando el cliente reporte que no tiene internet o que está lento.",
+            "description": "Diagnóstico de conexión técnica: primero comprueba si la IP del cliente está en la lista de suspendidos por pago del firewall MikroTik, y luego consulta la potencia óptica RX de la ONT en la OLT y si está en rango óptimo (-15 a -27 dBm) o sin senal (LOS / foco rojo). Usar de forma obligatoria cuando el cliente reporte que no tiene internet o que está lento.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -101,12 +101,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "generar_ticket_soporte",
-            "description": "Genera ticket de soporte en BD y alerta por WhatsApp al técnico de guardia ante daño físico o falla persistente tras agotar pruebas de primer nivel. Debe incluir el síntoma reportado y el diagnóstico técnico detallado con cifras (potencia óptica, puerto GPON, nodo, ONT ID, IP, saturación LibreQoS, pruebas realizadas).",
+            "description": "Genera ticket de soporte en BD y alerta por WhatsApp al técnico de guardia ante danio físico o falla persistente tras agotar pruebas de primer nivel. Debe incluir el síntoma reportado y el diagnóstico técnico detallado con cifras (potencia óptica, puerto GPON, nodo, ONT ID, IP, saturación LibreQoS, pruebas realizadas).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "cliente_id": {"type": "integer", "description": "ID numérico del cliente en BD."},
-                    "sintoma_reportado": {"type": "string", "description": "Descripción del daño o falla técnica reportada."},
+                    "sintoma_reportado": {"type": "string", "description": "Descripción del danio o falla técnica reportada."},
                     "diagnostico_tecnico": {"type": "string", "description": "Resumen técnico detallado con cifras (potencia óptica en dBm, puerto GPON, nodo, ONT ID, IP, estado MikroTik, saturación LibreQoS y pruebas de reinicio/cables realizadas)."}
                 },
                 "required": ["cliente_id", "sintoma_reportado"]
@@ -117,12 +117,12 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "consultar_pelicula_o_serie",
-            "description": "Consulta ficha técnica real (título, año, sinopsis, reparto, director, IMDb) en OMDb API para OPSATV.",
+            "description": "Consulta ficha técnica real (título, anio, sinopsis, reparto, director, IMDb) en OMDb API para OPSATV.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "titulo": {"type": "string", "description": "Título de la película o serie."},
-                    "anio": {"type": "string", "description": "Año opcional."},
+                    "anio": {"type": "string", "description": "Anio opcional."},
                     "tipo": {"type": "string", "enum": ["movie", "series", "episode"], "description": "Tipo opcional."}
                 },
                 "required": ["titulo"]
@@ -171,7 +171,7 @@ TOOLS_SCHEMA = [
                     },
                     "nodo_o_sector": {
                         "type": "string",
-                        "description": "Sector, barrio o nodo de red donde se realizará la instalación (ej: 'Baños', 'Sayausí', 'Centro')."
+                        "description": "Sector, barrio o nodo de red donde se realizará la instalación (ej: 'Banos', 'Sayausí', 'Centro')."
                     },
                     "cedula": {
                         "type": "string",
@@ -472,7 +472,7 @@ def verificar_conexion_y_potencia(cliente_id: int, db: Session) -> Dict[str, Any
     1. Comprueba si la IP del cliente se encuentra en la lista de corte/suspensión del firewall en MikroTik
        (ej: CLIENTES_SUSPENDIDOS_POR_PAGO o CLIENTES_SUSPENDIDOS_POR_PAGOS).
     2. Si no está cortado en MikroTik, consulta la potencia óptica RX de la ONT en la OLT y verifica
-       si está en rango óptimo (-15.0 a -27.0 dBm) o sin señal (LOS / foco rojo).
+       si está en rango óptimo (-15.0 a -27.0 dBm) o sin senal (LOS / foco rojo).
     """
     if not cliente_id:
         return {
@@ -590,7 +590,7 @@ def verificar_conexion_y_potencia(cliente_id: int, db: Session) -> Dict[str, Any
             if any(k in estado_ont.lower() for k in ["los", "offline", "down", "sin", "corte", "fall"]):
                 hay_potencia = False
                 potencia_en_rango = False
-                diagnostico = f"ONT fuera de línea o sin señal óptica ({estado_ont}). Posible foco rojo (LOS)."
+                diagnostico = f"ONT fuera de línea o sin senal óptica ({estado_ont}). Posible foco rojo (LOS)."
             else:
                 hay_potencia = False
                 potencia_en_rango = False

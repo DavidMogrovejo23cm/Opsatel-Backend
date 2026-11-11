@@ -810,7 +810,7 @@ class TaskProcessor:
                             f"dispositivo={disp_val}, nap={nap_val}, estado=Activo"
                         )
 
-                # Verificar potencia de forma NO-BLOQUEANTE (solo añade datos,
+                # Verificar potencia de forma NO-BLOQUEANTE (solo agrega datos,
                 # no reemplaza el response_json completo ya guardado).
                 # PRIMERO intentamos usar la potencia ya leída inline durante la
                 # activación (rx_power / tx_power en el result). Si no vino (None),

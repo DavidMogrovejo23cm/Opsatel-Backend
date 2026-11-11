@@ -6,7 +6,7 @@
 @hash bf26ee033418d5dcd984ad8115334e7ce788cfb5d2bd456cf6e6ee21b877a762
 
 Servicio de Integración con OMDb API (Open Movie Database) para Opsatel.
-Permite consultar información en tiempo real de películas y series (título, año,
+Permite consultar información en tiempo real de películas y series (título, anio,
 género, director, actores, sinopsis, poster y calificaciones) para el catálogo de OPSATV
 y el asistente inteligente SAM.
 """
@@ -58,7 +58,7 @@ def consultar_pelicula(
     
     Args:
         titulo: Nombre de la película/serie (ej: 'Inception', 'Breaking Bad', 'Gladiador').
-        anio: Año de estreno opcional (ej: '2010').
+        anio: Anio de estreno opcional (ej: '2010').
         tipo: 'movie', 'series' o 'episode'.
         plot: 'short' para sinopsis concisa o 'full' para extendida.
         
@@ -133,7 +133,7 @@ def buscar_peliculas(
     
     Args:
         query: Término de búsqueda (ej: 'Batman', 'Spider-Man', 'Avatar').
-        anio: Año de estreno opcional.
+        anio: Anio de estreno opcional.
         tipo: 'movie', 'series', o 'episode'.
         pagina: Página de resultados (por defecto 1).
     """

@@ -20,7 +20,7 @@ router = APIRouter(prefix="/peliculas", tags=["peliculas"])
 @router.get("/detalle")
 def obtener_detalle_pelicula(
     titulo: str = Query(..., description="Nombre o título de la película o serie"),
-    anio: Optional[str] = Query(None, description="Año opcional de lanzamiento"),
+    anio: Optional[str] = Query(None, description="Anio opcional de lanzamiento"),
     tipo: Optional[str] = Query(None, description="movie, series o episode")
 ) -> Dict[str, Any]:
     """Obtiene la ficha técnica completa de una película o serie dada su denominación."""
@@ -33,7 +33,7 @@ def obtener_detalle_pelicula(
 @router.get("/buscar")
 def buscar_listado_peliculas(
     q: str = Query(..., description="Término de búsqueda (ej: Marvel, Batman, Star Wars)"),
-    anio: Optional[str] = Query(None, description="Año opcional"),
+    anio: Optional[str] = Query(None, description="Anio opcional"),
     tipo: Optional[str] = Query(None, description="movie, series o episode"),
     pagina: int = Query(1, ge=1, description="Número de página")
 ) -> Dict[str, Any]:

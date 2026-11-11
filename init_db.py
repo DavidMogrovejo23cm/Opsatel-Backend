@@ -31,7 +31,7 @@ def init():
 
         print("2. Haber creado la base de datos llamada 'opsatel' en phpMyAdmin.")
 
-        print("3. Que el usuario 'root' no tenga contraseña (configuración por defecto de XAMPP).")
+        print("3. Que el usuario 'root' no tenga contrasena (configuración por defecto de XAMPP).")
 
 
 

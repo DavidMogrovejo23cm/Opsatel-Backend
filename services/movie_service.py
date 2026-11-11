@@ -73,7 +73,7 @@ INTENCIONES_OPERATIVAS_ISP = [
     # Soporte técnico y fallas de internet
     "no tengo internet", "sin internet", "sin servicio", "no hay internet", "falla el internet",
     "internet lento", "lento el internet", "luz roja", "foco rojo", "los rojo", "pon rojo",
-    "los parpadea", "foco los", "fibra rota", "cable roto", "sin señal", "router", "wifi",
+    "los parpadea", "foco los", "fibra rota", "cable roto", "sin senal", "router", "wifi",
     "ont", "clave del wifi", "cambio de clave", "reiniciar router", "soporte tecnico", "soporte técnico",
     "visita tecnica", "visita técnica", "tecnico", "técnico", "instalacion", "instalación", "traslado",
     # Planes y contrataciones
@@ -100,8 +100,8 @@ GENEROS_KEYWORDS = {
 
 # Audios comunes
 AUDIOS_KEYWORDS = {
-    "latino": ["latino", "español latino", "audio latino", "en latino"],
-    "castellano": ["castellano", "españa", "español de españa"],
+    "latino": ["latino", "espaniol latino", "audio latino", "en latino"],
+    "castellano": ["castellano", "españa", "espaniol de españa"],
     "ingles": ["ingles", "inglés", "subtitulada", "subtitulado", "subtitulos", "subtítulos", "idioma original", "en ingles"],
     "dual": ["dual", "multiaudio"]
 }
@@ -213,7 +213,7 @@ def extraer_termino_y_filtros(mensaje: str) -> Tuple[str, Optional[str], Optiona
     texto_lower = texto.lower()
 
     # 1. Verificar si es una solicitud formal
-    m_solic = re.search(r'(?:solicitar|quiero solicitar|por favor agregar|agreguen|añadir)\s+(?:la\s+pelicula\s+|la\s+peli\s+|la\s+película\s+)?([a-zA-Z0-9\s:_-]{2,60})', texto, re.IGNORECASE)
+    m_solic = re.search(r'(?:solicitar|quiero solicitar|por favor agregar|agreguen|agregar)\s+(?:la\s+pelicula\s+|la\s+peli\s+|la\s+película\s+)?([a-zA-Z0-9\s:_-]{2,60})', texto, re.IGNORECASE)
     if m_solic:
         tit = m_solic.group(1).strip(" .!,;¿?\"'")
         if len(tit) >= 2:
@@ -385,7 +385,7 @@ def buscar_peliculas_en_bd(
                             "descripcion": r_dict.get(col_desc) or "Disponible en catálogo de OPSATV.",
                             "generos": r_dict.get(col_gen) or "General",
                             "actores": r_dict.get(col_actores) or "Varios",
-                            "audio": r_dict.get(col_audio) or "Español Latino"
+                            "audio": r_dict.get(col_audio) or "Espaniol Latino"
                         })
                     return coincidencias
 
@@ -439,7 +439,7 @@ def buscar_peliculas_en_bd(
                     "descripcion": descripcion or "Disponible en catálogo de OPSATV.",
                     "generos": generos or "General",
                     "actores": actores or "Varios",
-                    "audio": aud or "Español Latino",
+                    "audio": aud or "Espaniol Latino",
                     "score": score
                 }))
 
@@ -482,7 +482,7 @@ def buscar_en_tmdb(query_str: str, limit: int = 3) -> List[Dict[str, Any]]:
                     titulo = item.get("title") or item.get("original_title") or ""
                     release_date = item.get("release_date") or ""
                     anio = release_date.split("-")[0] if release_date else ""
-                    overview = item.get("overview") or "Sinopsis no disponible en español actualmente."
+                    overview = item.get("overview") or "Sinopsis no disponible en espaniol actualmente."
                     vote = item.get("vote_average")
                     vote_str = f"{vote:.1f}" if vote else "N/A"
                     popularity = item.get("popularity", 0)

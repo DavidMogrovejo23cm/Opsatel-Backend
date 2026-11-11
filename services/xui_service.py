@@ -151,7 +151,7 @@ async def do_login() -> None:
             r = await session.post(post_login_url, data=payload, headers=headers)
             html = r.text
             if "XUI | Login" in html or 'data-id="login"' in html:
-                raise ConnectionError("Login en panel XUI.one rechazado. Verifica credenciales (DAVIDOPSA / contraseña).")
+                raise ConnectionError("Login en panel XUI.one rechazado. Verifica credenciales (DAVIDOPSA / contrasena).")
             
             # Éxito: fijar este host como el activo para las demás operaciones
             ACTIVE_XUI_BASE_URL = cand_base

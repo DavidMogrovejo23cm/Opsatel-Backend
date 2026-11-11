@@ -48,6 +48,38 @@ app.include_router(workflows.router)
 app.include_router(bulk_router)
 observability.setup_json_logging()
 
+# Middleware global automático: Garantizar que NUNCA salga una 'ñ' o 'Ñ' hacia el frontend
+@app.middleware("http")
+async def auto_sanitize_enes_middleware(request: Request, call_next):
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+    if "application/json" in content_type:
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+        try:
+            text = body.decode("utf-8")
+            if "ñ" in text or "Ñ" in text:
+                text = text.replace("ñ", "N").replace("Ñ", "N")
+                body = text.encode("utf-8")
+                headers = dict(response.headers)
+                headers["content-length"] = str(len(body))
+                return Response(
+                    content=body,
+                    status_code=response.status_code,
+                    headers=headers,
+                    media_type=response.media_type
+                )
+        except Exception:
+            pass
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type
+        )
+    return response
+
 
 
 

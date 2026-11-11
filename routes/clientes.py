@@ -715,7 +715,7 @@ async def upload_cedula(
     upload_dir = "uploads/cedulas"
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Validar límite de memoria/tamaño de hasta 25 MB para cualquier foto
+    # Validar límite de memoria/tamano de hasta 25 MB para cualquier foto
     MAX_FILE_SIZE = 25 * 1024 * 1024 # 25 MB
     for f_obj, f_name in [(frontal, "Frontal"), (posterior, "Posterior"), (fachada, "Fachada")]:
         if f_obj and f_obj.filename:
@@ -725,7 +725,7 @@ async def upload_cedula(
             if size > MAX_FILE_SIZE:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"La foto {f_name} supera el límite máximo de 20 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
+                    detail=f"La foto {f_name} supera el límite máximo de 20 MB (tamano: {round(size / (1024*1024), 2)} MB)."
                 )
 
     timestamp = int(datetime.now().timestamp())
@@ -764,7 +764,7 @@ async def upload_fachada(id: int, fachada: UploadFile = File(...), db: Session =
     if size > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,
-            detail=f"La foto de fachada supera el límite de 20 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
+            detail=f"La foto de fachada supera el límite de 20 MB (tamano: {round(size / (1024*1024), 2)} MB)."
         )
 
     upload_dir = "uploads/cedulas"
@@ -796,7 +796,7 @@ async def upload_dispositivo(
     upload_dir = "uploads/dispositivos"
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Validar límite de memoria/tamaño de hasta 25 MB
+    # Validar límite de memoria/tamano de hasta 25 MB
     MAX_FILE_SIZE = 25 * 1024 * 1024 # 25 MB
     for f_obj, f_name in [(equipo_ont, "Equipo Bridge/ONT"), (equipo_router, "Router")]:
         if f_obj and f_obj.filename:
@@ -806,7 +806,7 @@ async def upload_dispositivo(
             if size > MAX_FILE_SIZE:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"La foto de {f_name} supera el límite máximo de 20 MB (tamaño: {round(size / (1024*1024), 2)} MB)."
+                    detail=f"La foto de {f_name} supera el límite máximo de 20 MB (tamano: {round(size / (1024*1024), 2)} MB)."
                 )
 
     timestamp = int(datetime.now().timestamp())
@@ -956,7 +956,7 @@ def obtener_siguiente_valor_tecnico(
             cid_clean = str(cliente_id)
         description = f"{cid_clean} {nombre}"
     else:
-        # NORMAL (Baños/Otros): Perfiles 100+, VLAN 100/300, GPON 0/0/x
+        # NORMAL (Banos/Otros): Perfiles 100+, VLAN 100/300, GPON 0/0/x
         profile_id = 100 + p_num
         vlan_val = 100 + p_num # User vlan
         vlan_transport = 300 + p_num
@@ -1031,7 +1031,7 @@ def borrar_cliente_de_olt(id: int, db: Session = Depends(get_db), current_user=D
     puerto_num = m.group() if m else "0"
 
     # Construir gpon_port a partir del puerto numérico
-    # Por defecto la OLT de Baños usa 0/0/X; si el nodo es SAYAUSI usa 0/1/X
+    # Por defecto la OLT de Banos usa 0/0/X; si el nodo es SAYAUSI usa 0/1/X
     is_sayausi = is_nodo_sayausi(cliente.nodo)
     if is_sayausi:
         gpon_port = f"0/1/{puerto_num}"
@@ -1380,7 +1380,7 @@ def migrar_cliente(id: int, db: Session = Depends(get_db), current_user=Depends(
 def suspender_cliente_mikrotik(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """
     Agrega al cliente a la lista de suspendidos en MikroTik:
-    - Baños: list=CLIENTES_SUSPENDIDOS_POR_PAGO
+    - Banos: list=CLIENTES_SUSPENDIDOS_POR_PAGO
     - Sayausí: list=CLIENTES_SUSPENDIDOS_POR_PAGOS
     NOTA: No suspende de LibreQoS.
     """
@@ -1508,7 +1508,7 @@ def descargar_completa_base_datos(db: Session = Depends(get_db)):
         from sqlalchemy import inspect, text
         from fastapi.responses import StreamingResponse
         
-        # Mapeo de nombres de tablas de la base de datos a títulos legibles en español
+        # Mapeo de nombres de tablas de la base de datos a títulos legibles en espaniol
         TABLE_SHEET_NAMES = {
             "hoja_de_c__lculo_sin_t__tulo": "Clientes",
             "historial_pagos": "Historial de Pagos",
@@ -3168,7 +3168,7 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
             "service_port": ["SERVICE_PORT", "SERVICE PORT", "SP"],
             "ip": ["IP", "DIRECCION_IP", "IP_ADDRESS"],
             "dispositivo": ["DISPOSITIVO", "EQUIPO", "ROUTER", "ONU"],
-            "potencia": ["POTENCIA", "DBM", "SEÑAL", "POTENCIA_RX"],
+            "potencia": ["POTENCIA", "DBM", "SENAL", "POTENCIA_RX"],
             "nap": ["NAP", "CAJA_NAP", "CAJA", "NUMERO_CAJA"],
             "ubicacion": ["UBICACION", "COORDENADAS", "LAT_LONG", "GPS"],
             "tecnico": ["TECNICO", "INSTALADOR_TECNICO", "TECNICO_RESPONSABLE"],
@@ -3418,7 +3418,7 @@ def upload_database(file: UploadFile = File(...), db: Session = Depends(get_db))
             print(f"Aviso actualizando AUTO_INCREMENT tras importación: {autoinc_err}")
 
         return {
-            "message": f"Importación completada. Se añadieron {count_nuevos} clientes/servicios a la base de datos." + (f" ({errores} errores)" if errores > 0 else ""),
+            "message": f"Importación completada. Se agregaron {count_nuevos} clientes/servicios a la base de datos." + (f" ({errores} errores)" if errores > 0 else ""),
             "nuevos": count_nuevos,
             "actualizados": 0,
             "errores": errores,

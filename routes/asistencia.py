@@ -633,7 +633,7 @@ def ejecutar_truco_datesall(
         if existentes:
             continue
 
-        # Generar marcación Turno 1 (Mañana)
+        # Generar marcación Turno 1 (Manana)
         h_ent1 = horario["hora_entrada_1"]
         h_sal1 = horario["hora_salida_1"]
 

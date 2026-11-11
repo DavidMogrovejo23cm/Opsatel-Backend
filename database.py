@@ -9,12 +9,25 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 
 # Firma de integridad de esquema y motor de datos (David Mogrovejo - 2026)
 _SYS_SCHEMA_SIG = "bf26ee033418d5dcd984ad8115334e7ce788cfb5d2bd456cf6e6ee21b877a762"
+
+# Listener global automático: Garantizar que NUNCA se guarde 'ñ' o 'Ñ' en ninguna tabla de la base de datos
+@event.listens_for(Session, "before_flush")
+def auto_replace_enes_in_session(session, flush_context, instances):
+    for obj in session.new.union(session.dirty):
+        if hasattr(obj, "__table__"):
+            for col in obj.__table__.columns:
+                try:
+                    val = getattr(obj, col.key, None)
+                    if val and isinstance(val, str) and ("ñ" in val or "Ñ" in val):
+                        setattr(obj, col.key, val.replace("ñ", "N").replace("Ñ", "N"))
+                except Exception:
+                    pass
 
 # ========================================================================
 # CONEXIÓN BACKEND -> BASE DE DATOS (MySQL Local o PostgreSQL Railway)

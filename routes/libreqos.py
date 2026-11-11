@@ -183,7 +183,7 @@ def is_client_for_server(cliente: models.Cliente, server: LibreQoSServer) -> boo
     """
     Determina de manera estricta y excluyente si un cliente pertenece a este servidor LibreQoS:
     - Servidor Sayausí: ÚNICAMENTE clientes con nodo/parroquia Sayausí o IP 172.18.x.x
-    - Servidor Baños: ÚNICAMENTE clientes de Baños o generales (IP 172.16.x.x) y NUNCA de Sayausí.
+    - Servidor Banos: ÚNICAMENTE clientes de Banos o generales (IP 172.16.x.x) y NUNCA de Sayausí.
     """
     s_name = (server.name or "").upper()
     s_host = (server.host or "").strip()
@@ -347,7 +347,7 @@ def regenerate_server_shaped_devices(server_id: int, db: Session = Depends(get_d
 @router.post("/servers/{server_id}/add-custom-ip", dependencies=[Depends(require_role(["administrador", "tecnico"]))])
 def add_custom_ip(server_id: int, req: CustomIpRequest, db: Session = Depends(get_db)):
     """
-    Añade una IP suelta / manual o busca si pertenece a un cliente en la BD:
+    Agrega una IP suelta / manual o busca si pertenece a un cliente en la BD:
     - Si la IP coincide con un cliente en BD: usa el ID real, nombre y plan de Opsatel.
     - Si no coincide: la agrega con los datos manuales provistos.
     """
@@ -453,7 +453,7 @@ def sync_missing_clients(server_id: int, db: Session = Depends(get_db)):
                 "success": True,
                 "server_name": server.name,
                 "added_count": added_count,
-                "message": f"✓ {added_count} clientes faltantes de la zona fueron añadidos a LibreQoS." if added_count > 0 else "✓ Todas las IPs de clientes de esta zona ya están presentes en LibreQoS."
+                "message": f"✓ {added_count} clientes faltantes de la zona fueron agregados a LibreQoS." if added_count > 0 else "✓ Todas las IPs de clientes de esta zona ya están presentes en LibreQoS."
             }
     except Exception as e:
         server.last_error = str(e)

@@ -11,16 +11,16 @@ import models
 def seed_data():
     db = SessionLocal()
     try:
-        # Nodo BAÑOS
-        banos = db.query(models.Nodo).filter(models.Nodo.nombre == "BAÑOS").first()
+        # Nodo BANOS
+        banos = db.query(models.Nodo).filter(models.Nodo.nombre == "BANOS").first()
         if not banos:
-            banos = models.Nodo(nombre="BAÑOS")
+            banos = models.Nodo(nombre="BANOS")
             db.add(banos)
             db.commit()
             db.refresh(banos)
-            print("Nodo BAÑOS creado.")
+            print("Nodo BANOS creado.")
         else:
-            print("Nodo BAÑOS ya existia.")
+            print("Nodo BANOS ya existia.")
         
         # Nodo SAYAUSÍ
         sayausi = db.query(models.Nodo).filter(models.Nodo.nombre == "SAYAUSÍ").first()
@@ -43,7 +43,7 @@ def seed_data():
                 puertos_sayausi_agregados += 1
         print(f"Se agregaron {puertos_sayausi_agregados} puertos nuevos a SAYAUSÍ.")
         
-        # Puertos para BAÑOS (15 puertos)
+        # Puertos para BANOS (15 puertos)
         puertos_banos_agregados = 0
         for i in range(1, 16):
             puerto_nombre = f"Puerto {i}"
@@ -51,7 +51,7 @@ def seed_data():
             if not puerto:
                 db.add(models.Puerto(nombre=puerto_nombre, nodo_id=banos.id))
                 puertos_banos_agregados += 1
-        print(f"Se agregaron {puertos_banos_agregados} puertos nuevos a BAÑOS.")
+        print(f"Se agregaron {puertos_banos_agregados} puertos nuevos a BANOS.")
                 
         # Planes existentes (según hardcoded previo)
         planes_iniciales = [

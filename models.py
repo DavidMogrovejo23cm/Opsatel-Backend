@@ -708,7 +708,7 @@ class WhatsAppHistorial(Base):
     fecha_creacion = Column(DateTime, default=datetime.datetime.utcnow)
 
 class WhatsAppDifusionHistorial(Base):
-    """Historial de campañas de difusión masiva y envíos programados grupales"""
+    """Historial de campanas de difusión masiva y envíos programados grupales"""
     __tablename__ = "whatsapp_difusiones_historial"
     id = Column(Integer, primary_key=True, index=True)
     tipo = Column(String(50), default="difusion_masiva")  # difusion_masiva, envio_programado, envio_manual
