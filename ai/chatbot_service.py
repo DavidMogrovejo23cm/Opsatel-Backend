@@ -20,8 +20,12 @@ from sqlalchemy.orm import Session
 from groq import Groq
 
 import models
-from ai_tools import TOOLS_SCHEMA, ejecutar_herramienta
-from system_prompt import SYSTEM_PROMPT
+try:
+    from .ai_tools import TOOLS_SCHEMA, ejecutar_herramienta
+    from .system_prompt import SYSTEM_PROMPT
+except (ImportError, ValueError):
+    from ai_tools import TOOLS_SCHEMA, ejecutar_herramienta
+    from system_prompt import SYSTEM_PROMPT
 
 logger = logging.getLogger("opsatel.chatbot_service")
 
@@ -92,6 +96,17 @@ def obtener_cliente_groq() -> Groq:
         )
     return Groq(api_key=api_key, max_retries=0, timeout=12.0)
 
+
+
+def obtener_cliente_db_seguro(identificador: str, db: Session) -> Optional[models.Cliente]:
+    """Busca cliente de manera segura por cédula o celular."""
+    if not identificador or not db:
+        return None
+    try:
+        import sam_bot_service
+        return sam_bot_service.buscar_cliente_por_cedula_o_celular(str(identificador).strip(), db)
+    except Exception:
+        return None
 
 
 def resolver_identidad_whatsapp(numero_raw: str, jid_original: str = "") -> Dict[str, Any]:

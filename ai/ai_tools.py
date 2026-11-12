@@ -10,8 +10,6 @@ Define el esquema JSON compatible con Groq/OpenAI y las funciones
 ejecutoras que interactúan con MySQL, LibreQoS y OLT Daemon.
 """
 
-from fastapi import param_functions
-from fastapi import param_functions
 import json
 import logging
 import re
@@ -1111,4 +1109,13 @@ def ejecutar_herramienta(nombre_herramienta: str, argumentos: Dict[str, Any], db
                 "success": False,
                 "error": f"Herramienta desconocida: {nombre_herramienta}"
             }
+
+
+# ============================================================================
+# ALIAS RETROCOMPATIBLES
+# ============================================================================
+consultar_cliente_por_telefono = consultar_estado_cliente
+crear_ticket_soporte = generar_ticket_soporte
+consultar_planes_internet = consultar_planes_disponibles
+
 

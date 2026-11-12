@@ -6,12 +6,15 @@ from .system_prompt import SYSTEM_PROMPT
 from .ai_tools import (
     TOOLS_SCHEMA,
     ejecutar_herramienta,
-    consultar_cliente_por_telefono,
+    consultar_estado_cliente,
     verificar_conexion_y_potencia,
-    crear_ticket_soporte,
-    consultar_planes_internet,
+    generar_ticket_soporte,
+    consultar_planes_disponibles,
     crear_orden_instalacion_hoja_ruta,
     reiniciar_ont,
+    consultar_cliente_por_telefono,
+    crear_ticket_soporte,
+    consultar_planes_internet,
 )
 from .chatbot_service import (
     procesar_mensaje_con_herramientas,
