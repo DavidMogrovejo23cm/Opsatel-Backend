@@ -35,8 +35,9 @@ import observability
 import discovery_models
 import inventory_models
 import libreqos_models
-from routes import discovery, sync, workflows
+from routes import discovery, sync, workflows, realtime
 from routes.bulk_activation import bulk_router
+from core.realtime_worker import iniciar_realtime_worker, detener_realtime_worker
 
 # Iniciar App
 app = FastAPI(title="ISP Management API")
@@ -271,6 +272,7 @@ app.include_router(libreqos.router)
 app.include_router(peliculas.router)
 app.include_router(backup.router)
 app.include_router(backup.router, prefix="/clientes")
+app.include_router(realtime.router)
 
 # pyrefly: ignore [missing-import]
 from fastapi.staticfiles import StaticFiles
@@ -494,9 +496,11 @@ async def startup_bridge():
     iniciar_puente_whatsapp()
     iniciar_libreqos_worker()
     iniciar_olt_worker()
+    await iniciar_realtime_worker()
 
 @app.on_event("shutdown")
 async def shutdown_bridge():
+    await detener_realtime_worker()
     app.state.whatsapp_bridge_stopping = True
     if hasattr(app.state, "whatsapp_bridge_process"):
         print("Terminando subproceso del puente de WhatsApp...")

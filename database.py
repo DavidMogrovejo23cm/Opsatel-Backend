@@ -29,6 +29,79 @@ def auto_replace_enes_in_session(session, flush_context, instances):
                 except Exception:
                     pass
 
+# Mapeo de tablas de base de datos hacia módulos del sistema para sincronización en tiempo real
+TABLE_TO_MODULE_MAP = {
+    "hoja_de_c__lculo_sin_t__tulo": ["clientes"],
+    "clientes_eliminados": ["clientes"],
+    "historial_pagos": ["balance", "clientes"],
+    "egresos_balance": ["balance"],
+    "proyectos_balance": ["balance"],
+    "proyecto_pagos": ["balance"],
+    "gastos_proyecto": ["balance"],
+    "colchon_balance": ["balance"],
+    "gastos_fijos_balance": ["balance"],
+    "turnos_cajas": ["caja", "balance"],
+    "movimientos_internos": ["balance", "caja"],
+    "log_facturacion": ["balance"],
+    "hoja_ruta": ["hoja_ruta"],
+    "tickets_desarrollo": ["tickets"],
+    "call_center_tickets": ["callcenter"],
+    "clientes_extras": ["extras"],
+    "historial_pagos_extras": ["extras", "balance"],
+    "comprobantes": ["whatsapp"],
+    "whatsapp_historial": ["whatsapp"],
+    "whatsapp_mensajes_chat": ["whatsapp"],
+    "whatsapp_difusiones_historial": ["whatsapp"],
+    "whatsapp_configuracion": ["whatsapp"],
+    "olt_config": ["olt"],
+    "olt_tasks": ["olt"],
+    "olt_task_logs": ["olt"],
+    "olt_power_checks": ["olt"],
+    "nodos": ["configuraciones"],
+    "planes_internet": ["configuraciones", "clientes"],
+    "bancos": ["configuraciones"],
+    "puertos": ["configuraciones"],
+    "parroquias": ["configuraciones"],
+    "cajas_nap": ["configuraciones"],
+    "usuarios": ["configuraciones"],
+    "asistencias": ["asistencia"],
+    "horarios_empleados": ["asistencia"],
+}
+
+@event.listens_for(Session, "after_flush")
+def collect_modified_modules_for_realtime(session, flush_context):
+    """Recolecta qué módulos fueron modificados durante el flush de la transacción."""
+    try:
+        modified_tables = set()
+        for obj in session.new.union(session.dirty).union(session.deleted):
+            if hasattr(obj, "__tablename__"):
+                modified_tables.add(obj.__tablename__)
+        
+        pending = session.info.setdefault("_pending_realtime_modules", set())
+        for table in modified_tables:
+            modules = TABLE_TO_MODULE_MAP.get(table, ["all"])
+            pending.update(modules)
+    except Exception:
+        pass
+
+@event.listens_for(Session, "after_commit")
+def emit_realtime_on_commit(session):
+    """Al confirmar el commit en MySQL, difunde la actualización en tiempo real a los navegadores."""
+    try:
+        modules = session.info.pop("_pending_realtime_modules", None)
+        if modules:
+            from core.realtime import notify_change_sync
+            for mod in modules:
+                notify_change_sync(mod, action="db_commit")
+    except Exception:
+        pass
+
+@event.listens_for(Session, "after_rollback")
+def clear_realtime_on_rollback(session):
+    """Limpia los módulos pendientes si la transacción hace rollback."""
+    session.info.pop("_pending_realtime_modules", None)
+
+
 # ========================================================================
 # CONEXIÓN BACKEND -> BASE DE DATOS (MySQL Local o PostgreSQL Railway)
 # ========================================================================
