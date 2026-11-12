@@ -12,6 +12,7 @@ venv.bak/
 .idea/
 *.sql
 *.sqlite
+*.bak
 backups/
 
 # Node.js

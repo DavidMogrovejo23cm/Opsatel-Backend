@@ -26,6 +26,8 @@ services:
       dockerfile: Dockerfile
     container_name: opsatel_backend
     restart: always
+    env_file:
+      - .env
     depends_on:
       db:
         condition: service_healthy
@@ -36,6 +38,8 @@ services:
       - MYSQL_ROOT_PASSWORD=password123
       - MYSQL_DATABASE=opsatel
       - DATABASE_URL=mysql+pymysql://opsatel:password123@db:3306/opsatel
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:

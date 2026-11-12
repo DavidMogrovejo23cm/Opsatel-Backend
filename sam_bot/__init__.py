@@ -1,0 +1,85 @@
+"""
+Paquete modular sam_bot para SAM Chatbot de OPSATEL.
+Re-exporta todas las funciones, variables y modelos para compatibilidad total.
+"""
+from .llm_client import (
+    GEMINI_MODEL,
+    CLAUDE_MODEL,
+    GROQ_MODEL,
+    OPENAI_MODEL,
+    client_gemini,
+    client_anthropic,
+    active_groq_model,
+    get_gemini_client,
+    get_anthropic_client,
+    limpiar_respuesta_ia,
+    llamar_groq_api,
+    llamar_openai_api,
+    hay_proveedor_ia,
+    generar_respuesta_ia,
+)
+
+from .session_manager import (
+    historial_conversaciones,
+    estados_skills,
+    ultimas_interacciones,
+    clientes_identificados_sesion,
+    pausas_operador,
+    TTL_INACTIVIDAD_SEGUNDOS,
+    MAX_HISTORY_LEN,
+    PAUSA_OPERADOR_SEGUNDOS,
+    obtener_fecha_hora_ecuador,
+    pausar_bot_por_operador,
+    esta_bot_pausado_por_operador,
+    limpiar_sesion_si_expirada,
+    limpiar_todo_historial_conversaciones,
+    limpiar_numero_whatsapp,
+    obtener_contexto_conversacion,
+    guardar_mensaje_historial,
+)
+
+from .client_lookup import (
+    obtener_datos_cliente,
+    normalizar_texto_busqueda,
+    buscar_cliente_por_celular,
+    buscar_cliente_por_cedula,
+    buscar_cliente_por_cedula_o_celular,
+    buscar_cliente_por_nombre,
+    extraer_identificador_cliente,
+    extraer_cedula,
+    obtener_cliente_sesion,
+    obtener_deuda_total_cliente,
+)
+
+from .skills import (
+    SYSTEM_PROMPT_BASE,
+    PLANTILLAS,
+    NUMERO_TECNICO_GUARDIA,
+    PROMPT_REGISTRO_CLIENTE,
+    PROMPT_PELICULAS,
+    PROMPT_GENERAL,
+    PROMPT_SOPORTE_TECNICO,
+    construir_prompt,
+    es_solicitud_cuentas_pago,
+    clasificar_intencion,
+    procesar_registro_cliente,
+    procesar_consulta_pago,
+    obtener_ruta_imagen_cuentas,
+    procesar_cuentas_pago,
+    procesar_recomendacion_peliculas,
+    analizar_potencia_optica,
+    ejecutar_diagnostico_cliente,
+    notificar_alerta_tecnico_guardia,
+    procesar_soporte_tecnico,
+    procesar_chat_general,
+)
+
+from .admin_commands import (
+    es_numero_administrador,
+    procesar_registro_cliente_admin_directo,
+    procesar_comando_administrador,
+)
+
+from .dispatcher import (
+    procesar_mensaje_entrante,
+)
